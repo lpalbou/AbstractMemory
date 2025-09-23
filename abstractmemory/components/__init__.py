@@ -1,1 +1,1 @@
-# Memory components: working, episodic, semantic
+# Memory components for four-tier architecture

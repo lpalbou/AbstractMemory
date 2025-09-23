@@ -21,10 +21,7 @@ class WorkingMemory(IMemoryComponent):
         item_id = f"wm_{datetime.now().timestamp()}"
         self.items.append((item_id, item))
 
-        # Auto-consolidate if at capacity
-        if len(self.items) >= self.capacity:
-            self.consolidate()
-
+        # Auto-consolidate if over capacity (deque will handle max capacity automatically)
         return item_id
 
     def retrieve(self, query: str, limit: int = 10) -> List[MemoryItem]:

@@ -1,1 +1,1 @@
-# Core memory interfaces and temporal anchoring
+# Core memory interfaces and temporal models

@@ -1,1 +1,1 @@
-# Cognitive enhancements for memory system
+# Cognitive memory patterns and learning

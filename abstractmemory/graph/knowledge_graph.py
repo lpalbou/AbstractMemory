@@ -6,7 +6,7 @@ import networkx as nx
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
-from abstractmemory.core.temporal import TemporalAnchor, TemporalSpan
+from abstractmemory.core.temporal import GroundingAnchor, TemporalSpan, RelationalContext
 
 
 class TemporalKnowledgeGraph:
@@ -52,18 +52,19 @@ class TemporalKnowledgeGraph:
 
     def add_fact(self, subject: str, predicate: str, object: str,
                 event_time: datetime, confidence: float = 1.0,
-                source: Optional[str] = None) -> str:
+                source: Optional[str] = None, ingestion_time: Optional[datetime] = None) -> str:
         """Add temporally anchored fact"""
 
         # Get or create nodes
         subj_id = self.add_entity(subject)
         obj_id = self.add_entity(object)
 
-        # Create temporal anchor
-        anchor = TemporalAnchor(
+        # Create grounding anchor
+        anchor = GroundingAnchor(
             event_time=event_time,
-            ingestion_time=datetime.now(),
+            ingestion_time=ingestion_time or datetime.now(),
             validity_span=TemporalSpan(start=event_time),
+            relational=RelationalContext(user_id="default"),  # Will be updated when used in GroundedMemory
             confidence=confidence,
             source=source
         )
@@ -87,7 +88,7 @@ class TemporalKnowledgeGraph:
         return edge_id
 
     def _handle_contradictions(self, subj_id: str, predicate: str,
-                              obj_id: str, new_anchor: TemporalAnchor):
+                              obj_id: str, new_anchor: GroundingAnchor):
         """Handle temporal contradictions"""
         # Check existing edges for contradictions
         for _, _, key, data in self.graph.edges(subj_id, keys=True, data=True):
@@ -102,8 +103,8 @@ class TemporalKnowledgeGraph:
                             old_anchor.validity_span.end = new_anchor.event_time
                             old_anchor.validity_span.valid = False
 
-    def _has_temporal_overlap(self, anchor1: TemporalAnchor,
-                             anchor2: TemporalAnchor) -> bool:
+    def _has_temporal_overlap(self, anchor1: GroundingAnchor,
+                             anchor2: GroundingAnchor) -> bool:
         """Check if two anchors have temporal overlap"""
         span1 = anchor1.validity_span
         span2 = anchor2.validity_span
@@ -127,7 +128,7 @@ class TemporalKnowledgeGraph:
             # Check if fact was known and valid at this time
             if (anchor.ingestion_time <= point_in_time and
                 anchor.event_time <= point_in_time and
-                data.get('valid', False)):
+                data.get('valid', True)):  # Default to True if not explicitly set
 
                 # Check if still valid at query time
                 if (anchor.validity_span.end is None or
@@ -141,7 +142,7 @@ class TemporalKnowledgeGraph:
                             'object': self.graph.nodes[v]['value'],
                             'confidence': data.get('confidence', 1.0),
                             'event_time': anchor.event_time,
-                            'source': anchor.source
+                            'source': getattr(anchor, 'source', None)
                         })
 
         return results

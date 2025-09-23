@@ -6,7 +6,7 @@ from typing import List, Dict
 from datetime import datetime
 
 from abstractmemory.core.interfaces import IMemoryComponent, MemoryItem
-from abstractmemory.core.temporal import TemporalAnchor, TemporalSpan
+from abstractmemory.core.temporal import GroundingAnchor, TemporalSpan, RelationalContext
 
 
 class EpisodicMemory(IMemoryComponent):
@@ -20,11 +20,12 @@ class EpisodicMemory(IMemoryComponent):
         """Add episode to memory"""
         episode_id = f"ep_{len(self.episodes)}_{datetime.now().timestamp()}"
 
-        # Create temporal anchor
-        anchor = TemporalAnchor(
+        # Create grounding anchor with minimal relational context
+        anchor = GroundingAnchor(
             event_time=item.event_time,
             ingestion_time=item.ingestion_time,
             validity_span=TemporalSpan(start=item.event_time),
+            relational=RelationalContext(user_id="default"),  # Will be updated when used in GroundedMemory
             confidence=item.confidence
         )
 

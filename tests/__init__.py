@@ -1,1 +1,1 @@
-# Tests for AbstractMemory package
+# Test package

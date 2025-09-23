@@ -16,13 +16,28 @@ class TemporalSpan:
 
 
 @dataclass
-class TemporalAnchor:
-    """Bi-temporal anchor for facts and events"""
+class RelationalContext:
+    """Who is involved in this memory"""
+    user_id: str                     # Primary user/speaker
+    agent_id: Optional[str] = None   # Which agent persona
+    relationship: Optional[str] = None  # "owner", "colleague", "stranger"
+    session_id: Optional[str] = None   # Conversation session
+
+@dataclass
+class GroundingAnchor:
+    """Multi-dimensional grounding for experiential memory"""
+    # Temporal grounding (when)
     event_time: datetime        # When it happened
     ingestion_time: datetime    # When we learned about it
     validity_span: TemporalSpan # When it was/is valid
+
+    # Relational grounding (who)
+    relational: RelationalContext  # Who is involved
+
+    # Additional grounding
     confidence: float = 1.0
     source: Optional[str] = None
+    location: Optional[str] = None  # Where (optional)
 
 
 class TemporalIndex:
@@ -31,9 +46,9 @@ class TemporalIndex:
     def __init__(self):
         self._by_event_time = []      # Sorted by event time
         self._by_ingestion_time = []  # Sorted by ingestion time
-        self._anchors = {}             # ID -> TemporalAnchor
+        self._anchors = {}             # ID -> GroundingAnchor
 
-    def add_anchor(self, anchor_id: str, anchor: TemporalAnchor):
+    def add_anchor(self, anchor_id: str, anchor: GroundingAnchor):
         """Add temporal anchor to index"""
         self._anchors[anchor_id] = anchor
 
