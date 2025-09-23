@@ -67,3 +67,29 @@ class IStorage(ABC):
     def exists(self, key: str) -> bool:
         """Check if key exists"""
         pass
+
+    @abstractmethod
+    def save_interaction(self, user_id: str, timestamp: datetime,
+                        user_input: str, agent_response: str,
+                        topic: str, metadata: Optional[Dict] = None) -> str:
+        """Save verbatim interaction, return interaction ID"""
+        pass
+
+    @abstractmethod
+    def save_experiential_note(self, timestamp: datetime, reflection: str,
+                              interaction_id: str, note_type: str = "reflection",
+                              metadata: Optional[Dict] = None) -> str:
+        """Save AI experiential note, return note ID"""
+        pass
+
+    @abstractmethod
+    def link_interaction_to_note(self, interaction_id: str, note_id: str) -> None:
+        """Create bidirectional link between interaction and note"""
+        pass
+
+    @abstractmethod
+    def search_interactions(self, query: str, user_id: Optional[str] = None,
+                           start_date: Optional[datetime] = None,
+                           end_date: Optional[datetime] = None) -> List[Dict]:
+        """Search interactions with filters"""
+        pass

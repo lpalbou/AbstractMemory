@@ -71,6 +71,9 @@ pip install abstractmemory
 
 # For real LLM integration tests
 pip install abstractmemory[llm]
+
+# For LanceDB storage (optional)
+pip install lancedb
 ```
 
 ### Basic Usage
@@ -95,13 +98,77 @@ elif agent_type == "autonomous":
     context = memory.get_full_context(query)
 ```
 
+### 🗂️ Persistent Storage Options
+
+AbstractMemory now supports sophisticated storage for observable, searchable AI memory:
+
+#### Observable Markdown Storage
+Perfect for development, debugging, and transparency:
+
+```python
+# Human-readable, version-controllable AI memory
+memory = create_memory(
+    "grounded",
+    storage_backend="markdown",
+    storage_path="./memory"
+)
+
+# Generates organized structure:
+# memory/
+# ├── verbatim/alice/2025/09/24/10-30-45_python_int_abc123.md
+# ├── experiential/2025/09/24/10-31-02_learning_note_def456.md
+# ├── links/2025/09/24/int_abc123_to_note_def456.json
+# └── index.json
+```
+
+#### Powerful Vector Search
+High-performance search with AbstractCore embeddings:
+
+```python
+from abstractllm import create_llm
+
+# Create provider with embedding support
+provider = create_llm("openai", embedding_model="text-embedding-3-small")
+
+# Vector search storage
+memory = create_memory(
+    "grounded",
+    storage_backend="lancedb",
+    storage_uri="./memory.db",
+    embedding_provider=provider
+)
+
+# Semantic search across stored interactions
+results = memory.search_stored_interactions("machine learning concepts")
+```
+
+#### Dual Storage - Best of Both Worlds
+Complete observability with powerful search:
+
+```python
+# Dual storage: markdown (observable) + LanceDB (searchable)
+memory = create_memory(
+    "grounded",
+    storage_backend="dual",
+    storage_path="./memory",
+    storage_uri="./memory.db",
+    embedding_provider=provider
+)
+
+# Every interaction stored in both formats
+# - Markdown files for complete transparency
+# - Vector database for semantic search
+```
+
 ## 📚 Documentation
 
 - **[Architecture Guide](docs/architecture.md)** - Complete system design
 - **[Memory Types](docs/memory-types.md)** - Detailed component guide
+- **[Storage Systems](docs/storage-systems.md)** - Persistent storage with dual backends
 - **[Usage Patterns](docs/usage-patterns.md)** - Real-world examples
 - **[API Reference](docs/api-reference.md)** - Complete API documentation
 - **[Integration Guide](docs/integration.md)** - AbstractLLM ecosystem integration
+- **[AbstractCore Embedding Specs](docs/abstractcore-embedding-specs.md)** - Embedding integration requirements
 
 ## 🔬 Key Features
 
@@ -126,9 +193,17 @@ Core Memory ──→ Semantic Memory ──→ Working Memory ──→ Episodi
 - **User Personalization**: Multi-user context separation
 - **Fact Validation**: Confidence-based knowledge consolidation
 
+### ✅ Dual Storage Architecture
+- **📄 Markdown Storage**: Human-readable, observable AI memory evolution
+- **🔍 LanceDB Storage**: Vector search with SQL capabilities via AbstractCore
+- **🔄 Dual Mode**: Best of both worlds - transparency + powerful search
+- **🧠 AI Reflections**: Automatic experiential notes about interactions
+- **🔗 Bidirectional Links**: Connect interactions to AI insights
+- **📊 Search Capabilities**: Text-based and semantic similarity search
+
 ## 🧪 Testing & Validation
 
-AbstractMemory includes **180+ comprehensive tests** with real implementations:
+AbstractMemory includes **200+ comprehensive tests** with real implementations:
 
 ```bash
 # Run all tests
@@ -137,10 +212,14 @@ python -m pytest tests/ -v
 # Run specific test suites
 python -m pytest tests/simple/ -v          # Simple memory types
 python -m pytest tests/components/ -v      # Memory components
+python -m pytest tests/storage/ -v         # Storage system tests
 python -m pytest tests/integration/ -v     # Full system integration
 
 # Test with real LLM providers (requires AbstractCore)
 python -m pytest tests/integration/test_llm_real_usage.py -v
+
+# Test comprehensive dual storage serialization
+python -m pytest tests/storage/test_dual_storage_comprehensive.py -v
 ```
 
 ## 🔗 AbstractLLM Ecosystem Integration
@@ -155,13 +234,23 @@ from abstractmemory import create_memory
 # Create LLM provider
 provider = create_llm("anthropic", model="claude-3-5-haiku-latest")
 
-# Create memory for agent
-memory = create_memory("grounded", enable_kg=True)
+# Create memory with embedding integration
+memory = create_memory(
+    "grounded",
+    enable_kg=True,
+    storage_backend="dual",
+    storage_path="./memory",
+    storage_uri="./memory.db",
+    embedding_provider=provider
+)
 
 # Use together in agent reasoning
 context = memory.get_full_context(query)
 response = provider.generate(prompt, system_prompt=context)
 memory.add_interaction(query, response.content)
+
+# Search stored memories with semantic similarity
+similar_memories = memory.search_stored_interactions("related concepts")
 ```
 
 ### With AbstractAgent (Future)
