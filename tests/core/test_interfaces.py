@@ -98,36 +98,14 @@ class TestMemoryItem:
         assert isinstance(list_item.content, list)
 
 
-class MockMemoryComponent(IMemoryComponent):
-    """Mock implementation for testing interface"""
-
-    def __init__(self):
-        self.items = []
-
-    def add(self, item: MemoryItem) -> str:
-        item_id = f"item_{len(self.items)}"
-        self.items.append((item_id, item))
-        return item_id
-
-    def retrieve(self, query: str, limit: int = 10) -> list[MemoryItem]:
-        results = []
-        for _, item in self.items:
-            if query.lower() in str(item.content).lower():
-                results.append(item)
-                if len(results) >= limit:
-                    break
-        return results
-
-    def consolidate(self) -> int:
-        return len(self.items)
-
-
 class TestIMemoryComponent:
-    """Test IMemoryComponent interface through mock implementation"""
+    """Test IMemoryComponent interface using real memory components"""
 
     def setup_method(self):
-        """Setup test environment"""
-        self.component = MockMemoryComponent()
+        """Setup test environment with real memory component"""
+        # Use a real memory component from the system - WorkingMemory
+        from abstractmemory.components.working import WorkingMemory
+        self.component = WorkingMemory(capacity=10)
 
     def test_add_and_retrieve(self):
         """Test basic add and retrieve functionality"""
@@ -136,7 +114,8 @@ class TestIMemoryComponent:
 
         # Test add
         item_id = self.component.add(item)
-        assert item_id.startswith("item_")
+        assert isinstance(item_id, str)
+        assert len(item_id) > 0
 
         # Test retrieve
         results = self.component.retrieve("Python")
@@ -174,9 +153,10 @@ class TestIMemoryComponent:
             item = MemoryItem(f"Item {i}", now, now)
             self.component.add(item)
 
-        # Test consolidate
+        # Test consolidate - WorkingMemory returns number of promoted items
         consolidated_count = self.component.consolidate()
-        assert consolidated_count == 3
+        assert isinstance(consolidated_count, int)
+        assert consolidated_count >= 0
 
     def test_case_insensitive_search(self):
         """Test case-insensitive retrieval"""

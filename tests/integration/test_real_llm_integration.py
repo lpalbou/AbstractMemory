@@ -10,8 +10,6 @@ from abstractmemory import create_memory, MemoryItem
 
 # Try to import AbstractCore providers
 try:
-    import sys
-    sys.path.append('/Users/albou/projects/abstractllm_core')
     from abstractllm import create_llm
     ABSTRACTCORE_AVAILABLE = True
 except ImportError:

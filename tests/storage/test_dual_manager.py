@@ -1,14 +1,25 @@
 """
-Tests for DualStorageManager.
+Tests for DualStorageManager using only real implementations.
+NO MOCKS - Only real embedding providers and real implementations.
 """
 
 import pytest
 import tempfile
 import shutil
 from datetime import datetime
-from unittest.mock import Mock
+import sys
+
+# Add AbstractCore path for real embedding provider
+sys.path.insert(0, '/Users/albou/projects/abstractllm_core')
 
 from abstractmemory.storage.dual_manager import DualStorageManager
+
+# Real embedding provider for testing
+try:
+    from abstractllm.embeddings import EmbeddingManager
+    REAL_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    REAL_EMBEDDINGS_AVAILABLE = False
 
 
 class TestDualStorageManager:
@@ -53,49 +64,53 @@ class TestDualStorageManager:
         assert interaction_id is not None
         assert interaction_id.startswith("int_")
 
-    def test_dual_mode_with_mock_embedding(self):
-        """Test dual mode with mock embedding provider"""
-        # Mock embedding provider
-        mock_provider = Mock()
-        mock_provider.generate_embedding.return_value = [0.1, 0.2, 0.3]
+    @pytest.mark.skipif(not REAL_EMBEDDINGS_AVAILABLE, reason="AbstractCore EmbeddingManager required")
+    def test_dual_mode_with_real_embedding_provider(self):
+        """Test dual mode with REAL AbstractCore embedding provider"""
+        # Create real embedding provider - NO MOCKS
+        embedding_provider = EmbeddingManager()
 
         manager = DualStorageManager(
-            mode="markdown",  # Only test markdown for now since LanceDB requires installation
+            mode="markdown",  # Test markdown storage with real embeddings
             markdown_path=self.temp_dir,
-            embedding_provider=mock_provider
+            embedding_provider=embedding_provider
         )
 
         assert manager.is_enabled()
         assert manager.embedding_provider is not None
 
-        # Test interaction with embedding
+        # Test interaction with REAL semantic embeddings
         now = datetime.now()
         interaction_id = manager.save_interaction(
             user_id="bob",
             timestamp=now,
-            user_input="Tell me about Python",
-            agent_response="Python is a programming language...",
-            topic="python"
+            user_input="Tell me about Python programming and machine learning",
+            agent_response="Python is excellent for ML with libraries like scikit-learn, TensorFlow, and PyTorch...",
+            topic="python_ml"
         )
 
         assert interaction_id is not None
 
-        # Test experiential note
+        # Test experiential note with real content
         note_id = manager.save_experiential_note(
             timestamp=now,
-            reflection="User is interested in learning Python. Good opportunity to assess skill level.",
+            reflection="User is interested in ML with Python. They seem to want practical guidance on libraries and frameworks.",
             interaction_id=interaction_id,
-            note_type="learning_opportunity"
+            note_type="learning_assessment"
         )
 
         assert note_id is not None
 
-        # Test linking
+        # Test linking with real data
         manager.link_interaction_to_note(interaction_id, note_id)
 
-        # Test search
-        results = manager.search_interactions("python")
+        # Test search with real content - should work with semantic similarity
+        results = manager.search_interactions("machine learning")
         assert len(results) >= 1
+
+        # Also test exact keyword search
+        python_results = manager.search_interactions("Python")
+        assert len(python_results) >= 1
 
     def test_get_storage_stats(self):
         """Test getting storage statistics"""

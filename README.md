@@ -162,20 +162,27 @@ memory = create_memory(
 
 ## 📚 Documentation
 
-- **[Architecture Guide](docs/architecture.md)** - Complete system design
-- **[Memory Types](docs/memory-types.md)** - Detailed component guide
-- **[Storage Systems](docs/storage-systems.md)** - Persistent storage with dual backends
-- **[Usage Patterns](docs/usage-patterns.md)** - Real-world examples
-- **[API Reference](docs/api-reference.md)** - Complete API documentation
-- **[Integration Guide](docs/integration.md)** - AbstractLLM ecosystem integration
-- **[AbstractCore Embedding Specs](docs/abstractcore-embedding-specs.md)** - Embedding integration requirements
+**👉 [START HERE: Complete Documentation Guide](docs/README.md)**
+
+### Core Guides
+- **[🚀 Quick Start](docs/README.md#-start-here)** - Get running in 5 minutes
+- **[🔍 Semantic Search](docs/semantic-search.md)** - Vector embeddings and similarity search
+- **[🧠 Memory Types](docs/memory-types.md)** - ScratchpadMemory, BufferMemory, GroundedMemory
+- **[📊 Performance Guide](docs/semantic-search.md#performance-characteristics)** - Embedding timing and optimization
+
+### Advanced Topics
+- **[🏗️ Architecture](docs/architecture.md)** - System design and two-tier strategy
+- **[💾 Storage Systems](docs/storage-systems.md)** - Markdown + LanceDB dual storage
+- **[🎯 Usage Patterns](docs/usage-patterns.md)** - Real-world examples and best practices
+- **[🔗 Integration Guide](docs/integration.md)** - AbstractLLM ecosystem integration
+- **[📖 API Reference](docs/api-reference.md)** - Complete method documentation
 
 ## 🔬 Key Features
 
 ### ✅ Purpose-Built Memory Types
-- **ScratchpadMemory**: ReAct thought-action-observation cycles
-- **BufferMemory**: Simple conversation history
-- **GroundedMemory**: Multi-dimensional temporal memory
+- **ScratchpadMemory**: ReAct thought-action-observation cycles for task agents
+- **BufferMemory**: Simple conversation history with capacity limits
+- **GroundedMemory**: Four-tier architecture with semantic search and temporal context
 
 ### ✅ State-of-the-Art Research Integration
 - **MemGPT/Letta Pattern**: Self-editing core memory
@@ -201,12 +208,19 @@ Core Memory ──→ Semantic Memory ──→ Working Memory ──→ Episodi
 - **🔗 Bidirectional Links**: Connect interactions to AI insights
 - **📊 Search Capabilities**: Text-based and semantic similarity search
 
+### ✅ Semantic Search with AbstractCore
+- **🎯 Real Embeddings**: Uses AbstractCore's EmbeddingManager with Google's EmbeddingGemma (768D)
+- **⚡ Immediate Indexing**: Embeddings generated instantly during `add_interaction()` (~36ms)
+- **🔍 Vector Similarity**: True semantic search finds contextually relevant content
+- **🗄️ Dual Storage**: Observable markdown files + searchable LanceDB vectors
+- **🎯 Production Ready**: Sub-second search, proven with 200+ real implementation tests
+
 ## 🧪 Testing & Validation
 
-AbstractMemory includes **200+ comprehensive tests** with real implementations:
+AbstractMemory includes **200+ comprehensive tests** using ONLY real implementations:
 
 ```bash
-# Run all tests
+# Run all tests (NO MOCKS - only real implementations)
 python -m pytest tests/ -v
 
 # Run specific test suites
@@ -218,40 +232,149 @@ python -m pytest tests/integration/ -v     # Full system integration
 # Test with real LLM providers (requires AbstractCore)
 python -m pytest tests/integration/test_llm_real_usage.py -v
 
-# Test comprehensive dual storage serialization
+# Test comprehensive dual storage with real embeddings
 python -m pytest tests/storage/test_dual_storage_comprehensive.py -v
+```
+
+**IMPORTANT**: All tests use real implementations:
+- Real embedding providers (AbstractCore EmbeddingManager)
+- Real LLM providers (Anthropic, OpenAI, Ollama via AbstractCore)
+- Real memory components and storage systems
+- NO MOCKS anywhere in the codebase
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Install with semantic search capabilities (recommended)
+pip install abstractmemory[embeddings]
+
+# Or install everything
+pip install abstractmemory[all]
+
+# Basic memory only (no semantic search)
+pip install abstractmemory
+```
+
+### 📋 Upgrading from v0.1.0?
+
+**Version 0.2.0 adds semantic search!** See [Migration Guide](CHANGELOG.md#-migration-guide) for:
+- New AbstractCore dependency (`pip install abstractcore>=2.1.0`)
+- LanceDB schema changes (recreate `.db` files)
+- New `embedding_provider` parameter
+
+### ⚠️  Critical: LLM vs Embedding Provider Separation
+
+**Understanding the difference between LLM and Embedding providers:**
+
+- 🔄 **LLM Providers** (text generation): Change freely between Anthropic, OpenAI, Ollama, etc.
+- 🔒 **Embedding Providers** (semantic search): Must remain consistent within a storage space
+
+**For semantic search consistency:**
+- ✅ **Choose ONE embedding model and stick with it per storage space**
+- ✅ **You can customize which embedding model to use (AbstractCore, OpenAI, Ollama, etc.)**
+- ❌ **Don't change embedding models mid-project - it breaks vector search**
+- 🚨 **AbstractMemory automatically warns when embedding model changes detected**
+
+**Example of correct separation:**
+```python
+# LLM for text generation (can change anytime)
+llm = create_llm("anthropic")  # or "openai", "ollama", etc.
+
+# Dedicated embedding provider (must stay consistent)
+embedder = EmbeddingManager()  # AbstractCore embeddings
+
+memory = create_memory("grounded", embedding_provider=embedder)  # NOT llm!
+```
+
+### Basic Usage
+
+```python
+from abstractllm.embeddings import EmbeddingManager
+from abstractmemory import create_memory
+
+# 1. Create embedding manager for semantic search
+em = EmbeddingManager()  # Uses EmbeddingGemma (768D vectors)
+
+# 2. Create memory with dual storage
+memory = create_memory(
+    "grounded",
+    storage_backend="dual",           # Markdown + LanceDB
+    storage_path="./memory_files",    # Observable files
+    storage_uri="./memory.db",        # Vector search
+    embedding_provider=em             # Real embeddings
+)
+
+# 3. Add interactions (embeddings generated immediately!)
+memory.set_current_user("alice")
+memory.add_interaction(
+    "I'm working on machine learning projects",
+    "Great! ML has amazing applications in many fields."
+)
+# ↳ Takes ~36ms: embedding generated and stored instantly
+
+# 4. Semantic search finds contextually relevant content
+results = memory.search_stored_interactions("artificial intelligence research")
+# ↳ Finds ML interaction via semantic similarity (not keywords!)
+print(f"Found {len(results)} relevant conversations")
+```
+
+### 📋 What Happens When You Add Interactions
+
+```python
+memory.add_interaction("I love Python", "Great choice!")
+# ↓ IMMEDIATE PROCESSING:
+# 1. Text combined: "I love Python Great choice!"
+# 2. EmbeddingManager.embed() called (36ms)
+# 3. 768D vector generated with EmbeddingGemma
+# 4. Saved to markdown file: ./memory_files/verbatim/alice/...
+# 5. Stored in LanceDB: vector + text + metadata
+# 6. Interaction immediately searchable via semantic similarity
 ```
 
 ## 🔗 AbstractLLM Ecosystem Integration
 
-AbstractMemory seamlessly integrates with the broader ecosystem:
+AbstractMemory seamlessly integrates with AbstractCore, maintaining clear separation between LLM and embedding providers:
 
-### With AbstractCore
+### Critical Architecture: LLM vs Embedding Separation
 ```python
 from abstractllm import create_llm
+from abstractllm.embeddings import EmbeddingManager
 from abstractmemory import create_memory
 
-# Create LLM provider
-provider = create_llm("anthropic", model="claude-3-5-haiku-latest")
+# SEPARATE PROVIDERS for different purposes:
 
-# Create memory with embedding integration
+# 1. LLM Provider - for TEXT GENERATION (can change freely)
+llm_provider = create_llm("anthropic", model="claude-3-5-haiku-latest")
+
+# 2. Embedding Provider - for SEMANTIC SEARCH (must stay consistent)
+embedding_provider = EmbeddingManager()
+
+# Create memory with DEDICATED embedding provider
 memory = create_memory(
     "grounded",
     enable_kg=True,
     storage_backend="dual",
     storage_path="./memory",
     storage_uri="./memory.db",
-    embedding_provider=provider
+    embedding_provider=embedding_provider  # DEDICATED for embeddings
 )
 
-# Use together in agent reasoning
+# Use in agent reasoning with CLEAR separation
 context = memory.get_full_context(query)
-response = provider.generate(prompt, system_prompt=context)
-memory.add_interaction(query, response.content)
+response = llm_provider.generate(prompt, system_prompt=context)  # LLM for text
+memory.add_interaction(query, response.content)  # Embeddings handled internally
 
-# Search stored memories with semantic similarity
+# Search uses embedding provider for semantic similarity
 similar_memories = memory.search_stored_interactions("related concepts")
 ```
+
+### Key Points:
+- **LLM Provider**: Change freely between Anthropic ↔ OpenAI ↔ Ollama
+- **Embedding Provider**: Must remain consistent within storage space
+- **Never** pass LLM provider as embedding provider
+- **Always** use dedicated embedding provider for semantic search
 
 ### With AbstractAgent (Future)
 ```python
@@ -269,7 +392,7 @@ response = agent.execute(task, user_id="alice")
 ## 🏛️ Architecture Principles
 
 1. **No Over-Engineering**: Memory complexity matches agent requirements
-2. **Real Implementation Testing**: No mocks - all tests use real implementations
+2. **Real Implementation Testing**: NO MOCKS anywhere - all tests use real implementations
 3. **SOTA Research Foundation**: Built on proven patterns (MemGPT, Zep, Graphiti)
 4. **Clean Abstractions**: Simple interfaces, powerful implementations
 5. **Performance Optimized**: Fast operations for simple agents, scalable for complex ones

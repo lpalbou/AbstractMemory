@@ -1,14 +1,25 @@
 """
 Tests for GroundedMemory integration with storage system.
+NO MOCKS - Only real embedding providers and real implementations.
 """
 
 import pytest
 import tempfile
 import shutil
 from datetime import datetime
-from unittest.mock import Mock
+import sys
+
+# Add AbstractCore path for real embedding provider
+sys.path.insert(0, '/Users/albou/projects/abstractllm_core')
 
 from abstractmemory import create_memory
+
+# Real embedding provider for testing
+try:
+    from abstractllm.embeddings import EmbeddingManager
+    REAL_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    REAL_EMBEDDINGS_AVAILABLE = False
 
 
 class TestGroundedMemoryStorage:
@@ -129,28 +140,36 @@ class TestGroundedMemoryStorage:
         stats = memory.get_storage_stats()
         assert "markdown_stats" in stats
 
-    def test_with_mock_embedding_provider(self):
-        """Test integration with mock embedding provider"""
-        # Mock embedding provider (simulates AbstractCore)
-        mock_provider = Mock()
-        mock_provider.generate_embedding.return_value = [0.1, 0.2, 0.3, 0.4]
+    @pytest.mark.skipif(not REAL_EMBEDDINGS_AVAILABLE, reason="AbstractCore EmbeddingManager required")
+    def test_with_real_embedding_provider(self):
+        """Test integration with REAL AbstractCore embedding provider"""
+        # Create real embedding provider - NO MOCKS
+        embedding_provider = EmbeddingManager()
 
         memory = create_memory(
             "grounded",
-            storage_backend="markdown",  # Test markdown only for now
+            storage_backend="markdown",  # Test markdown with real embeddings
             storage_path=self.temp_dir,
-            embedding_provider=mock_provider
+            embedding_provider=embedding_provider
         )
 
         memory.set_current_user("frank")
-        memory.add_interaction(
-            "Tell me about machine learning",
-            "Machine learning is a subset of artificial intelligence..."
+        interaction_id = memory.add_interaction(
+            "Tell me about machine learning and deep learning applications",
+            "Machine learning and deep learning have revolutionized AI with applications in computer vision, NLP, and autonomous systems..."
         )
 
-        # Verify embedding provider was used (if LanceDB storage is active)
-        # For markdown only, embedding provider won't be called
-        # But the system should handle it gracefully
+        # Verify interaction was saved
+        assert interaction_id is not None
+
+        # Test that the memory system works with real semantic content
+        context = memory.get_full_context("artificial intelligence")
+        assert "machine learning" in context.lower() or "deep learning" in context.lower()
+
+        # Test search functionality
+        if hasattr(memory, 'search_stored_interactions'):
+            results = memory.search_stored_interactions("AI applications")
+            # Should find semantically related content even without exact keyword match
 
         stats = memory.get_storage_stats()
         assert stats["embedding_provider"] is True

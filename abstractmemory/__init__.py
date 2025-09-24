@@ -133,7 +133,7 @@ class GroundedMemory:
         )
 
         # Legacy storage backend for compatibility
-        self.storage = self._init_storage(storage_backend)
+        self.storage = self._init_storage(storage_backend, embedding_provider)
 
     def set_current_user(self, user_id: str, relationship: Optional[str] = None):
         """Set the current user for relational context"""
@@ -545,12 +545,12 @@ class GroundedMemory:
             logging.warning(f"Failed to initialize storage manager: {e}")
             return None
 
-    def _init_storage(self, backend: Optional[str]):
+    def _init_storage(self, backend: Optional[str], embedding_provider: Optional[Any] = None):
         """Initialize storage backend (legacy compatibility)"""
         if backend == 'lancedb':
             try:
                 from .storage.lancedb_storage import LanceDBStorage
-                return LanceDBStorage("./lance.db")
+                return LanceDBStorage("./lance.db", embedding_provider)
             except ImportError:
                 return None
         elif backend == 'file':

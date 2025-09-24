@@ -21,27 +21,17 @@ from pathlib import Path
 from abstractmemory import create_memory
 
 
-class MockEmbeddingProvider:
-    """Mock embedding provider simulating AbstractCore integration"""
+# Real embedding provider imports
+import sys
+sys.path.insert(0, '/Users/albou/projects/abstractllm_core')
 
-    def generate_embedding(self, text: str):
-        """Generate a simple mock embedding based on text hash"""
-        # In real usage, this would be AbstractCore's embedding generation
-        import hashlib
-        hash_obj = hashlib.md5(text.encode())
-        hash_hex = hash_obj.hexdigest()
-
-        # Convert hex to floats (simplified mock)
-        embedding = []
-        for i in range(0, min(32, len(hash_hex)), 2):
-            byte_val = int(hash_hex[i:i+2], 16)
-            embedding.append(byte_val / 255.0)  # Normalize to 0-1
-
-        # Pad to standard size
-        while len(embedding) < 384:
-            embedding.append(0.0)
-
-        return embedding[:384]
+try:
+    from abstractllm.embeddings import EmbeddingManager
+    REAL_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    REAL_EMBEDDINGS_AVAILABLE = False
+    print("⚠️  AbstractCore not available. Install AbstractCore for real semantic search.")
+    print("    This demo will run with markdown-only storage (no semantic search).")
 
 
 def demonstrate_markdown_storage():
@@ -163,15 +153,20 @@ def demonstrate_dual_storage():
     temp_dir = tempfile.mkdtemp()
     print(f"📁 Storage location: {temp_dir}")
 
-    # Create mock embedding provider
-    embedding_provider = MockEmbeddingProvider()
+    # Create REAL embedding provider (if available) - NO MOCKS
+    if REAL_EMBEDDINGS_AVAILABLE:
+        embedding_provider = EmbeddingManager()
+        print("✅ Using real AbstractCore embeddings for semantic search")
+    else:
+        embedding_provider = None
+        print("⚠️  No embedding provider available - using markdown-only storage")
 
-    # Create memory with dual storage (markdown only for demo - LanceDB requires installation)
+    # Create memory with REAL implementations only
     memory = create_memory(
         "grounded",
-        storage_backend="markdown",  # Would be "dual" with both markdown and LanceDB
+        storage_backend="markdown",  # Real markdown storage
         storage_path=temp_dir,
-        embedding_provider=embedding_provider,
+        embedding_provider=embedding_provider,  # Real embedding provider or None
         working_capacity=3
     )
 

@@ -93,12 +93,7 @@ class DualStorageManager:
         # Save to LanceDB storage
         if self.lancedb_storage:
             try:
-                # Generate embedding if provider available
-                embedding = None
-                if self.embedding_provider:
-                    text = f"{user_input} {agent_response}"
-                    embedding = self.embedding_provider.generate_embedding(text)
-
+                # LanceDB storage handles embedding generation internally
                 ldb_id = self.lancedb_storage.save_interaction(
                     user_id, timestamp, user_input, agent_response, topic, metadata
                 )
@@ -138,11 +133,7 @@ class DualStorageManager:
         # Save to LanceDB storage
         if self.lancedb_storage:
             try:
-                # Generate embedding for reflection if provider available
-                embedding = None
-                if self.embedding_provider:
-                    embedding = self.embedding_provider.generate_embedding(reflection)
-
+                # LanceDB storage handles embedding generation internally
                 ldb_note_id = self.lancedb_storage.save_experiential_note(
                     timestamp, reflection, interaction_id, note_type, metadata
                 )

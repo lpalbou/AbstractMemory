@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 
 from ..core.interfaces import IStorage
+from ..embeddings import create_embedding_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +39,27 @@ class LanceDBStorage(IStorage):
         Args:
             uri: LanceDB connection URI (e.g., "./lance.db")
             embedding_provider: AbstractCore instance for generating embeddings
+
+        Raises:
+            ImportError: If LanceDB is not installed
+            ValueError: If no embedding provider is provided
         """
         if not LANCEDB_AVAILABLE:
             raise ImportError("LanceDB is required but not installed. Install with: pip install lancedb")
 
+        if embedding_provider is None:
+            raise ValueError(
+                "LanceDB storage requires a real embedding provider for semantic search. "
+                "Please provide an AbstractCore EmbeddingManager or other embedding provider."
+            )
+
         self.uri = uri
-        self.embedding_provider = embedding_provider
+        self.embedding_adapter = create_embedding_adapter(embedding_provider)
         self.db = lancedb.connect(uri)
 
-        # Initialize tables
+        # Initialize tables and check embedding consistency
         self._init_tables()
+        self._check_embedding_consistency()
 
     def _init_tables(self):
         """Initialize LanceDB tables with schemas"""
@@ -92,43 +104,136 @@ class LanceDBStorage(IStorage):
         ]
 
         # Create tables if they don't exist
+        import pandas as pd
+
         try:
             self.interactions_table = self.db.open_table("interactions")
-        except FileNotFoundError:
-            # Create empty table with schema
-            import pandas as pd
-            empty_df = pd.DataFrame(columns=[col["name"] for col in interactions_schema])
-            self.interactions_table = self.db.create_table("interactions", empty_df)
+        except (FileNotFoundError, ValueError):
+            # Create table with proper schema and sample data
+            import pyarrow as pa
+
+            # Get actual embedding dimension from adapter
+            test_embedding = self.embedding_adapter.generate_embedding("test")
+            embedding_dim = len(test_embedding)
+
+            # Create proper schema with fixed-size list for embeddings
+            schema = pa.schema([
+                pa.field("id", pa.string()),
+                pa.field("user_id", pa.string()),
+                pa.field("timestamp", pa.timestamp('us')),
+                pa.field("user_input", pa.string()),
+                pa.field("agent_response", pa.string()),
+                pa.field("topic", pa.string()),
+                pa.field("metadata", pa.string()),
+                pa.field("embedding", pa.list_(pa.float32(), embedding_dim))
+            ])
+
+            # Create empty table with proper schema
+            self.interactions_table = self.db.create_table("interactions", schema=schema)
 
         try:
             self.notes_table = self.db.open_table("experiential_notes")
-        except FileNotFoundError:
-            import pandas as pd
-            empty_df = pd.DataFrame(columns=[col["name"] for col in notes_schema])
-            self.notes_table = self.db.create_table("experiential_notes", empty_df)
+        except (FileNotFoundError, ValueError):
+            # Create notes table with proper schema
+            notes_schema = pa.schema([
+                pa.field("id", pa.string()),
+                pa.field("timestamp", pa.timestamp('us')),
+                pa.field("reflection", pa.string()),
+                pa.field("interaction_id", pa.string()),
+                pa.field("note_type", pa.string()),
+                pa.field("metadata", pa.string()),
+                pa.field("embedding", pa.list_(pa.float32(), embedding_dim))
+            ])
+            self.notes_table = self.db.create_table("experiential_notes", schema=notes_schema)
 
         try:
             self.links_table = self.db.open_table("links")
-        except FileNotFoundError:
-            import pandas as pd
-            empty_df = pd.DataFrame(columns=[col["name"] for col in links_schema])
-            self.links_table = self.db.create_table("links", empty_df)
+        except (FileNotFoundError, ValueError):
+            sample_data = pd.DataFrame([{
+                "interaction_id": "sample_int",
+                "note_id": "sample_note",
+                "created": datetime.now(),
+                "link_type": "bidirectional"
+            }])
+            self.links_table = self.db.create_table("links", sample_data)
+            self.links_table.delete("interaction_id = 'sample_int'")
 
         try:
             self.components_table = self.db.open_table("memory_components")
-        except FileNotFoundError:
-            import pandas as pd
-            empty_df = pd.DataFrame(columns=[col["name"] for col in components_schema])
-            self.components_table = self.db.create_table("memory_components", empty_df)
+        except (FileNotFoundError, ValueError):
+            sample_data = pd.DataFrame([{
+                "component_name": "sample",
+                "timestamp": datetime.now(),
+                "data": "{}",
+                "version": 1
+            }])
+            self.components_table = self.db.create_table("memory_components", sample_data)
+            self.components_table.delete("component_name = 'sample'")
 
-    def _generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Generate embedding using AbstractCore provider"""
-        if self.embedding_provider and hasattr(self.embedding_provider, 'generate_embedding'):
+        # Embedding metadata table for consistency tracking
+        try:
+            self.embedding_metadata_table = self.db.open_table("embedding_metadata")
+        except (FileNotFoundError, ValueError):
+            sample_data = pd.DataFrame([{
+                "key": "sample",
+                "value": "{}",
+                "created_at": datetime.now()
+            }])
+            self.embedding_metadata_table = self.db.create_table("embedding_metadata", sample_data)
+            self.embedding_metadata_table.delete("key = 'sample'")
+
+    def _check_embedding_consistency(self) -> None:
+        """Check for embedding model consistency with previously stored data."""
+        try:
+            # Get current embedding model info
+            current_info = self.embedding_adapter.get_embedding_info()
+
+            # Try to retrieve previously stored embedding info
+            stored_info_df = self.embedding_metadata_table.search().where("key = 'embedding_model_info'").to_pandas()
+
+            if len(stored_info_df) > 0:
+                # We have previously stored embedding info
+                import json
+                stored_info = json.loads(stored_info_df.iloc[0]['value'])
+
+                # Check consistency and warn if needed
+                self.embedding_adapter.warn_about_consistency(stored_info)
+            else:
+                # First time - store the current embedding info
+                self._store_embedding_info(current_info)
+                logger.info(f"Stored embedding model info for consistency tracking: {current_info}")
+
+        except Exception as e:
+            logger.warning(f"Failed to check embedding consistency: {e}")
+
+    def _store_embedding_info(self, embedding_info: dict) -> None:
+        """Store embedding model information for consistency tracking."""
+        try:
+            import json
+            import pandas as pd
+
+            # Delete any existing embedding_model_info records
             try:
-                return self.embedding_provider.generate_embedding(text)
-            except Exception as e:
-                logger.error(f"Failed to generate embedding: {e}")
-        return None
+                self.embedding_metadata_table.delete("key = 'embedding_model_info'")
+            except:
+                pass  # Table might be empty
+
+            # Store new info
+            data = pd.DataFrame([{
+                "key": "embedding_model_info",
+                "value": json.dumps(embedding_info),
+                "created_at": datetime.now()
+            }])
+
+            self.embedding_metadata_table.add(data)
+            logger.debug(f"Stored embedding model info: {embedding_info}")
+
+        except Exception as e:
+            logger.error(f"Failed to store embedding info: {e}")
+
+    def _generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding using embedding adapter"""
+        return self.embedding_adapter.generate_embedding(text)
 
     def save_interaction(self, user_id: str, timestamp: datetime,
                         user_input: str, agent_response: str,
@@ -153,7 +258,7 @@ class LanceDBStorage(IStorage):
             "agent_response": agent_response,
             "topic": topic,
             "metadata": json.dumps(metadata or {}),
-            "embedding": embedding or [0.0] * 384  # Default embedding size
+            "embedding": [float(x) for x in embedding]  # Ensure float32 compatibility
         }
 
         # Insert into table
@@ -189,7 +294,7 @@ class LanceDBStorage(IStorage):
             "interaction_id": interaction_id,
             "note_type": note_type,
             "metadata": json.dumps(metadata or {}),
-            "embedding": embedding or [0.0] * 384  # Default embedding size
+            "embedding": [float(x) for x in embedding]  # Ensure float32 compatibility
         }
 
         # Insert into table
@@ -253,13 +358,13 @@ class LanceDBStorage(IStorage):
             # Build WHERE clause
             where_clause = " AND ".join(query_parts) if query_parts else None
 
-            # Try vector search first if embedding provider available
-            if self.embedding_provider:
+            # Try vector search first if embedding adapter available
+            if self.embedding_adapter:
                 try:
                     query_embedding = self._generate_embedding(query)
                     if query_embedding:
                         # Vector similarity search
-                        results = self.interactions_table.search(query_embedding).limit(50)
+                        results = self.interactions_table.search(query_embedding, vector_column_name="embedding").limit(50)
 
                         # Apply additional filters
                         if where_clause:
@@ -408,18 +513,32 @@ class LanceDBStorage(IStorage):
             links_count = len(self.links_table.search().limit(10000).to_pandas())
             components_count = len(self.components_table.search().limit(1000).to_pandas())
 
-            return {
+            stats = {
                 "total_interactions": interactions_count,
                 "total_notes": notes_count,
                 "total_links": links_count,
                 "total_components": components_count,
                 "uri": self.uri,
-                "embedding_provider_available": self.embedding_provider is not None
+                "embedding_provider_available": self.embedding_adapter is not None,
+                "embedding_info": self.embedding_adapter.get_embedding_info() if self.embedding_adapter else None
             }
+
+            # Add stored embedding model info for comparison
+            try:
+                stored_info_df = self.embedding_metadata_table.search().where("key = 'embedding_model_info'").to_pandas()
+                if len(stored_info_df) > 0:
+                    import json
+                    stats["stored_embedding_info"] = json.loads(stored_info_df.iloc[0]['value'])
+                    stats["embedding_consistency"] = self.embedding_adapter.check_consistency_with(stats["stored_embedding_info"]) if self.embedding_adapter else False
+            except Exception as e:
+                logger.debug(f"Could not retrieve stored embedding info: {e}")
+
+            return stats
         except Exception as e:
             logger.error(f"Failed to get stats: {e}")
             return {
                 "error": str(e),
                 "uri": self.uri,
-                "embedding_provider_available": self.embedding_provider is not None
+                "embedding_provider_available": self.embedding_adapter is not None,
+                "embedding_info": self.embedding_adapter.get_embedding_info() if self.embedding_adapter else None
             }

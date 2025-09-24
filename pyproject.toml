@@ -4,19 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "AbstractMemory"
-version = "0.0.1"
-description = "PLACEHOLDER: Memory system for transforming stateless LLMs into stateful LLMs - primarily designed for AbstractLLM integration"
+version = "0.2.1"
+description = "Production-ready memory system for LLM agents - NO MOCKS, real semantic search, clear LLM vs embedding provider separation"
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "AbstractMemory Team", email = "contact@example.com"}
+    {name = "AbstractMemory Team", email = "lpalbou@gmail.com"}
 ]
 maintainers = [
-    {name = "AbstractMemory Team", email = "contact@example.com"}
+    {name = "AbstractMemory Team", email = "palbou@gmail.com"}
 ]
-keywords = ["llm", "memory", "stateful", "ai", "placeholder"]
+keywords = ["llm", "memory", "semantic-search", "embeddings", "ai", "agents", "knowledge-graph", "temporal", "grounded-memory", "vector-search"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -26,17 +26,29 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 requires-python = ">=3.8"
+dependencies = [
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "black", "mypy"]
+llm = ["abstractcore>=2.1.0"]
+embeddings = ["abstractcore>=2.1.0", "lancedb>=0.6.0"]
+storage = ["lancedb>=0.6.0"]
+all = ["abstractcore>=2.1.0", "lancedb>=0.6.0"]
 
 [project.urls]
-Homepage = "https://github.com/abstractmemory/abstractmemory"
-Documentation = "https://github.com/abstractmemory/abstractmemory#readme"
-Repository = "https://github.com/abstractmemory/abstractmemory"
-"Bug Reports" = "https://github.com/abstractmemory/abstractmemory/issues"
+Homepage = "https://github.com/lpalbou/AbstractAgent"
+Documentation = "https://github.com/lpalbou/AbstractAgent#readme"
+Repository = "https://github.com/lpalbou/AbstractAgent"
+"Bug Reports" = "https://github.com/lpalbou/AbstractAgent/issues"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["abstractmemory*"]
 
-[tool.setuptools.package-dir]
-"" = "src"
+[tool.setuptools.package-data]
+abstractmemory = ["*.md", "docs/*.md"]
