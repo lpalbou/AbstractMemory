@@ -9,10 +9,10 @@ description = "Production-ready memory system for LLM agents - NO MOCKS, real se
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "AbstractMemory Team", email = "lpalbou@gmail.com"}
+    {name = "Laurent-Philippe Albou", email = "lpalbou@gmail.com"}
 ]
 maintainers = [
-    {name = "AbstractMemory Team", email = "palbou@gmail.com"}
+    {name = "Laurent-Philippe Albou", email = "lpalbou@gmail.com"}
 ]
 keywords = ["llm", "memory", "semantic-search", "embeddings", "ai", "agents", "knowledge-graph", "temporal", "grounded-memory", "vector-search"]
 classifiers = [
@@ -36,9 +36,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "black", "mypy"]
 llm = ["abstractcore>=2.1.0"]
-embeddings = ["abstractcore>=2.1.0", "lancedb>=0.6.0"]
+embeddings = ["abstractcore>=2.1.0", "lancedb>=0.6.0", "sentence-transformers>=2.0.0"]
 storage = ["lancedb>=0.6.0"]
-all = ["abstractcore>=2.1.0", "lancedb>=0.6.0"]
+all = ["abstractcore>=2.1.0", "lancedb>=0.6.0", "sentence-transformers>=2.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/lpalbou/AbstractMemory"

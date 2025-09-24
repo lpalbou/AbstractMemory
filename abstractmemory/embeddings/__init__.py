@@ -57,6 +57,14 @@ class EmbeddingAdapter:
         except ImportError:
             pass
 
+        # Check for SentenceTransformer provider first (before AbstractCore check)
+        if hasattr(self.provider, 'model') and hasattr(self.provider, 'generate_embedding'):
+            # Check if it's our SentenceTransformerProvider
+            if hasattr(self.provider, 'model_name') and hasattr(self.provider, 'provider_name'):
+                # Additional check to distinguish from AbstractCore
+                if hasattr(self.provider, 'get_embedding_dimension') and hasattr(self.provider, 'get_model_info'):
+                    return "sentence_transformers"
+
         # Check for AbstractCore provider with embedding support (has specific AbstractCore attributes)
         if hasattr(self.provider, 'generate_embedding') and hasattr(self.provider, 'provider_name'):
             return "abstractcore"
@@ -72,12 +80,6 @@ class EmbeddingAdapter:
                 return "ollama"
             elif 'mlx' in provider_name:
                 return "mlx"
-
-        # Check for SentenceTransformer provider
-        if hasattr(self.provider, 'model') and hasattr(self.provider, 'generate_embedding'):
-            # Check if it's our SentenceTransformerProvider
-            if hasattr(self.provider, 'model_name') and hasattr(self.provider, 'provider_name'):
-                return "sentence_transformers"
 
         # Check if provider has generate_embedding method (generic embedding provider)
         if hasattr(self.provider, 'generate_embedding') and callable(getattr(self.provider, 'generate_embedding')):
@@ -263,7 +265,7 @@ class EmbeddingAdapter:
 
     def is_real_embedding(self) -> bool:
         """Check if this adapter provides real semantic embeddings."""
-        return self.provider_type in ["abstractcore_embeddings", "abstractcore", "openai", "ollama", "generic_embedding_provider"]
+        return self.provider_type in ["abstractcore_embeddings", "abstractcore", "openai", "ollama", "sentence_transformers", "generic_embedding_provider"]
 
     def get_embedding_info(self) -> dict:
         """Get comprehensive information about the embedding provider for consistency tracking."""

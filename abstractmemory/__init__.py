@@ -36,7 +36,7 @@ def create_memory(
             storage_backend: "markdown", "lancedb", "dual", or None
             storage_path: Path for markdown storage
             storage_uri: URI for LanceDB storage
-            embedding_provider: AbstractCore instance for embeddings
+            embedding_provider: Embedding provider for semantic search (defaults to all-MiniLM-L6-v2)
 
     Examples:
         # For a ReAct agent
@@ -55,21 +55,20 @@ def create_memory(
             storage_path="./memory"
         )
 
-        # With LanceDB storage (SQL + vector search)
-        from abstractllm import create_llm
-        provider = create_llm("openai")
+        # With LanceDB storage (uses default all-MiniLM-L6-v2 embeddings)
         memory = create_memory("grounded",
             storage_backend="lancedb",
-            storage_uri="./lance.db",
-            embedding_provider=provider
+            storage_uri="./lance.db"
         )
 
-        # With dual storage (both markdown and LanceDB)
+        # With custom embedding provider
+        from abstractmemory.embeddings.sentence_transformer_provider import create_sentence_transformer_provider
+        custom_provider = create_sentence_transformer_provider("bge-base-en-v1.5")
         memory = create_memory("grounded",
             storage_backend="dual",
             storage_path="./memory",
             storage_uri="./lance.db",
-            embedding_provider=provider
+            embedding_provider=custom_provider
         )
     """
     if memory_type == "scratchpad":
@@ -77,6 +76,30 @@ def create_memory(
     elif memory_type == "buffer":
         return BufferMemory(**kwargs)
     elif memory_type == "grounded":
+        # Auto-configure default embedding provider if needed
+        storage_backend = kwargs.get('storage_backend')
+        embedding_provider = kwargs.get('embedding_provider')
+
+        # If storage requires embeddings but no provider specified, use default
+        if storage_backend in ['lancedb', 'dual'] and embedding_provider is None:
+            try:
+                from .embeddings.sentence_transformer_provider import create_sentence_transformer_provider
+                default_provider = create_sentence_transformer_provider("all-MiniLM-L6-v2")
+                kwargs['embedding_provider'] = default_provider
+
+                import logging
+                logging.info("Using default all-MiniLM-L6-v2 embedding model for semantic search")
+
+            except ImportError:
+                import logging
+                logging.warning(
+                    "sentence-transformers not available. Install with: pip install sentence-transformers. "
+                    "Vector search will not be available."
+                )
+            except Exception as e:
+                import logging
+                logging.warning(f"Could not initialize default embedding provider: {e}")
+
         return GroundedMemory(**kwargs)
     else:
         raise ValueError(f"Unknown memory type: {memory_type}")

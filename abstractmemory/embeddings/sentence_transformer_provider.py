@@ -16,7 +16,7 @@ class SentenceTransformerProvider:
     Supports various models including BAAI/bge-base-en-v1.5 and all-MiniLM-L6-v2.
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-base-en-v1.5", device: Optional[str] = None):
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2", device: Optional[str] = None):
         """
         Initialize the SentenceTransformer provider.
 
@@ -139,7 +139,7 @@ MODEL_CONFIGS = {
 }
 
 
-def create_sentence_transformer_provider(model_key: str = "bge-base-en-v1.5",
+def create_sentence_transformer_provider(model_key: str = "all-MiniLM-L6-v2",
                                        device: Optional[str] = None) -> SentenceTransformerProvider:
     """
     Create a SentenceTransformer provider with a predefined model configuration.

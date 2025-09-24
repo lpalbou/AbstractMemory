@@ -122,25 +122,38 @@ memory = create_memory(
 ```
 
 #### Powerful Vector Search
-High-performance search with AbstractCore embeddings:
+High-performance search with default optimized embeddings:
 
 ```python
-from abstractllm import create_llm
+# Uses default all-MiniLM-L6-v2 model (recommended)
+memory = create_memory(
+    "grounded",
+    storage_backend="lancedb",
+    storage_uri="./memory.db"
+    # embedding_provider automatically configured with all-MiniLM-L6-v2
+)
 
-# Create provider with embedding support
-provider = create_llm("openai", embedding_model="text-embedding-3-small")
-
-# Vector search storage
+# Or with custom embedding model
+from abstractmemory.embeddings.sentence_transformer_provider import create_sentence_transformer_provider
+custom_provider = create_sentence_transformer_provider("bge-base-en-v1.5")
 memory = create_memory(
     "grounded",
     storage_backend="lancedb",
     storage_uri="./memory.db",
-    embedding_provider=provider
+    embedding_provider=custom_provider
 )
 
 # Semantic search across stored interactions
 results = memory.search_stored_interactions("machine learning concepts")
 ```
+
+**🎯 Default Embedding Model**: AbstractMemory now uses **all-MiniLM-L6-v2** as the default embedding model, providing:
+- **Superior accuracy** (best semantic similarity performance)
+- **Maximum efficiency** (22M parameters, 384D embeddings)
+- **50% storage savings** compared to larger models
+- **Perfect retrieval performance** (100% P@5, R@5, F1 scores)
+
+See [embedding comparison report](docs/test-embeddings-report.md) for detailed benchmarks.
 
 #### Dual Storage - Best of Both Worlds
 Complete observability with powerful search:
@@ -247,7 +260,7 @@ python -m pytest tests/storage/test_dual_storage_comprehensive.py -v
 ### Installation
 
 ```bash
-# Install with semantic search capabilities (recommended)
+# Install with semantic search capabilities (includes sentence-transformers for default all-MiniLM-L6-v2 model)
 pip install abstractmemory[embeddings]
 
 # Or install everything
@@ -291,33 +304,39 @@ memory = create_memory("grounded", embedding_provider=embedder)  # NOT llm!
 ### Basic Usage
 
 ```python
-from abstractllm.embeddings import EmbeddingManager
 from abstractmemory import create_memory
 
-# 1. Create embedding manager for semantic search
-em = EmbeddingManager()  # Uses EmbeddingGemma (768D vectors)
-
-# 2. Create memory with dual storage
+# 1. Create memory with default all-MiniLM-L6-v2 embeddings (recommended)
 memory = create_memory(
     "grounded",
     storage_backend="dual",           # Markdown + LanceDB
     storage_path="./memory_files",    # Observable files
-    storage_uri="./memory.db",        # Vector search
-    embedding_provider=em             # Real embeddings
+    storage_uri="./memory.db"         # Vector search (auto-configured with all-MiniLM-L6-v2)
 )
 
-# 3. Add interactions (embeddings generated immediately!)
+# 2. Add interactions (embeddings generated automatically!)
 memory.set_current_user("alice")
 memory.add_interaction(
     "I'm working on machine learning projects",
     "Great! ML has amazing applications in many fields."
 )
-# ↳ Takes ~36ms: embedding generated and stored instantly
+# ↳ Takes ~13ms: optimized all-MiniLM-L6-v2 embedding generated and stored
 
-# 4. Semantic search finds contextually relevant content
+# 3. Semantic search finds contextually relevant content
 results = memory.search_stored_interactions("artificial intelligence research")
 # ↳ Finds ML interaction via semantic similarity (not keywords!)
 print(f"Found {len(results)} relevant conversations")
+
+# Optional: Use custom embedding model
+from abstractmemory.embeddings.sentence_transformer_provider import create_sentence_transformer_provider
+custom_provider = create_sentence_transformer_provider("bge-base-en-v1.5")
+custom_memory = create_memory(
+    "grounded",
+    storage_backend="dual",
+    storage_path="./memory_files",
+    storage_uri="./memory.db",
+    embedding_provider=custom_provider
+)
 ```
 
 ### 📋 What Happens When You Add Interactions
