@@ -5,6 +5,24 @@ All notable changes to AbstractMemory will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2025-09-24
+
+### 🔧 **Repository Configuration Fix**
+
+#### **Corrected GitHub Repository URLs**
+- **Fixed PyPI metadata**: Updated all project URLs in `pyproject.toml` to point to correct `AbstractMemory` repository
+- **Fixed documentation links**: Updated `docs/README.md` GitHub URLs to `AbstractMemory` repository  
+- **Fixed git remote**: Corrected git remote origin from `AbstractAgent` to `AbstractMemory`
+- **Rebuilt package**: Regenerated distribution files with correct repository metadata
+- **Verified consistency**: All repository references now correctly point to `lpalbou/AbstractMemory`
+
+#### **Impact**
+- **PyPI package page**: Now displays correct repository, documentation, and issue tracking links
+- **Developer experience**: Git operations and issue reporting now point to correct repository
+- **Documentation**: All GitHub links in docs now work correctly
+
+---
+
 ## [0.2.1] - 2025-09-24
 
 ### 🚨 **Critical Architecture Overhaul**

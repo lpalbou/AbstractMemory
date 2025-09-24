@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "AbstractMemory"
-version = "0.2.1"
+version = "0.2.2"
 description = "Production-ready memory system for LLM agents - NO MOCKS, real semantic search, clear LLM vs embedding provider separation"
 readme = "README.md"
 license = "MIT"
@@ -41,10 +41,10 @@ storage = ["lancedb>=0.6.0"]
 all = ["abstractcore>=2.1.0", "lancedb>=0.6.0"]
 
 [project.urls]
-Homepage = "https://github.com/lpalbou/AbstractAgent"
-Documentation = "https://github.com/lpalbou/AbstractAgent#readme"
-Repository = "https://github.com/lpalbou/AbstractAgent"
-"Bug Reports" = "https://github.com/lpalbou/AbstractAgent/issues"
+Homepage = "https://github.com/lpalbou/AbstractMemory"
+Documentation = "https://github.com/lpalbou/AbstractMemory#readme"
+Repository = "https://github.com/lpalbou/AbstractMemory"
+"Bug Reports" = "https://github.com/lpalbou/AbstractMemory/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

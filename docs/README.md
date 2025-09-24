@@ -113,8 +113,8 @@ results = memory.search_stored_interactions("machine learning")
 ## 🤝 Contributing & Support
 
 ### Getting Help
-- **[Issues](https://github.com/lpalbou/AbstractAgent/issues)** - Bug reports and feature requests
-- **[Discussions](https://github.com/lpalbou/AbstractAgent/discussions)** - Community support
+- **[Issues](https://github.com/lpalbou/AbstractMemory/issues)** - Bug reports and feature requests
+- **[Discussions](https://github.com/lpalbou/AbstractMemory/discussions)** - Community support
 
 ### Development
 - **[Development Logs](devlogs/)** - Implementation history and decisions
