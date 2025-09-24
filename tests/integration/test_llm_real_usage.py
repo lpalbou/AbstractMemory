@@ -9,8 +9,8 @@ import os
 from datetime import datetime
 from abstractmemory import create_memory, MemoryItem
 
-# Add AbstractCore to path
-sys.path.append('/Users/albou/projects/abstractllm_core')
+# Add AbstractCore path for real LLM provider
+sys.path.insert(0, '/Users/albou/projects/abstractllm_core')
 
 try:
     from abstractllm import create_llm

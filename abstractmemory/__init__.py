@@ -243,6 +243,11 @@ class GroundedMemory:
                     if interaction_id and note_id:
                         self.storage_manager.link_interaction_to_note(interaction_id, note_id)
 
+            return interaction_id
+
+        # If no storage manager, return None (or could generate a simple ID)
+        return None
+
     def _extract_facts_to_kg(self, text: str, event_time: datetime):
         """Extract facts from text and add to KG"""
         # Simplified extraction - would use NLP/LLM in production
@@ -509,6 +514,23 @@ class GroundedMemory:
             context_parts.append("\n=== Relevant Episodes ===")
             for episode in episodes:
                 context_parts.append(f"- {str(episode.content)[:100]}...")
+
+        # Get from storage manager (semantic search if available)
+        if hasattr(self, 'storage_manager') and self.storage_manager and hasattr(self.storage_manager, 'search_interactions'):
+            try:
+                storage_results = self.storage_manager.search_interactions(query, user_id=user_id, limit=max_items//2)
+                if storage_results:
+                    context_parts.append("\n=== Recent Interactions ===")
+                    for result in storage_results:
+                        # Show both user input and agent response from stored interaction
+                        if 'user_input' in result and 'agent_response' in result:
+                            user_text = result['user_input'][:100]
+                            agent_text = result['agent_response'][:100]
+                            context_parts.append(f"User: {user_text}{'...' if len(result['user_input']) > 100 else ''}")
+                            context_parts.append(f"Agent: {agent_text}{'...' if len(result['agent_response']) > 100 else ''}")
+            except Exception as e:
+                # Don't fail if storage search has issues
+                pass
 
         # Get from knowledge graph
         if self.kg:

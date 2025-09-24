@@ -35,7 +35,7 @@ def test_verbatim_plus_embeddings_proof():
 
     if not ABSTRACTCORE_AVAILABLE:
         print("❌ AbstractCore not available")
-        return False
+        pytest.skip("AbstractCore not available")
 
     print("🔥 PROOF: VERBATIM STORAGE + REAL EMBEDDINGS + SEMANTIC SEARCH")
     print("=" * 80)
@@ -356,13 +356,15 @@ The decision often depends more on your specific requirements than the technolog
             print(f"   • Verbatim storage: {verbatim_rate:.1%}")
             print(f"   • Semantic search: {semantic_rate:.1%}")
 
-        return overall_success
+        # Assert instead of returning
+        assert overall_success, f"Proof incomplete - verbatim: {verbatim_rate:.1%}, semantic: {semantic_rate:.1%}"
 
     except Exception as e:
         print(f"❌ Test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        # Re-raise the exception to fail the test properly
+        raise
 
     finally:
         shutil.rmtree(temp_dir)

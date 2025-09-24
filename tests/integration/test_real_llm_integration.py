@@ -5,8 +5,12 @@ These tests use real LLM providers to validate memory effectiveness.
 
 import pytest
 import os
+import sys
 from datetime import datetime, timedelta
 from abstractmemory import create_memory, MemoryItem
+
+# Add AbstractCore path for real LLM provider
+sys.path.insert(0, '/Users/albou/projects/abstractllm_core')
 
 # Try to import AbstractCore providers
 try:

@@ -217,7 +217,7 @@ Provide a brief helpful response."""
         print(f"   • Average relevance: {avg_relevance:.2f}")
         print(f"   • Performance: {batch_time/len(batch_embeddings)*1000:.0f}ms per embedding")
 
-        return True
+        # Test passes if we reach this point without exceptions
 
     finally:
         shutil.rmtree(temp_dir)

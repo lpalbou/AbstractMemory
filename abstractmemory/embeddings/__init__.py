@@ -73,6 +73,12 @@ class EmbeddingAdapter:
             elif 'mlx' in provider_name:
                 return "mlx"
 
+        # Check for SentenceTransformer provider
+        if hasattr(self.provider, 'model') and hasattr(self.provider, 'generate_embedding'):
+            # Check if it's our SentenceTransformerProvider
+            if hasattr(self.provider, 'model_name') and hasattr(self.provider, 'provider_name'):
+                return "sentence_transformers"
+
         # Check if provider has generate_embedding method (generic embedding provider)
         if hasattr(self.provider, 'generate_embedding') and callable(getattr(self.provider, 'generate_embedding')):
             return "generic_embedding_provider"
@@ -103,6 +109,19 @@ class EmbeddingAdapter:
                 return len(test_embedding)
             except:
                 return 1024  # Common Ollama embedding dimension
+        elif self.provider_type == "sentence_transformers":
+            # Get dimension directly from SentenceTransformer provider
+            try:
+                return self.provider.get_embedding_dimension()
+            except Exception as e:
+                logger.error(f"Failed to get dimension from SentenceTransformer provider: {e}")
+                # Fallback to test embedding
+                try:
+                    test_embedding = self.provider.generate_embedding("dimension_test")
+                    return len(test_embedding)
+                except Exception as e2:
+                    logger.error(f"Fallback dimension test failed: {e2}")
+                    raise ValueError(f"Unable to determine embedding dimension: {e}")
         elif self.provider_type == "generic_embedding_provider":
             # For any provider with generate_embedding method
             try:
@@ -142,6 +161,16 @@ class EmbeddingAdapter:
                     info["backend"] = str(self.provider.backend)
             except Exception as e:
                 logger.debug(f"Could not extract model info: {e}")
+        elif self.provider_type == "sentence_transformers":
+            # Get model info from SentenceTransformer provider
+            try:
+                provider_info = self.provider.get_model_info()
+                info.update(provider_info)
+            except Exception as e:
+                logger.debug(f"Could not extract SentenceTransformer model info: {e}")
+                # Fallback info
+                if hasattr(self.provider, 'model_name'):
+                    info["model_name"] = self.provider.model_name
         elif self.provider_type == "openai":
             info["model_name"] = "text-embedding-3-small"  # Default assumption
 
@@ -171,6 +200,8 @@ class EmbeddingAdapter:
                 return self._generate_ollama_embedding(text)
             elif self.provider_type == "mlx":
                 return self._generate_mlx_embedding(text)
+            elif self.provider_type == "sentence_transformers":
+                return self._generate_sentence_transformers_embedding(text)
             elif self.provider_type == "generic_embedding_provider":
                 return self.provider.generate_embedding(text)
             else:
@@ -225,6 +256,10 @@ class EmbeddingAdapter:
             "MLX embedding implementation not yet available. "
             "Please use AbstractCore EmbeddingManager or another provider."
         )
+
+    def _generate_sentence_transformers_embedding(self, text: str) -> List[float]:
+        """Generate embedding using SentenceTransformer provider."""
+        return self.provider.generate_embedding(text)
 
     def is_real_embedding(self) -> bool:
         """Check if this adapter provides real semantic embeddings."""
