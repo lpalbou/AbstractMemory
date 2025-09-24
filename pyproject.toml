@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "AbstractMemory"
-version = "0.2.2"
+version = "0.2.3"
 description = "Production-ready memory system for LLM agents - NO MOCKS, real semantic search, clear LLM vs embedding provider separation"
 readme = "README.md"
 license = "MIT"

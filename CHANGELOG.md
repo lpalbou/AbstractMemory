@@ -5,6 +5,92 @@ All notable changes to AbstractMemory will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2025-09-24
+
+### 🎯 **Default Embedding Model Optimization**
+
+#### **all-MiniLM-L6-v2 Set as Default**
+- **Superior Performance**: Based on comprehensive benchmarking, all-MiniLM-L6-v2 now defaults automatically
+- **Best Accuracy**: 0.100 avg error vs 0.252 for BGE-base-en-v1.5 in semantic similarity tests
+- **Perfect Retrieval**: 100% precision@5, recall@5, and F1 scores in retrieval benchmarks
+- **Maximum Efficiency**: 22M parameters (5x smaller than BGE) with 384D embeddings (50% storage savings)
+- **Optimal Speed**: ~13ms embedding generation vs 15-17ms for larger models
+
+#### **Automatic Configuration**
+- **Zero Setup**: `create_memory("grounded", storage_backend="lancedb")` now works out-of-the-box
+- **Smart Defaults**: Automatically configures all-MiniLM-L6-v2 for `lancedb` and `dual` storage backends
+- **Graceful Fallback**: Clear error messages when sentence-transformers unavailable
+- **Custom Override**: Full support for custom embedding models when needed
+
+#### **Enhanced Dependencies**
+- **Complete Package**: `pip install abstractmemory[embeddings]` now includes sentence-transformers
+- **Production Ready**: All dependencies for optimal semantic search included by default
+- **Backward Compatible**: Existing embedding providers continue to work unchanged
+
+#### **Comprehensive Benchmarking**
+- **New Test Framework**: Added comprehensive embedding model comparison system
+- **Multiple Models Tested**: BGE-base-en-v1.5, all-MiniLM-L6-v2, all-mpnet-base-v2
+- **Three Test Categories**: Semantic similarity, retrieval performance, speed/efficiency
+- **Detailed Report**: Complete benchmarking results in `docs/test-embeddings-report.md`
+
+### 🔧 **Technical Improvements**
+
+#### **Enhanced Embedding Support**
+- **New Provider System**: `SentenceTransformerProvider` class for sentence-transformers models
+- **Improved Detection**: Better provider type detection and model information extraction
+- **Model Validation**: Comprehensive model info tracking for consistency warnings
+- **Real Embeddings Only**: Maintains zero-mock policy with actual semantic embeddings
+
+#### **Updated Documentation**
+- **New Examples**: Updated README with automatic configuration examples
+- **Performance Data**: Added timing and efficiency metrics throughout docs
+- **Migration Guide**: Clear upgrade path for existing users
+- **Best Practices**: Guidance on when to use default vs custom embedding models
+
+### 🧪 **Testing Enhancements**
+
+#### **New Test Suite**
+- **Embedding Comparison Framework**: Comprehensive model comparison system
+- **Performance Benchmarks**: Real-world speed and accuracy measurements
+- **Integration Tests**: Full workflow validation with default embedding model
+- **Production Validation**: All tests use real implementations, zero mocks
+
+### 📊 **Performance Impact**
+
+#### **Speed Improvements**
+- **Faster Loading**: Default model loads efficiently on first use
+- **Optimized Generation**: 13ms average embedding time vs 15-17ms for larger models
+- **Reduced Memory**: 22M parameter model vs 109M for alternatives
+
+#### **Storage Efficiency**
+- **50% Reduction**: 384D embeddings vs 768D for equivalent accuracy
+- **Optimal Ratio**: Best accuracy-to-size ratio among tested models
+- **Production Scale**: Significant storage savings for large deployments
+
+### 🔄 **Migration Notes**
+
+#### **For New Users**
+- **Zero Configuration**: Just install `abstractmemory[embeddings]` and use `storage_backend="lancedb"`
+- **Immediate Benefits**: Get production-ready semantic search without any embedding setup
+- **Optimal Performance**: Automatically get the best-performing embedding model
+
+#### **For Existing Users**
+- **No Breaking Changes**: Current embedding providers continue working
+- **Optional Upgrade**: Remove `embedding_provider` parameter to use optimized default
+- **Consistency Warnings**: System warns about embedding model changes (feature, not bug)
+
+### 📈 **Benchmarking Results Summary**
+
+| Model | Accuracy | Retrieval | Speed | Efficiency | Overall |
+|-------|----------|-----------|-------|------------|---------|
+| **all-MiniLM-L6-v2** ⭐ | **A** | **A+** | **A+** | **A+** | **Winner** |
+| BGE-base-en-v1.5 | B+ | A+ | A | B | Good |
+| all-mpnet-base-v2 | A | A | B+ | B | Reference |
+
+**Recommendation**: Use all-MiniLM-L6-v2 (default) for 95% of use cases. Consider BGE-base-en-v1.5 only when maximum retrieval accuracy is critical and efficiency is not a concern.
+
+---
+
 ## [0.2.2] - 2025-09-24
 
 ### 🔧 **Repository Configuration Fix**
