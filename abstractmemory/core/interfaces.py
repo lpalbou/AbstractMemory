@@ -93,3 +93,18 @@ class IStorage(ABC):
                            end_date: Optional[datetime] = None) -> List[Dict]:
         """Search interactions with filters"""
         pass
+
+    @abstractmethod
+    def search_experiential_notes(self, query: Optional[str] = None,
+                                 interaction_id: Optional[str] = None,
+                                 note_type: Optional[str] = None,
+                                 start_date: Optional[datetime] = None,
+                                 end_date: Optional[datetime] = None,
+                                 limit: int = 50) -> List[Dict]:
+        """Search experiential notes with filters"""
+        pass
+
+    @abstractmethod
+    def load_experiential_notes_for_identity(self, limit: int = 100) -> List[Dict]:
+        """Load recent experiential notes for identity reconstruction"""
+        pass

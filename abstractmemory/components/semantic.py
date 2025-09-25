@@ -3,7 +3,7 @@ Semantic memory for facts, concepts, and learned knowledge.
 Separate from Core (identity) and Episodic (events).
 """
 
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Any
 from datetime import datetime
 from collections import defaultdict
 
@@ -100,3 +100,65 @@ class SemanticMemory(IMemoryComponent):
                 'facts': [self.facts[fid]['content'] for fid in fact_ids if fid in self.facts]
             }
         return {'concept': concept, 'facts': []}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize semantic memory to dictionary"""
+        # Convert datetime objects to ISO strings
+        facts_data = {}
+        for fact_id, fact in self.facts.items():
+            facts_data[fact_id] = {
+                'content': fact['content'],
+                'confidence': fact['confidence'],
+                'first_seen': fact['first_seen'].isoformat() if fact['first_seen'] else None,
+                'validated_at': fact['validated_at'].isoformat() if fact['validated_at'] else None,
+                'occurrence_count': fact['occurrence_count'],
+                'original_metadata': fact['original_metadata']
+            }
+
+        # Convert sets to lists for JSON serialization
+        concepts_data = {}
+        for concept, fact_ids in self.concepts.items():
+            concepts_data[concept] = list(fact_ids)
+
+        return {
+            'facts': facts_data,
+            'concepts': concepts_data,
+            'pending_facts': dict(self.pending_facts),
+            'validation_threshold': self.validation_threshold
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SemanticMemory':
+        """Deserialize semantic memory from dictionary"""
+        # Create instance
+        instance = cls.__new__(cls)
+        instance.validation_threshold = data.get('validation_threshold', 3)
+        instance.pending_facts = defaultdict(int, data.get('pending_facts', {}))
+        instance.facts = {}
+        instance.concepts = {}
+
+        # Reconstruct facts
+        facts_data = data.get('facts', {})
+        for fact_id, fact_data in facts_data.items():
+            try:
+                first_seen = datetime.fromisoformat(fact_data['first_seen']) if fact_data.get('first_seen') else None
+                validated_at = datetime.fromisoformat(fact_data['validated_at']) if fact_data.get('validated_at') else None
+            except (ValueError, TypeError):
+                first_seen = None
+                validated_at = None
+
+            instance.facts[fact_id] = {
+                'content': fact_data.get('content', ''),
+                'confidence': fact_data.get('confidence', 0.5),
+                'first_seen': first_seen,
+                'validated_at': validated_at,
+                'occurrence_count': fact_data.get('occurrence_count', 1),
+                'original_metadata': fact_data.get('original_metadata', {})
+            }
+
+        # Reconstruct concepts
+        concepts_data = data.get('concepts', {})
+        for concept, fact_ids in concepts_data.items():
+            instance.concepts[concept] = set(fact_ids)
+
+        return instance

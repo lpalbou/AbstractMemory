@@ -542,3 +542,68 @@ class LanceDBStorage(IStorage):
                 "embedding_provider_available": self.embedding_adapter is not None,
                 "embedding_info": self.embedding_adapter.get_embedding_info() if self.embedding_adapter else None
             }
+
+    def search_experiential_notes(self, query: Optional[str] = None,
+                                 interaction_id: Optional[str] = None,
+                                 note_type: Optional[str] = None,
+                                 start_date: Optional[datetime] = None,
+                                 end_date: Optional[datetime] = None,
+                                 limit: int = 50) -> List[Dict]:
+        """Search experiential notes with filters"""
+        try:
+            query_parts = []
+
+            # Filter by interaction_id
+            if interaction_id:
+                query_parts.append(f"interaction_id = '{interaction_id}'")
+
+            # Filter by note_type
+            if note_type:
+                query_parts.append(f"note_type = '{note_type}'")
+
+            # Date range filters
+            if start_date:
+                query_parts.append(f"timestamp >= '{start_date.isoformat()}'")
+            if end_date:
+                query_parts.append(f"timestamp <= '{end_date.isoformat()}'")
+
+            # Combine query parts
+            where_clause = " AND ".join(query_parts) if query_parts else None
+
+            # Execute query
+            if where_clause:
+                results = self.notes_table.search() \
+                    .where(where_clause) \
+                    .limit(limit) \
+                    .to_pandas()
+            else:
+                results = self.notes_table.to_pandas().head(limit)
+
+            # Apply text query filter if specified
+            if query and not results.empty:
+                mask = results['reflection'].str.contains(query, case=False, na=False)
+                results = results[mask]
+
+            # Convert to list of dictionaries
+            notes_list = []
+            for _, row in results.iterrows():
+                notes_list.append({
+                    "note_id": row['note_id'],
+                    "timestamp": row['timestamp'],
+                    "note_type": row.get('note_type', 'reflection'),
+                    "linked_interaction": row.get('interaction_id'),
+                    "content": row['reflection'],
+                    "metadata": row.get('metadata', {})
+                })
+
+            # Sort by timestamp (newest first)
+            notes_list.sort(key=lambda x: x["timestamp"], reverse=True)
+            return notes_list
+
+        except Exception as e:
+            logger.error(f"Error searching experiential notes: {e}")
+            return []
+
+    def load_experiential_notes_for_identity(self, limit: int = 100) -> List[Dict]:
+        """Load recent experiential notes for identity reconstruction"""
+        return self.search_experiential_notes(limit=limit)

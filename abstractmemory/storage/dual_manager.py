@@ -169,7 +169,8 @@ class DualStorageManager:
 
     def search_interactions(self, query: str, user_id: Optional[str] = None,
                            start_date: Optional[datetime] = None,
-                           end_date: Optional[datetime] = None) -> List[Dict]:
+                           end_date: Optional[datetime] = None,
+                           limit: Optional[int] = None) -> List[Dict]:
         """
         Search interactions. Prefers LanceDB for performance, falls back to markdown.
 

@@ -312,7 +312,8 @@ class MarkdownStorage(IStorage):
 
     def search_interactions(self, query: str, user_id: Optional[str] = None,
                            start_date: Optional[datetime] = None,
-                           end_date: Optional[datetime] = None) -> List[Dict]:
+                           end_date: Optional[datetime] = None,
+                           limit: Optional[int] = None) -> List[Dict]:
         """Search interactions using file system and text matching"""
 
         results = []
@@ -362,6 +363,11 @@ class MarkdownStorage(IStorage):
 
         # Sort by timestamp (newest first)
         results.sort(key=lambda x: x["timestamp"], reverse=True)
+
+        # Apply limit if specified
+        if limit is not None:
+            results = results[:limit]
+
         return results
 
     # IStorage interface implementation
@@ -424,6 +430,63 @@ class MarkdownStorage(IStorage):
 
         return None
 
+    def search_experiential_notes(self, query: Optional[str] = None,
+                                 interaction_id: Optional[str] = None,
+                                 note_type: Optional[str] = None,
+                                 start_date: Optional[datetime] = None,
+                                 end_date: Optional[datetime] = None,
+                                 limit: int = 50) -> List[Dict]:
+        """Search experiential notes with filters"""
+        results = []
+
+        for note_id, note_info in self.index["experiential_notes"].items():
+            # Apply filters
+            if interaction_id and note_info.get("linked_interaction") != interaction_id:
+                continue
+            if note_type and note_info.get("note_type") != note_type:
+                continue
+
+            # Parse timestamp for date filtering
+            try:
+                note_time = datetime.fromisoformat(note_info["timestamp"])
+                if start_date and note_time < start_date:
+                    continue
+                if end_date and note_time > end_date:
+                    continue
+            except (ValueError, KeyError):
+                continue
+
+            # Load the actual note content
+            file_path = self.base_path / note_info["file_path"]
+            if file_path.exists():
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    # Apply text query filter if specified
+                    if query and query.lower() not in content.lower():
+                        continue
+
+                    results.append({
+                        "note_id": note_id,
+                        "timestamp": note_info["timestamp"],
+                        "note_type": note_info.get("note_type", "reflection"),
+                        "linked_interaction": note_info.get("linked_interaction"),
+                        "content": content,
+                        "file_path": str(file_path)
+                    })
+                except IOError:
+                    continue
+
+        # Sort by timestamp (newest first) and limit results
+        results.sort(key=lambda x: x["timestamp"], reverse=True)
+        return results[:limit]
+
+    def load_experiential_notes_for_identity(self, limit: int = 100) -> List[Dict]:
+        """Load recent experiential notes for identity reconstruction"""
+        # Get all experiential notes sorted by timestamp
+        return self.search_experiential_notes(limit=limit)
+
     def get_stats(self) -> Dict[str, Any]:
         """Get storage statistics"""
         return {
@@ -445,3 +508,7 @@ class MarkdownStorage(IStorage):
                 if os.path.exists(filepath):
                     total_size += os.path.getsize(filepath)
         return total_size
+
+    def is_enabled(self) -> bool:
+        """Check if storage is enabled and ready to use"""
+        return self.base_path.exists()
