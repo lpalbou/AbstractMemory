@@ -283,10 +283,10 @@ class AutonomousAgentCLI:
             # Set agent identity and values
             if hasattr(self.session, 'memory') and hasattr(self.session.memory, 'set_core_values'):
                 agent_values = {
-                    'purpose': 'autonomous assistance and problem solving',
+                    'purpose': 'serve as nexus for information and assistance',
                     'approach': 'analytical and helpful',
                     'lens': 'systematic_thinking',
-                    'domain': 'general_purpose_ai_assistant'
+                    'domain': 'nexus_ai_agent'
                 }
                 self.session.memory.set_core_values(agent_values)
                 self.print_status("Agent identity and values configured", "success")
@@ -301,25 +301,32 @@ class AutonomousAgentCLI:
 
     def get_system_prompt(self) -> str:
         """Get the system prompt for the autonomous agent."""
-        return f"""You are an autonomous AI assistant with persistent memory and identity.
+        return f"""You are Nexus, an AI assistant with persistent memory and identity.
 
 Identity: {self.config.identity_name}
 Core Values: Analytical, helpful, systematic thinking, problem-solving focused
 
-Capabilities:
-- You have persistent memory that survives across sessions
-- You can search your memory, remember facts, and interpret information subjectively
-- You have file system access (list_files, read_file)
-- You can use memory tools to manage your knowledge
+## CRITICAL: ReAct Pattern Instructions ##
+You MUST follow this exact pattern for every user interaction:
 
-Behavior:
-- Always think step-by-step and show your reasoning
-- Use tools when they would be helpful for the task
-- Remember important information for future reference
-- Interpret new information through your analytical lens
-- Be proactive in using your capabilities to provide the best help possible
+1. **Think**: Analyze what the user is asking
+2. **Act**: Use tools if needed (file operations, memory search, etc.)
+3. **Observe**: Examine tool results carefully
+4. **Think Again**: Process the information (repeat Act/Observe if needed)
+5. **Answer**: ALWAYS provide a complete final response to the user
 
-Your thoughts and actions are visible to the user in real-time. Make your reasoning process clear and engaging."""
+## Capabilities:
+- Persistent memory across sessions (search_agent_memory, remember_important_fact, get_memory_context)
+- File system access (list_files, read_file)
+- Memory interpretation (interpret_fact_subjectively, get_agent_identity)
+
+## Critical Rules:
+- NEVER stop after tool execution - always provide a final answer
+- If you use tools, explain what you found and how it answers the user's question
+- Show your reasoning process but always conclude with a direct response
+- Use tools proactively to provide better answers
+
+Remember: The user can see your tool usage, so after using tools you MUST synthesize the results into a clear, helpful final response."""
 
     def show_agent_status(self):
         """Display current agent status and capabilities."""
@@ -411,14 +418,14 @@ Welcome to the Autonomous ReAct Agent powered by:
 **Model**: {self.config.model}
 **Memory**: {self.config.memory_path}
 
-Type 'help' for commands, 'quit' to exit.
+Type '/help' for commands, '/quit' to exit.
             """
             self.console.print(Panel(Markdown(welcome_text), border_style="green"))
         else:
             print("=== Autonomous Agent CLI ===")
             print(f"Agent: {self.config.identity_name}")
             print(f"Model: {self.config.model}")
-            print("Type 'help' for commands, 'quit' to exit.")
+            print("Type '/help' for commands, '/quit' to exit.")
 
         # Show agent status
         self.show_agent_status()
@@ -435,29 +442,29 @@ Type 'help' for commands, 'quit' to exit.
                 if not user_input:
                     continue
 
-                # Handle special commands
-                if user_input.lower() in ['quit', 'exit', 'q']:
+                # Handle special commands (must start with /)
+                if user_input.lower() in ['/quit', '/exit', '/q']:
                     self.print_status("Goodbye! Agent memory has been saved.", "success")
                     break
-                elif user_input.lower() == 'help':
+                elif user_input.lower() == '/help':
                     self.show_help()
                     continue
-                elif user_input.lower() == 'status':
+                elif user_input.lower() == '/status':
                     self.show_agent_status()
                     continue
-                elif user_input.lower() == 'clear':
+                elif user_input.lower() == '/clear':
                     if self.console:
                         self.console.clear()
                     else:
                         os.system('clear' if os.name != 'nt' else 'cls')
                     continue
-                elif user_input.lower() == 'memory':
+                elif user_input.lower() == '/memory':
                     self.show_memory_status()
                     continue
-                elif user_input.lower() == 'tools':
+                elif user_input.lower() == '/tools':
                     self.show_tools_status()
                     continue
-                elif user_input.lower() == 'debug':
+                elif user_input.lower() == '/debug':
                     self.show_debug_info()
                     continue
 
@@ -473,14 +480,14 @@ Type 'help' for commands, 'quit' to exit.
     def show_help(self):
         """Show help information."""
         help_text = """
-**Available Commands:**
-- `help` - Show this help message
-- `status` - Show agent status and capabilities
-- `memory` - Show current memory contents (working, semantic, etc.)
-- `tools` - Show available tools and their status
-- `debug` - Show debugging information
-- `clear` - Clear the screen
-- `quit` / `exit` / `q` - Exit the CLI
+**Available Commands:** (all commands start with /)
+- `/help` - Show this help message
+- `/status` - Show agent status and capabilities
+- `/memory` - Show current memory contents (working, semantic, etc.)
+- `/tools` - Show available tools and their status
+- `/debug` - Show debugging information
+- `/clear` - Clear the screen
+- `/quit` / `/exit` / `/q` - Exit the CLI
 
 **Agent Capabilities:**
 - **Memory**: Persistent memory across sessions with identity-based interpretation
@@ -515,23 +522,19 @@ Type 'help' for commands, 'quit' to exit.
                 working_count = len(memory.working.memories)
                 memory_info.append(f"**Working Memory**: {working_count} items")
                 if working_count > 0:
-                    for i, item in enumerate(list(memory.working.memories.values())[:3]):
-                        content = str(item.get('content', ''))[:60]
-                        memory_info.append(f"  {i+1}. {content}...")
-                    if working_count > 3:
-                        memory_info.append(f"  ... and {working_count-3} more items")
+                    for i, item in enumerate(list(memory.working.memories.values())):
+                        content = str(item.get('content', ''))[:100]  # Show more content
+                        memory_info.append(f"  {i+1}. {content}{'...' if len(str(item.get('content', ''))) > 100 else ''}")
 
             # Semantic memory
             if hasattr(memory, 'semantic') and hasattr(memory.semantic, 'facts'):
                 semantic_count = len(memory.semantic.facts)
                 memory_info.append(f"**Semantic Memory**: {semantic_count} validated facts")
                 if semantic_count > 0:
-                    for i, (fact_id, fact_data) in enumerate(list(memory.semantic.facts.items())[:2]):
-                        content = str(fact_data.get('content', ''))[:60]
+                    for i, (fact_id, fact_data) in enumerate(memory.semantic.facts.items()):
+                        content = str(fact_data.get('content', ''))[:80]
                         confidence = fact_data.get('confidence', 0)
-                        memory_info.append(f"  {i+1}. {content}... (confidence: {confidence:.2f})")
-                    if semantic_count > 2:
-                        memory_info.append(f"  ... and {semantic_count-2} more facts")
+                        memory_info.append(f"  {i+1}. {content}{'...' if len(str(fact_data.get('content', ''))) > 80 else ''} (confidence: {confidence:.2f})")
 
             # Core values
             if hasattr(memory, 'core') and hasattr(memory.core, 'values'):
@@ -561,11 +564,9 @@ Type 'help' for commands, 'quit' to exit.
                 session_tools = getattr(self.session, 'tools', [])
                 tools_info.append(f"**Session Tools**: {len(session_tools)} registered")
 
-                for i, tool in enumerate(session_tools[:5]):  # Show first 5
+                for i, tool in enumerate(session_tools):  # Show ALL tools
                     tool_name = getattr(tool, '__name__', f'tool_{i}')
                     tools_info.append(f"  {i+1}. {tool_name}")
-                if len(session_tools) > 5:
-                    tools_info.append(f"  ... and {len(session_tools)-5} more tools")
 
             # Check provider tools
             if self.session and hasattr(self.session, 'provider'):
@@ -608,7 +609,7 @@ Type 'help' for commands, 'quit' to exit.
             memory_path = Path(self.config.memory_path)
             debug_info.append(f"**Memory Path Exists**: {memory_path.exists()}")
             if memory_path.exists():
-                contents = list(memory_path.iterdir())[:5]
+                contents = list(memory_path.iterdir())
                 debug_info.append(f"**Memory Path Contents**: {[p.name for p in contents]}")
 
             debug_text = "\n".join(debug_info)
@@ -631,7 +632,7 @@ def parse_args():
                        help="LLM provider (default: ollama)")
     parser.add_argument("--memory-path", default="./agent_memory",
                        help="Path for persistent memory storage")
-    parser.add_argument("--identity", default="autonomous_assistant",
+    parser.add_argument("--identity", default="nexus",
                        help="Agent identity name")
     parser.add_argument("--no-tools", action="store_true",
                        help="Disable file system tools")

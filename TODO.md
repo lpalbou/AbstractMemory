@@ -57,3 +57,14 @@ abstractmemory/tests/integration/test_complete_llm_embedding_workflow.py::TestCo
 
 
 => why the skipped tests
+
+
+
+
+
+# ❌ Before: BasicSession (no memory)
+from abstractllm import BasicSession
+session = BasicSession(provider)
+response = session.generate("Hello, I'm Alice and I love Python")  # Forgets immediately
+
+=> that's not true, BasicSession still has a chat history, so it would remember for as long as the chat history is in the active context
