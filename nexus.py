@@ -107,6 +107,7 @@ class AgentConfig:
     identity_name: str = "autonomous_assistant"
     enable_tools: bool = True
     enable_memory_tools: bool = True
+    timeout: float = 7200.0  # HTTP timeout in seconds (2 hours)
     react_config: ReActConfig = None  # ReAct reasoning configuration
 
     def __post_init__(self):
@@ -407,10 +408,11 @@ class AutonomousAgentCLI:
             self.print_status("AbstractMemory not available - memory will be limited", "warning")
 
         try:
-            # Create LLM provider
+            # Create LLM provider with extended timeout for long conversations
             self.print_status(f"Connecting to {self.config.provider} with {self.config.model}...", "info")
-            provider = create_llm(self.config.provider, model=self.config.model)
+            provider = create_llm(self.config.provider, model=self.config.model, timeout=self.config.timeout)
             self.print_status("LLM connection established", "success")
+            self.print_status(f"HTTP timeout set to {self.config.timeout:.0f}s ({self.config.timeout/3600:.1f}h) for long conversations", "info")
 
             # Set up tools
             tools = []
@@ -673,7 +675,7 @@ Final Answer: [Write naturally and experientially about what you accomplished an
 
                     # Update cycle start line to show tool info
                     params_str = ", ".join([f"{k}={str(v)}" for k, v in tool_input.items()]) if tool_input else "no params"
-                    tool_info_line = f"🔧 Tool: {tool_name}({params_str})"
+                    tool_info_line = f"Tool: {tool_name}({params_str})"
                     self.print_status(tool_info_line, "action")
 
                     # Capture tool info for completion line
@@ -1161,6 +1163,9 @@ Type '/help' for commands, '/quit' to exit.
                 elif user_input.lower() == '/context':
                     self.show_last_context()
                     continue
+                elif user_input.lower().startswith('/compact'):
+                    self.handle_compact_command(user_input)
+                    continue
 
                 # Process through agent
                 self.process_user_input(user_input)
@@ -1182,6 +1187,7 @@ Type '/help' for commands, '/quit' to exit.
 - `/context` - Show verbatim last context used for final answer generation
 - `/tools` - Show available tools and their status
 - `/debug` - Show debugging information
+- `/compact [preserve_recent] [focus]` - Compact session history using AI summarization
 - `/clear` - Clear the screen
 - `/quit` / `/exit` / `/q` - Exit the CLI
 
@@ -1454,6 +1460,71 @@ Type '/help' for commands, '/quit' to exit.
         else:
             print(f"=== Last Context Used ===\n{context_text}")
 
+    def handle_compact_command(self, user_input: str):
+        """Handle /compact command for session compaction."""
+        # Parse command arguments
+        parts = user_input.lower().split()
+        preserve_recent = 6  # Default
+        focus = None
+
+        # Parse optional parameters: /compact [preserve_recent] [focus]
+        if len(parts) >= 2:
+            try:
+                preserve_recent = int(parts[1])
+                if preserve_recent < 0:
+                    self.print_status("preserve_recent must be non-negative", "error")
+                    return
+            except ValueError:
+                # Not a number, might be focus parameter
+                focus = " ".join(parts[1:])
+
+        if len(parts) >= 3:
+            try:
+                # If we parsed a number for preserve_recent, remaining parts are focus
+                int(parts[1])  # Check if second arg was number
+                focus = " ".join(parts[2:])
+            except ValueError:
+                # Second arg was focus, use default preserve_recent
+                preserve_recent = 6
+                focus = " ".join(parts[1:])
+
+        # Check if session has compaction capabilities
+        if not self.session:
+            self.print_status("No session available for compaction", "error")
+            return
+
+        # Check if we have BasicSession compaction methods via MemorySession
+        if hasattr(self.session, '_basic_session') and self.session._basic_session:
+            try:
+                # Get token estimate before compaction
+                original_tokens = self.session._basic_session.get_token_estimate()
+                original_messages = len(self.session._basic_session.messages)
+
+                # Show compaction start info
+                self.print_status(f"Starting compaction (current: {original_messages} messages, ~{original_tokens} tokens)", "info")
+                if focus:
+                    self.print_status(f"Focus: {focus}", "info")
+
+                # Perform compaction
+                self.session._basic_session.force_compact(
+                    preserve_recent=preserve_recent,
+                    focus=focus
+                )
+
+                # Show results
+                final_tokens = self.session._basic_session.get_token_estimate()
+                final_messages = len(self.session._basic_session.messages)
+                compression_ratio = original_tokens / final_tokens if final_tokens > 0 else 1.0
+
+                self.print_status(f"✅ Session compacted: {final_messages} messages (~{final_tokens} tokens)", "success")
+                self.print_status(f"Compression ratio: {compression_ratio:.1f}x (saved {original_tokens - final_tokens} tokens)", "success")
+
+            except Exception as e:
+                self.print_status(f"Compaction failed: {e}", "error")
+        else:
+            self.print_status("Compaction not available (AbstractCore BasicSession not found)", "warning")
+            self.print_status("This feature requires AbstractCore with BasicSession support", "info")
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -1472,6 +1543,8 @@ def parse_args():
                        help="Disable memory manipulation tools")
     parser.add_argument("--no-rich", action="store_true",
                        help="Disable rich terminal formatting")
+    parser.add_argument("--timeout", type=float, default=7200.0,
+                       help="HTTP timeout in seconds (default: 7200 = 2 hours)")
     return parser.parse_args()
 
 
@@ -1486,7 +1559,8 @@ def main():
         memory_path=args.memory_path,
         identity_name=args.identity,
         enable_tools=not args.no_tools,
-        enable_memory_tools=not args.no_memory_tools
+        enable_memory_tools=not args.no_memory_tools,
+        timeout=args.timeout
     )
 
     # Disable rich if requested
