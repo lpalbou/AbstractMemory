@@ -18,6 +18,7 @@ from .components.core import CoreMemory
 from .components.working import WorkingMemory
 from .components.semantic import SemanticMemory
 from .components.episodic import EpisodicMemory
+from .components.document import DocumentMemory
 from .graph.knowledge_graph import TemporalKnowledgeGraph
 
 
@@ -133,5 +134,6 @@ __all__ = [
     'WorkingMemory',
     'SemanticMemory',
     'EpisodicMemory',
+    'DocumentMemory',
     'TemporalKnowledgeGraph'
 ]

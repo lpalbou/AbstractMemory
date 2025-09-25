@@ -22,6 +22,7 @@ from .components.core import CoreMemory
 from .components.working import WorkingMemory
 from .components.semantic import SemanticMemory
 from .components.episodic import EpisodicMemory
+from .components.document import DocumentMemory
 from .graph.knowledge_graph import TemporalKnowledgeGraph
 
 logger = logging.getLogger(__name__)
@@ -324,6 +325,7 @@ class GroundedMemory:
     - Semantic: Validated facts and concepts (requires recurrence)
     - Working: Current context (transient)
     - Episodic: Event archive (long-term)
+    - Document: File storage and semantic search over documents
     """
 
     def __init__(self,
@@ -337,11 +339,12 @@ class GroundedMemory:
                  semantic_threshold: int = 3):
         """Initialize grounded memory system"""
 
-        # Initialize memory components (Four-tier architecture)
+        # Initialize memory components (Five-tier architecture)
         self.core = CoreMemory()  # Agent identity (rarely updated)
-        self.semantic = SemanticMemory(validation_threshold=semantic_threshold)  # Validated facts
+        self.semantic = SemanticMemory(validation_threshold=semantic_threshold, embedding_provider=embedding_provider)  # Validated facts with semantic search
         self.working = WorkingMemory(capacity=working_capacity)  # Transient context
         self.episodic = EpisodicMemory()  # Event archive
+        self.document = DocumentMemory(embedding_provider=embedding_provider)  # Document storage & search
 
         # Initialize knowledge graph if enabled
         self.kg = TemporalKnowledgeGraph() if enable_kg else None
@@ -1363,3 +1366,65 @@ class GroundedMemory:
     def get_core_memory_context(self) -> str:
         """Get core memory context for always-accessible facts"""
         return self.core.get_context()
+
+    # === Document Memory Methods ===
+
+    def store_document(self, filepath: str, content: str, file_type: Optional[str] = None,
+                      file_size: Optional[int] = None) -> str:
+        """
+        Store a document in memory for later retrieval and semantic search.
+
+        Args:
+            filepath: Path to the document
+            content: Document content
+            file_type: Type of file (optional, will be inferred)
+            file_size: Size of file (optional, will be calculated)
+
+        Returns:
+            Document ID
+        """
+        metadata = {
+            'filepath': filepath,
+            'file_type': file_type,
+            'file_size': file_size or len(content)
+        }
+
+        memory_item = MemoryItem(
+            content=content,
+            event_time=datetime.now(),
+            ingestion_time=datetime.now(),
+            confidence=1.0,
+            metadata=metadata
+        )
+
+        return self.document.add(memory_item)
+
+    def search_documents(self, query: str, limit: int = 5) -> List[Dict]:
+        """
+        Search stored documents using semantic and keyword search.
+
+        Args:
+            query: Search query
+            limit: Maximum number of results
+
+        Returns:
+            List of document dictionaries
+        """
+        return self.document.search_documents(query, limit)
+
+    def get_document_by_path(self, filepath: str) -> Optional[Dict]:
+        """Get a specific document by its filepath."""
+        return self.document.get_document_by_filepath(filepath)
+
+    def get_document_summary(self) -> Dict:
+        """Get statistics about stored documents."""
+        return self.document.get_document_summary()
+
+    def search_document_content(self, query: str, limit: int = 10) -> List[MemoryItem]:
+        """
+        Search document content and return MemoryItems.
+
+        This is the low-level interface that returns MemoryItem objects,
+        while search_documents() returns document dictionaries.
+        """
+        return self.document.retrieve(query, limit)

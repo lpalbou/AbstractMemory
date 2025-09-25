@@ -16,15 +16,19 @@ class SemanticMemory(IMemoryComponent):
     Only stores validated, recurring knowledge.
     """
 
-    def __init__(self, validation_threshold: int = 3):
+    def __init__(self, validation_threshold: int = 3, embedding_provider=None):
         """
         Args:
             validation_threshold: How many times a fact must be observed to be stored
+            embedding_provider: Provider for semantic embeddings (optional)
+                                When available, enables semantic search over facts
         """
         self.facts: Dict[str, Dict] = {}  # Validated facts
         self.concepts: Dict[str, Set[str]] = {}  # Concept relationships
         self.pending_facts: defaultdict = defaultdict(int)  # Counting occurrences
         self.validation_threshold = validation_threshold
+        self.embedding_provider = embedding_provider
+        self.fact_embeddings: Dict[str, List[float]] = {}  # fact_id -> embedding
 
     def add(self, item: MemoryItem) -> str:
         """Add potential fact - only stored after validation"""
@@ -45,6 +49,17 @@ class SemanticMemory(IMemoryComponent):
                 'occurrence_count': occurrence_count,
                 'original_metadata': item.metadata or {}
             }
+
+            # Generate embedding if provider available
+            if self.embedding_provider:
+                try:
+                    fact_embedding = self.embedding_provider.generate_embedding(str(item.content))
+                    self.fact_embeddings[fact_id] = fact_embedding
+                except Exception as e:
+                    # Continue without embedding if generation fails
+                    import logging
+                    logging.debug(f"Failed to generate embedding for fact {fact_id}: {e}")
+
             # Clear from pending
             del self.pending_facts[fact_key]
             return fact_id
@@ -52,7 +67,67 @@ class SemanticMemory(IMemoryComponent):
         return ""  # Not yet validated
 
     def retrieve(self, query: str, limit: int = 10) -> List[MemoryItem]:
-        """Retrieve validated facts matching query"""
+        """
+        Retrieve validated facts matching query.
+        Uses semantic search (embeddings) when available, otherwise falls back to keyword search.
+        """
+        # Try semantic search first if embeddings available
+        if self.embedding_provider and self.fact_embeddings:
+            semantic_results = self._semantic_search(query, limit)
+            if semantic_results:
+                return semantic_results
+
+        # Fallback to keyword search
+        return self._keyword_search(query, limit)
+
+    def _semantic_search(self, query: str, limit: int) -> List[MemoryItem]:
+        """Perform semantic search using embeddings."""
+        try:
+            # Generate query embedding
+            query_embedding = self.embedding_provider.generate_embedding(query)
+
+            # Calculate similarities
+            fact_scores = []
+            for fact_id, fact_embedding in self.fact_embeddings.items():
+                if fact_id in self.facts:  # Ensure fact still exists
+                    similarity = self._cosine_similarity(query_embedding, fact_embedding)
+                    fact_scores.append((similarity, fact_id))
+
+            # Sort by similarity and get top results
+            fact_scores.sort(key=lambda x: x[0], reverse=True)
+
+            # Convert to MemoryItems
+            results = []
+            for similarity, fact_id in fact_scores[:limit]:
+                fact = self.facts[fact_id]
+
+                # Preserve original metadata and add search metadata
+                original_metadata = fact.get('original_metadata', {})
+                metadata = original_metadata.copy()
+                metadata['occurrence_count'] = fact['occurrence_count']
+                metadata['semantic_similarity'] = similarity
+                metadata['search_type'] = 'semantic'
+
+                # Boost confidence with semantic similarity
+                boosted_confidence = min(1.0, fact['confidence'] * (1 + similarity * 0.5))
+
+                results.append(MemoryItem(
+                    content=fact['content'],
+                    event_time=fact['first_seen'],
+                    ingestion_time=fact['validated_at'],
+                    confidence=boosted_confidence,
+                    metadata=metadata
+                ))
+
+            return results
+
+        except Exception as e:
+            import logging
+            logging.debug(f"Semantic search failed, falling back to keyword search: {e}")
+            return []
+
+    def _keyword_search(self, query: str, limit: int) -> List[MemoryItem]:
+        """Fallback keyword search."""
         results = []
         query_lower = query.lower()
 
@@ -62,6 +137,7 @@ class SemanticMemory(IMemoryComponent):
                 original_metadata = fact.get('original_metadata', {})
                 metadata = original_metadata.copy()
                 metadata['occurrence_count'] = fact['occurrence_count']
+                metadata['search_type'] = 'keyword'
 
                 results.append(MemoryItem(
                     content=fact['content'],
@@ -76,6 +152,22 @@ class SemanticMemory(IMemoryComponent):
         # Sort by confidence and return results
         sorted_results = sorted(results, key=lambda x: x.confidence, reverse=True)[:limit]
         return sorted_results
+
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        try:
+            import math
+
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            magnitude1 = math.sqrt(sum(a * a for a in vec1))
+            magnitude2 = math.sqrt(sum(a * a for a in vec2))
+
+            if magnitude1 == 0 or magnitude2 == 0:
+                return 0
+
+            return dot_product / (magnitude1 * magnitude2)
+        except:
+            return 0
 
     def consolidate(self) -> int:
         """Link related facts into concepts"""

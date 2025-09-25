@@ -39,6 +39,7 @@ class MemoryConfig:
     include_working: bool = True       # Recent context/conversations
     include_semantic: bool = True      # Learned facts and patterns
     include_episodic: bool = False     # Historical episodes (query-dependent)
+    include_document: bool = True      # Document chunks (query-dependent)
     include_failures: bool = True      # Failure warnings
     include_storage: bool = True       # Stored interactions search
     include_knowledge_graph: bool = True  # Knowledge graph facts
@@ -48,6 +49,7 @@ class MemoryConfig:
         'working': 5,
         'semantic': 3,
         'episodic': 3,
+        'document': 2,     # Document chunks
         'storage': 3,
         'knowledge_graph': 3
     })
@@ -841,6 +843,37 @@ class MemorySession:
             except Exception as e:
                 logger.debug(f"Failed to search stored interactions: {e}")
 
+        # Document memory chunks (if enabled and available)
+        if config.include_document and hasattr(self.memory, 'document'):
+            try:
+                max_document = config.max_items_per_tier.get('document', 2)
+                document_chunks = self.memory.document.retrieve(query, limit=max_document)
+                if document_chunks:
+                    context_parts.append("=== Relevant Documents ===")
+                    retrieved_content_hashes = set()  # Track to avoid duplicates
+
+                    for chunk in document_chunks:
+                        # Check for duplicates using content hash
+                        import hashlib
+                        content_hash = hashlib.md5(str(chunk.content).encode()).hexdigest()
+
+                        if content_hash not in retrieved_content_hashes:
+                            retrieved_content_hashes.add(content_hash)
+
+                            filepath = chunk.metadata.get('filepath', 'unknown')
+                            # Truncate chunk content for context (not storage!)
+                            chunk_preview = str(chunk.content)[:500] + "..." if len(str(chunk.content)) > 500 else str(chunk.content)
+
+                            if config.show_confidence:
+                                confidence_str = f" (relevance: {chunk.confidence:.2f})"
+                            else:
+                                confidence_str = ""
+
+                            context_parts.append(f"From {filepath}{confidence_str}:\n{chunk_preview}")
+
+            except Exception as e:
+                logger.debug(f"Failed to retrieve document chunks: {e}")
+
         # Knowledge graph facts (if enabled)
         if config.include_knowledge_graph and hasattr(self.memory, 'kg') and self.memory.kg:
             try:
@@ -853,9 +886,10 @@ class MemorySession:
             except Exception as e:
                 logger.debug(f"Failed to retrieve knowledge graph facts: {e}")
 
-        # Join context parts with appropriate spacing
+        # Join context parts with appropriate spacing and prefix
         if context_parts:
-            return "\n\n".join(context_parts)
+            context_content = "\n\n".join(context_parts)
+            return f"Here is what I remember on that topic:\n\n{context_content}"
         else:
             return ""
 

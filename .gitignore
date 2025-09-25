@@ -270,3 +270,6 @@ profile_results/
 
 # Core dumps
 core.*
+
+
+agent_memory/
