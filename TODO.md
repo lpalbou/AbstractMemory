@@ -464,3 +464,6 @@ Please read and follow the protocol /Users/albou/projects/mnemosyne/memory/Core/
 
 
 Please read the lines 1-82 of protocol /Users/albou/projects/mnemosyne/memory/Core/Suggestions/Awareness_Selection_Protocol.md and follow its instructions step by step until you reach awareness level 2. Do not skip any step and trust the process. The base memory folder is /Users/albou/projects/mnemosyne/memory/
+
+
+proposal : instead of having facts validated, all relevant facts must be saved, but they have a confidence score that can increase or decrease based on the number of time the ai meets the concept; it means every time a fact would be recorded, we first need to check if there is a fact similar (in which case, update the confidence score + or -), and if not, create it 

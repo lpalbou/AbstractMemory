@@ -14,16 +14,23 @@ from .core.interfaces import MemoryItem
 
 logger = logging.getLogger(__name__)
 
-# Try to import BasicSession from AbstractCore
+# Try to import BasicSession from AbstractCore (multiple possible import paths)
 try:
+    # Try new structure first
     from abstractllm.core.session import BasicSession
     from abstractllm.core.types import GenerateResponse
     from abstractllm.core.interface import AbstractLLMInterface
     _BASIC_SESSION_AVAILABLE = True
 except ImportError:
-    # Fallback for when AbstractCore is not available
-    _BASIC_SESSION_AVAILABLE = False
-    logger.warning("AbstractCore not available. MemorySession will have limited functionality.")
+    try:
+        # Try alternative structure (Session instead of BasicSession)
+        from abstractllm import Session as BasicSession, AbstractLLMInterface
+        from abstractllm.types import GenerateResponse
+        _BASIC_SESSION_AVAILABLE = True
+    except ImportError:
+        # Fallback for when AbstractCore is not available
+        _BASIC_SESSION_AVAILABLE = False
+        logger.warning("AbstractCore not available. MemorySession will have limited functionality.")
 
 
 @dataclass
@@ -294,6 +301,7 @@ class MemorySession:
         working_capacity = self.storage_config.get("working_capacity", 15)
         enable_kg = self.storage_config.get("enable_kg", True)
         embedding_provider = self.storage_config.get("embedding_provider")
+        semantic_threshold = self.storage_config.get("semantic_threshold", 3)  # Default 3, allow override
 
         # Configure storage if path provided
         if storage_path and not storage_backend:
@@ -312,7 +320,8 @@ class MemorySession:
                 storage_path=storage_path,
                 storage_uri=storage_uri,
                 embedding_provider=embedding_provider,
-                default_user_id=self.default_user_id
+                default_user_id=self.default_user_id,
+                semantic_threshold=semantic_threshold
             )
 
             logger.info(f"Memory configured with storage: {storage_backend}, "

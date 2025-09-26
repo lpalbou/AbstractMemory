@@ -253,6 +253,20 @@ class AutonomousAgentCLI:
                 return "Memory not available"
 
             try:
+                # Check for similar facts to prevent duplication
+                if hasattr(self.session, 'memory') and hasattr(self.session.memory, 'semantic'):
+                    # Check pending facts for similarity
+                    fact_lower = fact.lower()
+                    for pending_fact in self.session.memory.semantic.pending_facts:
+                        if self._facts_are_similar(fact_lower, pending_fact):
+                            return f"Similar fact already exists: {pending_fact[:100]}..."
+
+                    # Check validated facts for similarity
+                    for fact_id, fact_data in self.session.memory.semantic.facts.items():
+                        existing_fact = str(fact_data.get('content', '')).lower()
+                        if self._facts_are_similar(fact_lower, existing_fact):
+                            return f"Similar fact already validated: {existing_fact[:100]}..."
+
                 self.session.learn_about_user(fact)
                 return f"Remembered: {fact}"
             except Exception as e:
@@ -396,6 +410,56 @@ class AutonomousAgentCLI:
 
         return memory_tools
 
+    def _facts_are_similar(self, fact1: str, fact2: str, threshold: float = 0.75) -> bool:
+        """Check if two facts are similar to prevent duplication using embeddings when available."""
+        try:
+            # Try semantic similarity first (if embeddings available)
+            if (hasattr(self.session, 'memory') and
+                hasattr(self.session.memory, 'semantic') and
+                hasattr(self.session.memory.semantic, 'embedding_provider') and
+                self.session.memory.semantic.embedding_provider):
+
+                embedding_provider = self.session.memory.semantic.embedding_provider
+                try:
+                    embedding1 = embedding_provider.generate_embedding(fact1)
+                    embedding2 = embedding_provider.generate_embedding(fact2)
+
+                    # Calculate cosine similarity
+                    similarity = self._cosine_similarity(embedding1, embedding2)
+                    return similarity >= threshold
+                except Exception:
+                    pass  # Fall back to word overlap
+
+            # Fallback: Simple word overlap similarity (Jaccard index)
+            words1 = set(fact1.lower().split())
+            words2 = set(fact2.lower().split())
+
+            if not words1 or not words2:
+                return False
+
+            intersection = words1.intersection(words2)
+            union = words1.union(words2)
+
+            similarity = len(intersection) / len(union) if union else 0
+            return similarity >= threshold
+        except Exception:
+            return False
+
+    def _cosine_similarity(self, vec1: list, vec2: list) -> float:
+        """Calculate cosine similarity between two vectors."""
+        try:
+            import math
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            magnitude1 = math.sqrt(sum(a * a for a in vec1))
+            magnitude2 = math.sqrt(sum(a * a for a in vec2))
+
+            if magnitude1 == 0 or magnitude2 == 0:
+                return 0.0
+
+            return dot_product / (magnitude1 * magnitude2)
+        except Exception:
+            return 0.0
+
     def setup_agent(self):
         """Initialize the autonomous agent with memory and tools."""
         self.print_status("Initializing Autonomous Agent...", "info")
@@ -435,7 +499,7 @@ class AutonomousAgentCLI:
             self.session = MemorySession(
                 provider,
                 tools=tools,
-                memory_config={"path": self.config.memory_path},
+                memory_config={"path": self.config.memory_path, "semantic_threshold": 1},  # Immediate validation
                 default_memory_config=memory_config,
                 system_prompt=self.get_system_prompt()
             )
@@ -452,6 +516,9 @@ class AutonomousAgentCLI:
                 self.print_status("Agent identity and values configured", "success")
 
             self.print_status(f"Memory session created with {len(tools)} tools", "success")
+
+            # Load previous chat history if available
+            self.load_chat_history()
 
         except Exception as e:
             self.print_status(f"Failed to initialize agent: {e}", "error")
@@ -1170,6 +1237,9 @@ Type '/help' for commands, '/quit' to exit.
                 # Process through agent
                 self.process_user_input(user_input)
 
+                # Auto-save chat history after each interaction
+                self.save_chat_history()
+
             except KeyboardInterrupt:
                 self.print_status("\nInterrupted by user. Goodbye!", "info")
                 break
@@ -1242,7 +1312,16 @@ Type '/help' for commands, '/quit' to exit.
 
             # Working memory - recent interactions
             if hasattr(memory, 'working'):
-                if hasattr(memory.working, 'memories'):
+                if hasattr(memory.working, 'items'):
+                    working_items = memory.working.items
+                    working_count = len(working_items)
+                    memory_info.append(f"**Working Memory**: {working_count} items (capacity: {getattr(memory.working, 'capacity', 'unknown')})")
+                    if working_count > 0:
+                        for i, (_, item) in enumerate(list(working_items)):
+                            content = str(item.content)[:100]
+                            event_time = getattr(item, 'event_time', 'Unknown')
+                            memory_info.append(f"  {i+1}. [{event_time}] {content}{'...' if len(str(item.content)) > 100 else ''}")
+                elif hasattr(memory.working, 'memories'):
                     working_memories = memory.working.memories
                     working_count = len(working_memories)
                     memory_info.append(f"**Working Memory**: {working_count} items")
@@ -1260,7 +1339,8 @@ Type '/help' for commands, '/quit' to exit.
                 if hasattr(memory.semantic, 'facts'):
                     semantic_facts = memory.semantic.facts
                     semantic_count = len(semantic_facts)
-                    memory_info.append(f"**Semantic Memory**: {semantic_count} validated facts")
+                    validation_threshold = getattr(memory.semantic, 'validation_threshold', 3)
+                    memory_info.append(f"**Semantic Memory**: {semantic_count} validated facts (need {validation_threshold} repetitions)")
                     if semantic_count > 0:
                         for i, (_, fact_data) in enumerate(semantic_facts.items()):
                             content = str(fact_data.get('content', ''))[:80]
@@ -1273,9 +1353,12 @@ Type '/help' for commands, '/quit' to exit.
                 if hasattr(memory.semantic, 'pending_facts'):
                     pending_count = len(memory.semantic.pending_facts)
                     if pending_count > 0:
-                        memory_info.append(f"  **Pending Facts**: {pending_count} awaiting validation")
-                        for fact, count in list(memory.semantic.pending_facts.items())[:3]:
-                            memory_info.append(f"    - \"{fact[:60]}{'...' if len(fact) > 60 else ''}\" ({count} occurrences)")
+                        memory_info.append(f"  **Pending Facts**: {pending_count} awaiting validation (need {validation_threshold} total)")
+                        for fact, count in list(memory.semantic.pending_facts.items())[:5]:
+                            remaining = validation_threshold - count
+                            memory_info.append(f"    - \"{fact[:60]}{'...' if len(fact) > 60 else ''}\" ({count}/{validation_threshold}, need {remaining} more)")
+                    else:
+                        memory_info.append(f"  **Pending Facts**: 0 facts pending validation")
                 memory_info.append("")
 
             # Core values and identity
@@ -1459,6 +1542,66 @@ Type '/help' for commands, '/quit' to exit.
             self.console.print(Panel(context_text, title="Last Context Used", border_style="cyan"))
         else:
             print(f"=== Last Context Used ===\n{context_text}")
+
+    def save_chat_history(self):
+        """Save chat history to disk for persistence between sessions."""
+        try:
+            if self.session and self.session._basic_session and hasattr(self.session._basic_session, 'messages'):
+                history_path = Path(self.config.memory_path) / "chat_history.json"
+                history_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Properly serialize Message objects using their to_dict() method
+                messages_data = []
+                for msg in self.session._basic_session.messages:
+                    if hasattr(msg, 'to_dict'):
+                        messages_data.append(msg.to_dict())
+                    else:
+                        # Fallback for non-Message objects
+                        messages_data.append(msg)
+
+                with open(history_path, 'w', encoding='utf-8') as f:
+                    import json
+                    json.dump(messages_data, f, indent=2, default=str)
+
+        except Exception as e:
+            self.print_status(f"Warning: Failed to save chat history: {e}", "warning")
+
+    def load_chat_history(self):
+        """Load chat history from disk if available."""
+        try:
+            history_path = Path(self.config.memory_path) / "chat_history.json"
+            if history_path.exists() and self.session and self.session._basic_session:
+                with open(history_path, 'r', encoding='utf-8') as f:
+                    import json
+                    messages_data = json.load(f)
+
+                    if messages_data and isinstance(messages_data, list):
+                        # Properly reconstruct Message objects using from_dict()
+                        try:
+                            from abstractllm.session import Message
+                        except ImportError:
+                            # Alternative import path
+                            from abstractllm import Message
+                        reconstructed_messages = []
+
+                        for msg_data in messages_data:
+                            try:
+                                if isinstance(msg_data, dict) and 'role' in msg_data:
+                                    # Reconstruct Message object
+                                    message = Message.from_dict(msg_data)
+                                    reconstructed_messages.append(message)
+                                else:
+                                    # Keep as-is if not a proper message dict
+                                    reconstructed_messages.append(msg_data)
+                            except Exception as e:
+                                self.print_status(f"Warning: Could not reconstruct message: {e}", "warning")
+                                continue
+
+                        self.session._basic_session.messages = reconstructed_messages
+                        self.print_status(f"Loaded {len(reconstructed_messages)} previous messages from chat history", "info")
+
+        except Exception as e:
+            self.print_status(f"Warning: Failed to load chat history: {e}", "warning")
 
     def handle_compact_command(self, user_input: str):
         """Handle /compact command for session compaction."""

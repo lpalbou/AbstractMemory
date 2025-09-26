@@ -378,6 +378,10 @@ class GroundedMemory:
         # Legacy storage backend for compatibility
         self.storage = self._init_storage(storage_backend, embedding_provider)
 
+        # CRITICAL FIX: Auto-load from storage if available
+        if self.storage_manager and self.storage_manager.is_enabled():
+            self.load_from_storage()
+
     def set_core_values(self, core_values: Dict[str, Any]):
         """
         Set core values that act as interpretive lens for subjective experience.
@@ -819,7 +823,13 @@ class GroundedMemory:
             return interaction_id
 
         # If no storage manager, return None (or could generate a simple ID)
-        return None
+        result = None
+
+        # CRITICAL FIX: Auto-save after each interaction to ensure persistence
+        if self.storage_manager and self.storage_manager.is_enabled():
+            self.save_to_storage()
+
+        return result
 
     def _extract_facts_to_kg(self, text: str, event_time: datetime):
         """Extract facts from text and add to KG"""
@@ -1275,7 +1285,19 @@ class GroundedMemory:
             if fact not in self.user_profiles[user_id]['facts']:
                 self.user_profiles[user_id]['facts'].append(fact)
 
-            # Only update core memory after threshold met
+        # CRITICAL FIX: Also add to semantic memory for validation and search
+        semantic_item = MemoryItem(
+            content=fact,
+            event_time=datetime.now(),
+            ingestion_time=datetime.now(),
+            confidence=1.0,
+            metadata={'user_id': user_id, 'source': 'learn_about_user'}
+        )
+        self.semantic.add(semantic_item)
+
+        # Only update core memory after threshold met (if user exists in profiles)
+        if user_id in self.user_profiles:
+            core_key = f"user:{user_id}:{fact}"
             if self.core_update_candidates[core_key] >= self.core_update_threshold:
                 current_info = self.core.blocks.get("user_info").content
                 updated_info = f"{current_info}\n- {fact}"
