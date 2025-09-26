@@ -93,20 +93,21 @@ class InputArea:
         # Create completer
         self.completer = CommandCompleter()
 
-        # Create buffer
+        # Create buffer with explicit input configuration
         self.buffer = Buffer(
             multiline=enable_multiline,
             history=self.history,
             completer=self.completer,
             complete_while_typing=True,
-            accept_handler=self._accept_handler
+            accept_handler=self._accept_handler,
+            read_only=False,  # Explicitly allow input
         )
 
         # Create key bindings
         self.kb = KeyBindings()
         self._setup_key_bindings()
 
-        # Create buffer control
+        # Create buffer control - let prompt_toolkit handle input processing naturally
         self.buffer_control = BufferControl(
             buffer=self.buffer,
             key_bindings=self.kb,
@@ -120,40 +121,17 @@ class InputArea:
     def _setup_key_bindings(self):
         """Setup key bindings for the input area."""
 
-        @self.kb.add('enter')
-        @self.kb.add('c-m')
-        def submit_single_line(event):
-            """Submit single line input."""
+        @self.kb.add('escape', 'enter')
+        def submit_input(event):
+            """Submit input with Meta+Enter (Alt+Enter)."""
             self.buffer.validate_and_handle()
 
-        # Note: multiline handling simplified for now
+        # Note: Shift+Enter is not supported by terminals/prompt_toolkit
+        # Using Meta+Enter (Alt+Enter) instead, which is the standard
+        # All other keys go directly to the buffer for typing
 
-        @self.kb.add('c-c')
-        def clear_input(event):
-            """Clear the input buffer."""
-            self.buffer.text = ""
-
-        @self.kb.add('c-u')
-        def clear_line(event):
-            """Clear current line."""
-            event.current_buffer.delete_before_cursor(count=1000)
-
-        @self.kb.add('c-w')
-        def delete_word(event):
-            """Delete word before cursor."""
-            event.current_buffer.delete_before_cursor(count=event.current_buffer.document.find_start_of_previous_word())
-
-        @self.kb.add('up')
-        def history_previous(event):
-            """Navigate to previous history item when buffer is empty."""
-            if self.history:
-                event.current_buffer.history_backward()
-
-        @self.kb.add('down')
-        def history_next(event):
-            """Navigate to next history item when buffer is empty."""
-            if self.history:
-                event.current_buffer.history_forward()
+        # Remove ALL other key bindings - let prompt_toolkit handle them naturally
+        # This allows normal typing, arrow keys, backspace, etc. to work naturally
 
     def _accept_handler(self, buffer):
         """Handle when user submits input."""
@@ -177,36 +155,36 @@ class InputArea:
         """Get the prompt text with current state."""
         if self._is_processing:
             return FormattedText([
-                ('input.prompt', '🤔 Processing... '),
+                ('class:input.prompt', '🤔 Processing... '),
             ])
         else:
             return FormattedText([
-                ('input.prompt', '👤 You: '),
+                ('class:input.prompt', '👤 You: '),
             ])
 
     def get_status_text(self) -> FormattedText:
         """Get status text for the input area."""
         if self._is_processing:
             return FormattedText([
-                ('statusbar', ' Processing command... Press Ctrl+C to interrupt ')
+                ('class:statusbar', ' Processing command... Press Ctrl+C to interrupt ')
             ])
         elif self.enable_multiline:
             return FormattedText([
-                ('statusbar.key', ' Enter '),
-                ('statusbar', ' new line | '),
-                ('statusbar.key', ' Ctrl+Enter '),
-                ('statusbar', ' submit | '),
-                ('statusbar.key', ' Ctrl+C '),
-                ('statusbar', ' clear ')
+                ('class:statusbar.key', ' Enter '),
+                ('class:statusbar', ' new line | '),
+                ('class:statusbar.key', ' Ctrl+Enter '),
+                ('class:statusbar', ' submit | '),
+                ('class:statusbar.key', ' Ctrl+C '),
+                ('class:statusbar', ' clear ')
             ])
         else:
             return FormattedText([
-                ('statusbar.key', ' Enter '),
-                ('statusbar', ' submit | '),
-                ('statusbar.key', ' Ctrl+C '),
-                ('statusbar', ' clear | '),
-                ('statusbar.key', ' ↑↓ '),
-                ('statusbar', ' history ')
+                ('class:statusbar.key', ' Enter '),
+                ('class:statusbar', ' submit | '),
+                ('class:statusbar.key', ' Ctrl+C '),
+                ('class:statusbar', ' clear | '),
+                ('class:statusbar.key', ' ↑↓ '),
+                ('class:statusbar', ' history ')
             ])
 
     def create_container(self):
@@ -214,20 +192,20 @@ class InputArea:
         prompt_window = Window(
             content=FormattedTextControl(text=self.get_prompt_text),
             width=12,
-            style='input.prompt'
+            style='class:input.prompt'
         )
 
         input_window = Window(
             content=self.buffer_control,
             height=3 if self.enable_multiline else 1,
             wrap_lines=True,
-            style='input'
+            style='class:input'
         )
 
         status_window = Window(
             content=FormattedTextControl(text=self.get_status_text),
             height=1,
-            style='statusbar'
+            style='class:statusbar'
         )
 
         from prompt_toolkit.layout.containers import VSplit
@@ -245,7 +223,7 @@ class InputArea:
         """Focus the input area."""
         try:
             get_app().layout.focus(self.buffer_control)
-        except ValueError:
+        except:
             # Layout might not be ready yet, ignore for now
             pass
 

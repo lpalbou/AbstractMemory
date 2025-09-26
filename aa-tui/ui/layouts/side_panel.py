@@ -118,7 +118,7 @@ class SidePanel:
         """Create memory status content."""
         if not self.memory_info:
             content = FormattedText([
-                ('sidepanel.content', 'No memory info available')
+                ('class:sidepanel.content', 'No memory info available')
             ])
         else:
             parts = []
@@ -126,33 +126,33 @@ class SidePanel:
             # Working memory
             working_count = self.memory_info.get('working_count', 0)
             parts.extend([
-                ('memory.working', f'Working: {working_count} items\n')
+                ('class:memory.working', f'Working: {working_count} items\n')
             ])
 
             # Semantic memory
             semantic_count = self.memory_info.get('semantic_count', 0)
             pending_count = self.memory_info.get('pending_count', 0)
             parts.extend([
-                ('memory.semantic', f'Semantic: {semantic_count} facts\n'),
-                ('memory.semantic', f'Pending: {pending_count} facts\n')
+                ('class:memory.semantic', f'Semantic: {semantic_count} facts\n'),
+                ('class:memory.semantic', f'Pending: {pending_count} facts\n')
             ])
 
             # Document memory
             doc_count = self.memory_info.get('document_count', 0)
             parts.extend([
-                ('memory.document', f'Documents: {doc_count} stored\n')
+                ('class:memory.document', f'Documents: {doc_count} stored\n')
             ])
 
             # Episodic memory
             episode_count = self.memory_info.get('episode_count', 0)
             parts.extend([
-                ('memory.episodic', f'Episodes: {episode_count} events\n')
+                ('class:memory.episodic', f'Episodes: {episode_count} events\n')
             ])
 
             # Memory path
             memory_path = self.memory_info.get('memory_path', 'Unknown')
             parts.extend([
-                ('sidepanel.content', f'\nPath: {memory_path}')
+                ('class:sidepanel.content', f'\nPath: {memory_path}')
             ])
 
             content = FormattedText(parts)
@@ -160,36 +160,36 @@ class SidePanel:
         return Window(
             content=FormattedTextControl(text=content),
             wrap_lines=True,
-            style='sidepanel.content'
+            style='class:sidepanel.content'
         )
 
     def _create_tools_content(self):
         """Create tools list content."""
         if not self.tools_info:
             content = FormattedText([
-                ('sidepanel.content', 'No tools available')
+                ('class:sidepanel.content', 'No tools available')
             ])
         else:
             parts = []
             for i, tool in enumerate(self.tools_info, 1):
                 parts.extend([
-                    ('sidepanel.content', f'{i}. '),
-                    ('tool.success', tool),
-                    ('sidepanel.content', '\n')
+                    ('class:sidepanel.content', f'{i}. '),
+                    ('class:tool.success', tool),
+                    ('class:sidepanel.content', '\n')
                 ])
             content = FormattedText(parts)
 
         return Window(
             content=FormattedTextControl(text=content),
             wrap_lines=True,
-            style='sidepanel.content'
+            style='class:sidepanel.content'
         )
 
     def _create_metrics_content(self):
         """Create context metrics content."""
         if not self.context_metrics:
             content = FormattedText([
-                ('sidepanel.content', 'No metrics available')
+                ('class:sidepanel.content', 'No metrics available')
             ])
         else:
             parts = []
@@ -202,30 +202,30 @@ class SidePanel:
             if max_tokens > 0:
                 usage_percent = (enhanced_tokens / max_tokens) * 100
                 parts.extend([
-                    ('sidepanel.content', f'Base: {base_tokens:,} tokens\n'),
-                    ('sidepanel.content', f'Enhanced: {enhanced_tokens:,} tokens\n'),
-                    ('sidepanel.content', f'Max: {max_tokens:,} tokens\n'),
-                    ('sidepanel.content', f'Usage: {usage_percent:.1f}%\n\n')
+                    ('class:sidepanel.content', f'Base: {base_tokens:,} tokens\n'),
+                    ('class:sidepanel.content', f'Enhanced: {enhanced_tokens:,} tokens\n'),
+                    ('class:sidepanel.content', f'Max: {max_tokens:,} tokens\n'),
+                    ('class:sidepanel.content', f'Usage: {usage_percent:.1f}%\n\n')
                 ])
 
             # Timing information
             react_time = self.context_metrics.get('react_time', 0)
             if react_time > 0:
                 parts.extend([
-                    ('sidepanel.content', f'Last ReAct: {react_time:.1f}s\n')
+                    ('class:sidepanel.content', f'Last ReAct: {react_time:.1f}s\n')
                 ])
 
             # Memory injection info
             memory_items = self.context_metrics.get('memory_items_count', 0)
             if memory_items > 0:
                 parts.extend([
-                    ('sidepanel.content', f'Memory items: {memory_items}\n')
+                    ('class:sidepanel.content', f'Memory items: {memory_items}\n')
                 ])
 
             # Interaction count
             interaction_count = self.context_metrics.get('interaction_count', 0)
             parts.extend([
-                ('sidepanel.content', f'Interactions: {interaction_count}')
+                ('class:sidepanel.content', f'Interactions: {interaction_count}')
             ])
 
             content = FormattedText(parts)
@@ -233,14 +233,14 @@ class SidePanel:
         return Window(
             content=FormattedTextControl(text=content),
             wrap_lines=True,
-            style='sidepanel.content'
+            style='class:sidepanel.content'
         )
 
     def _create_status_content(self):
         """Create agent status content."""
         if not self.agent_status:
             content = FormattedText([
-                ('sidepanel.content', 'No status available')
+                ('class:sidepanel.content', 'No status available')
             ])
         else:
             parts = []
@@ -249,8 +249,8 @@ class SidePanel:
             model = self.agent_status.get('model', 'Unknown')
             provider = self.agent_status.get('provider', 'Unknown')
             parts.extend([
-                ('sidepanel.content', f'Model: {model}\n'),
-                ('sidepanel.content', f'Provider: {provider}\n\n')
+                ('class:sidepanel.content', f'Model: {model}\n'),
+                ('class:sidepanel.content', f'Provider: {provider}\n\n')
             ])
 
             # Connection status
@@ -258,9 +258,9 @@ class SidePanel:
             status_style = 'tool.success' if connected else 'tool.error'
             status_text = 'Connected' if connected else 'Disconnected'
             parts.extend([
-                ('sidepanel.content', 'Status: '),
+                ('class:sidepanel.content', 'Status: '),
                 (status_style, status_text),
-                ('sidepanel.content', '\n')
+                ('class:sidepanel.content', '\n')
             ])
 
             # Memory status
@@ -268,22 +268,22 @@ class SidePanel:
             memory_style = 'tool.success' if memory_enabled else 'tool.error'
             memory_text = 'Enabled' if memory_enabled else 'Disabled'
             parts.extend([
-                ('sidepanel.content', 'Memory: '),
+                ('class:sidepanel.content', 'Memory: '),
                 (memory_style, memory_text),
-                ('sidepanel.content', '\n')
+                ('class:sidepanel.content', '\n')
             ])
 
             # Tools status
             tools_count = self.agent_status.get('tools_count', 0)
             parts.extend([
-                ('sidepanel.content', f'Tools: {tools_count} available\n')
+                ('class:sidepanel.content', f'Tools: {tools_count} available\n')
             ])
 
             # Last update
             last_update = self.agent_status.get('last_update')
             if last_update:
                 parts.extend([
-                    ('sidepanel.content', f'Updated: {last_update}')
+                    ('class:sidepanel.content', f'Updated: {last_update}')
                 ])
 
             content = FormattedText(parts)
@@ -291,7 +291,7 @@ class SidePanel:
         return Window(
             content=FormattedTextControl(text=content),
             wrap_lines=True,
-            style='sidepanel.content'
+            style='class:sidepanel.content'
         )
 
     def create_container(self):
@@ -300,7 +300,7 @@ class SidePanel:
         title_window = Window(
             content=FormattedTextControl(
                 text=FormattedText([
-                    ('sidepanel.title', ' 📋 Control Panel ')
+                    ('class:sidepanel.title', ' 📋 Control Panel ')
                 ])
             ),
             height=1
@@ -377,16 +377,16 @@ class ProgressIndicator:
             bar = '█' * filled + '░' * (bar_width - filled)
 
             return FormattedText([
-                ('progress.percentage', f'{percentage:3d}% '),
-                ('progress.bar', f'[{bar}] '),
-                ('default', self._message)
+                ('class:progress.percentage', f'{percentage:3d}% '),
+                ('class:progress.bar', f'[{bar}] '),
+                ('', self._message)
             ])
 
         return ConditionalContainer(
             content=Window(
                 content=FormattedTextControl(text=get_progress_text),
                 height=1,
-                style='progress.bar'
+                style='class:progress.bar'
             ),
             filter=self.active_filter
         )

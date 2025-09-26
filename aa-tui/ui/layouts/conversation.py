@@ -241,11 +241,11 @@ class ConversationArea:
 
         return Window(
             content=FormattedTextControl(
-                text=FormattedText([(style, f"ℹ️  {message}")])
+                text=FormattedText([(f'class:{style}', f"ℹ️  {message}")])
             ),
             height=1,
             wrap_lines=True,
-            style=style
+            style=f'class:{style}'
         )
 
     def create_container(self):
@@ -256,17 +256,17 @@ class ConversationArea:
             # Add welcome message if no entries
             if not self.entries:
                 welcome_text = FormattedText([
-                    ('title', '🤖 AbstractMemory TUI\n'),
-                    ('conversation', '\nWelcome! Start a conversation by typing below.\n'),
-                    ('conversation.system', 'Use '),
-                    ('conversation.system', '/help'),
-                    ('conversation.system', ' for available commands.\n\n')
+                    ('class:title', '🤖 AbstractMemory TUI\n'),
+                    ('class:conversation', '\nWelcome! Start a conversation by typing below.\n'),
+                    ('class:conversation.system', 'Use '),
+                    ('class:conversation.system', '/help'),
+                    ('class:conversation.system', ' for available commands.\n\n')
                 ])
 
                 children.append(Window(
                     content=FormattedTextControl(text=welcome_text),
                     wrap_lines=True,
-                    style='conversation'
+                    style='class:conversation'
                 ))
 
             # Add all entries

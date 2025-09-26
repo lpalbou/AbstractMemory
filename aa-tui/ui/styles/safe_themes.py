@@ -7,7 +7,7 @@ SAFE_DARK_THEME = Style.from_dict({
     # Use safe color specifications
     '': '#ffffff',  # Default text
     'bold': 'bold',
-    'title': 'bold #00ff00',
+    'title': '#00ff00',
     'title.status': '#87ceeb',
     'error': '#ff0000',
     'success': '#00ff00',
@@ -66,7 +66,7 @@ SAFE_DARK_THEME = Style.from_dict({
 SAFE_LIGHT_THEME = Style.from_dict({
     '': '#000000',  # Default text
     'bold': 'bold',
-    'title': 'bold #0066cc',
+    'title': '#0066cc',
     'title.status': '#666666',
     'error': '#cc0000',
     'success': '#006600',

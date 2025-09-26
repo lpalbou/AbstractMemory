@@ -24,9 +24,9 @@ DARK_THEME = Style.from_dict({
     'foldable.content': '#cccccc',
 
     # Thoughts and actions
-    'thought': '#ffff00 bold',
-    'action': '#ff00ff bold',
-    'observation': '#00ff00 bold',
+    'thought': 'bold #ffff00',
+    'action': 'bold #ff00ff',
+    'observation': 'bold #00ff00',
     'tool.success': '#00ff00',
     'tool.error': '#ff0000',
 
@@ -99,9 +99,9 @@ LIGHT_THEME = Style.from_dict({
     'foldable.content': '#333333',
 
     # Thoughts and actions
-    'thought': '#cc6600 bold',
-    'action': '#cc0066 bold',
-    'observation': '#006600 bold',
+    'thought': 'bold #cc6600',
+    'action': 'bold #cc0066',
+    'observation': 'bold #006600',
     'tool.success': '#006600',
     'tool.error': '#cc0000',
 

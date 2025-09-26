@@ -40,64 +40,53 @@ class HelpDialog:
     def _get_help_content(self) -> FormattedText:
         """Get the help content."""
         return FormattedText([
-            ('dialog.title', 'AbstractMemory TUI - Help\n\n'),
+            ('', 'AbstractMemory TUI - Help\n\n'),
 
-            ('dialog', 'KEYBOARD SHORTCUTS:\n'),
-            ('dialog', '─' * 40 + '\n'),
+            ('', 'KEYBOARD SHORTCUTS:\n'),
+            ('', '─' * 40 + '\n'),
 
-            ('button.focused', 'F1'), ('dialog', '           Show this help\n'),
-            ('button.focused', 'F2'), ('dialog', '           Toggle side panel\n'),
-            ('button.focused', 'F3'), ('dialog', '           Search conversation\n'),
-            ('button.focused', 'F4'), ('dialog', '           Memory search\n'),
-            ('button.focused', 'Ctrl+L'), ('dialog', '       Clear screen\n'),
-            ('button.focused', 'Ctrl+Q'), ('dialog', '       Quit application\n'),
-            ('button.focused', 'Ctrl+C'), ('dialog', '       Clear input / Cancel\n'),
-            ('button.focused', 'Tab'), ('dialog', '          Cycle through UI elements\n'),
-            ('button.focused', 'Enter'), ('dialog', '        Submit input / Expand sections\n'),
-            ('button.focused', 'Space'), ('dialog', '        Expand/collapse sections\n'),
-            ('button.focused', '↑/↓'), ('dialog', '          History navigation (empty input)\n\n'),
+            ('', 'F1           Show this help\n'),
+            ('', 'F2           Toggle side panel\n'),
+            ('', 'F3           Search conversation\n'),
+            ('', 'F4           Memory search\n'),
+            ('', 'Ctrl+L       Clear screen\n'),
+            ('', 'Ctrl+Q       Quit application\n'),
+            ('', 'Ctrl+C       Clear input / Cancel\n'),
+            ('', 'Tab          Cycle through UI elements\n'),
+            ('', 'Enter        Submit input / Expand sections\n'),
+            ('', 'Space        Expand/collapse sections\n'),
+            ('', '↑/↓          History navigation (empty input)\n\n'),
 
-            ('dialog', 'COMMANDS:\n'),
-            ('dialog', '─' * 40 + '\n'),
+            ('', 'COMMANDS:\n'),
+            ('', '─' * 40 + '\n'),
 
-            ('tool.success', '/help'), ('dialog', '         Show this help\n'),
-            ('tool.success', '/status'), ('dialog', '       Show agent status\n'),
-            ('tool.success', '/memory'), ('dialog', '       Show memory contents\n'),
-            ('tool.success', '/memory N'), ('dialog', '     Set max tokens to N\n'),
-            ('tool.success', '/tools'), ('dialog', '        Show available tools\n'),
-            ('tool.success', '/debug'), ('dialog', '        Show debug information\n'),
-            ('tool.success', '/context'), ('dialog', '      Show last context used\n'),
-            ('tool.success', '/compact'), ('dialog', '      Compact session history\n'),
-            ('tool.success', '/scratch N'), ('dialog', '    Show full reasoning for interaction N\n'),
-            ('tool.success', '/clear'), ('dialog', '        Clear conversation\n'),
-            ('tool.success', '/quit'), ('dialog', '         Exit application\n\n'),
+            ('', '/help         Show this help\n'),
+            ('', '/status       Show agent status\n'),
+            ('', '/memory       Show memory contents\n'),
+            ('', '/tools        Show available tools\n'),
+            ('', '/clear        Clear conversation\n'),
+            ('', '/quit         Exit application\n\n'),
 
-            ('dialog', 'AGENT CAPABILITIES:\n'),
-            ('dialog', '─' * 40 + '\n'),
+            ('', 'AGENT CAPABILITIES:\n'),
+            ('', '─' * 40 + '\n'),
 
-            ('memory.working', '• Memory:'), ('dialog', ' Persistent memory across sessions\n'),
-            ('memory.semantic', '• Facts:'), ('dialog', ' Learns and remembers important information\n'),
-            ('memory.document', '• Files:'), ('dialog', ' Can read and analyze files\n'),
-            ('tool.success', '• Tools:'), ('dialog', ' Has access to various tools\n'),
-            ('thought', '• ReAct:'), ('dialog', ' Shows reasoning process\n\n'),
+            ('', '• Memory: Persistent memory across sessions\n'),
+            ('', '• Facts: Learns and remembers important information\n'),
+            ('', '• Files: Can read and analyze files\n'),
+            ('', '• Tools: Has access to various tools\n'),
+            ('', '• ReAct: Shows reasoning process\n\n'),
 
-            ('dialog', 'CONVERSATION FEATURES:\n'),
-            ('dialog', '─' * 40 + '\n'),
+            ('', 'CONVERSATION FEATURES:\n'),
+            ('', '─' * 40 + '\n'),
 
-            ('foldable.header', '• Foldable Sections:'), ('dialog', ' Click or press Enter/Space\n'),
-            ('conversation.user', '• User Messages:'), ('dialog', ' Your input shown in green\n'),
-            ('conversation.agent', '• Agent Responses:'), ('dialog', ' AI responses in blue\n'),
-            ('thought', '• Thoughts:'), ('dialog', ' AI reasoning process\n'),
-            ('action', '• Actions:'), ('dialog', ' Tool executions\n'),
-            ('observation', '• Observations:'), ('dialog', ' Tool results\n\n'),
+            ('', '• Foldable Sections: Click or press Enter/Space\n'),
+            ('', '• User Messages: Your input shown in green\n'),
+            ('', '• Agent Responses: AI responses in blue\n'),
+            ('', '• Thoughts: AI reasoning process\n'),
+            ('', '• Actions: Tool executions\n'),
+            ('', '• Observations: Tool results\n\n'),
 
-            ('dialog', 'Press '),
-            ('button.focused', 'Escape'),
-            ('dialog', ', '),
-            ('button.focused', 'Q'),
-            ('dialog', ', or '),
-            ('button.focused', 'Ctrl+C'),
-            ('dialog', ' to close this dialog.')
+            ('', 'Press Escape, Q, or Ctrl+C to close this dialog.')
         ])
 
     def _create_container(self):
@@ -109,14 +98,14 @@ class HelpDialog:
                 focusable=True
             ),
             wrap_lines=True,
-            style='dialog'
+            style='class:dialog'
         )
 
         # Wrap in a frame
         return Frame(
             body=help_content,
             title="Help",
-            style='dialog.border'
+            style='class:dialog.border'
         )
 
     def get_float_spec(self):
@@ -188,10 +177,10 @@ class SearchDialog:
         # Search prompt
         prompt_window = Window(
             content=FormattedTextControl(
-                text=FormattedText([('dialog', 'Search: ')])
+                text=FormattedText([('class:dialog', 'Search: ')])
             ),
             width=8,
-            style='dialog'
+            style='class:dialog'
         )
 
         # Search input
@@ -201,22 +190,18 @@ class SearchDialog:
                 key_bindings=self.kb,
                 focusable=True
             ),
-            style='input'
+            style='class:input'
         )
 
         # Instructions
         instructions = Window(
             content=FormattedTextControl(
                 text=FormattedText([
-                    ('dialog', '\nEnter search query and press '),
-                    ('button.focused', 'Enter'),
-                    ('dialog', ' to search.\nPress '),
-                    ('button.focused', 'Escape'),
-                    ('dialog', ' to cancel.')
+                    ('', '\nEnter search query and press Enter to search.\nPress Escape to cancel.')
                 ])
             ),
             height=3,
-            style='dialog'
+            style='class:dialog'
         )
 
         search_line = VSplit([prompt_window, input_window])
@@ -230,7 +215,7 @@ class SearchDialog:
         return Frame(
             body=content,
             title="Search Conversation",
-            style='dialog.border'
+            style='class:dialog.border'
         )
 
     def get_float_spec(self):

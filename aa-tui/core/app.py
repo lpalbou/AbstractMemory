@@ -30,7 +30,7 @@ class AbstractMemoryTUI:
         """
         self.config = config or TUIConfig()
         self.running = False
-        self.agent_cli = None  # Will be set when agent is initialized
+        self.agent_session = None  # Will be set when agent is initialized
 
         # Create main layout
         self.main_layout = MainLayout(
@@ -52,16 +52,18 @@ class AbstractMemoryTUI:
         # Create command processor
         self.command_processor = CommandProcessor(
             self.main_layout,
-            self.agent_cli
+            self.agent_session
         )
 
-        # Create prompt_toolkit Application
+        # Create prompt_toolkit Application with proper key bindings
         self.app = Application(
             layout=self.main_layout.get_layout(),
             key_bindings=self.key_bindings.get_key_bindings(),
             style=get_safe_theme(self.config.theme),
             mouse_support=self.config.mouse_support,
-            full_screen=True
+            full_screen=True,
+            enable_page_navigation_bindings=False,  # Disable conflicting built-in bindings
+            include_default_pygments_style=False,  # Disable default styling that might include bindings
         )
 
         # Track interaction counter
@@ -86,7 +88,7 @@ class AbstractMemoryTUI:
                 return
 
         # If we have an agent, process through it
-        if self.agent_cli:
+        if self.agent_session:
             self._process_agent_input(user_input)
         else:
             # No agent available
@@ -117,10 +119,11 @@ class AbstractMemoryTUI:
                 expanded=True  # Start expanded for active interaction
             )
 
-            # Process through agent CLI (this would be async in real implementation)
-            if hasattr(self.agent_cli, 'process_user_input'):
+            # Process through agent session
+            if hasattr(self.agent_session, 'process_input'):
                 # This is a simplified version - in reality this should be async
-                agent_response = self.agent_cli.process_user_input(user_input)
+                result = self.agent_session.process_input(user_input)
+                agent_response = result.get('agent_response', 'No response')
 
                 # Update the conversation with the response
                 self.main_layout.conversation_area.entries[-1].agent_response = agent_response
@@ -173,41 +176,45 @@ class AbstractMemoryTUI:
 
         self.main_layout.update_context_metrics(metrics)
 
-    def set_agent(self, agent_cli):
+    def set_agent(self, agent_session):
         """
-        Set the agent CLI instance.
+        Set the agent session instance.
 
         Args:
-            agent_cli: AutonomousAgentCLI instance
+            agent_session: TUIAgentSession instance
         """
-        self.agent_cli = agent_cli
-        self.command_processor.agent_cli = agent_cli
+        self.agent_session = agent_session
+        self.command_processor.agent_cli = agent_session
 
         # Update agent status
-        if hasattr(agent_cli, 'config'):
-            status = {
-                'model': agent_cli.config.model,
-                'provider': agent_cli.config.provider,
-                'connected': True,
-                'memory_enabled': agent_cli.config.enable_memory_tools,
-                'tools_count': len(getattr(agent_cli.session, 'tools', [])) if agent_cli.session else 0,
-                'last_update': 'Just now'
-            }
-            self.main_layout.update_agent_status(status)
-            self.main_layout.update_title_info(
-                model=agent_cli.config.model,
-                status="Connected"
-            )
+        status = {
+            'model': agent_session.config.model,
+            'provider': agent_session.config.provider,
+            'connected': True,
+            'memory_enabled': agent_session.config.enable_memory_tools,
+            'tools_count': 1,  # Mock value for now
+            'last_update': 'Just now'
+        }
+        self.main_layout.update_agent_status(status)
+        self.main_layout.update_title_info(
+            model=agent_session.config.model,
+            status="Connected"
+        )
 
-        # Update memory info
-        if agent_cli.session and hasattr(agent_cli.session, 'memory'):
-            memory_info = self._extract_memory_info(agent_cli.session.memory)
-            self.main_layout.update_memory_info(memory_info)
+        # Update memory info with mock data
+        memory_info = {
+            'memory_path': agent_session.config.memory_path,
+            'working_count': 0,
+            'semantic_count': 0,
+            'pending_count': 0,
+            'document_count': 0,
+            'episode_count': 0
+        }
+        self.main_layout.update_memory_info(memory_info)
 
-        # Update tools info
-        if agent_cli.session and hasattr(agent_cli.session, 'tools'):
-            tools = [getattr(tool, '__name__', str(tool)) for tool in agent_cli.session.tools]
-            self.main_layout.update_tools_info(tools)
+        # Update tools info with mock data
+        tools = ['list_files', 'mock_tool']
+        self.main_layout.update_tools_info(tools)
 
     def _extract_memory_info(self, memory) -> Dict[str, Any]:
         """Extract memory information for display."""
@@ -264,8 +271,15 @@ class AbstractMemoryTUI:
             "info"
         )
 
-        # Focus input area
-        self.main_layout.focus_input()
+        # Focus input area - ensure it gets focus on startup
+        try:
+            from prompt_toolkit.application import get_app
+            # Give the layout time to initialize, then focus
+            get_app().invalidate()  # Force a redraw first
+            self.main_layout.focus_input()
+        except:
+            # Fallback - try to focus after app starts
+            self.main_layout.focus_input()
 
         try:
             # Run the application
@@ -315,7 +329,7 @@ class AbstractMemoryTUI:
         stats.update({
             'running': self.running,
             'theme': self.config.theme,
-            'agent_initialized': self.agent_cli is not None,
+            'agent_initialized': self.agent_session is not None,
             'interaction_counter': self.interaction_counter
         })
         return stats

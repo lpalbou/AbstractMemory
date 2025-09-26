@@ -28,84 +28,30 @@ class GlobalKeyBindings:
         self._setup_global_bindings()
 
     def _setup_global_bindings(self):
-        """Setup global key bindings."""
-
-        @self.kb.add('f1')
-        def show_help(event):
-            """Show help dialog."""
-            if self.dialog_manager:
-                self.dialog_manager.show_help()
-
-        @self.kb.add('f2')
-        def toggle_side_panel(event):
-            """Toggle side panel visibility."""
-            self.main_layout.toggle_side_panel()
-
-        @self.kb.add('f3')
-        def show_search(event):
-            """Show search dialog."""
-            if self.dialog_manager:
-                self.dialog_manager.show_search()
-
-        @self.kb.add('f4')
-        def show_memory_search(event):
-            """Show memory search dialog."""
-            if self.dialog_manager:
-                self.dialog_manager.show_memory_search()
-
-        @self.kb.add('c-l')
-        def clear_screen(event):
-            """Clear the conversation."""
-            self.main_layout.clear_conversation()
+        """Setup minimal global key bindings that don't conflict with input."""
 
         @self.kb.add('c-q')
         def quit_application(event):
             """Quit the application."""
             event.app.exit()
 
-        @self.kb.add('c-c', filter=Condition(lambda: not self.main_layout.input_area.buffer.text.strip()))
-        def quit_on_empty_input(event):
-            """Quit when Ctrl+C is pressed on empty input."""
-            event.app.exit()
+        @self.kb.add('f2')
+        def toggle_side_panel(event):
+            """Toggle side panel visibility."""
+            self.main_layout.toggle_side_panel()
 
-        @self.kb.add('c-r')
-        def refresh_display(event):
-            """Refresh the display."""
-            self.main_layout.invalidate()
+        # Keep only essential bindings to avoid conflicts with input
+        # All other keys should go to the input buffer when it's focused
 
-        @self.kb.add('c-e')
-        def expand_all_sections(event):
-            """Expand all foldable sections."""
-            self.main_layout.expand_all_sections()
-
-        @self.kb.add('c-w')
-        def collapse_all_sections(event):
-            """Collapse all foldable sections."""
-            self.main_layout.collapse_all_sections()
-
-        @self.kb.add('tab')
-        def cycle_focus(event):
-            """Cycle through focusable elements."""
-            layout = event.app.layout
-
-            # Simple focus cycling - can be enhanced
-            current = layout.current_control
-
-            # Focus input area by default
-            self.main_layout.focus_input()
-
-        @self.kb.add('s-tab')
-        def cycle_focus_reverse(event):
-            """Cycle through focusable elements in reverse."""
-            # For now, just focus input
-            self.main_layout.focus_input()
-
-        # Mouse support
-        @self.kb.add('c-m')
-        def toggle_mouse_support(event):
-            """Toggle mouse support."""
-            app = event.app
-            app.mouse_support = not app.mouse_support
+    def _is_input_focused(self):
+        """Check if the input area is currently focused."""
+        try:
+            from prompt_toolkit.application import get_app
+            app = get_app()
+            current_control = app.layout.current_control
+            return hasattr(current_control, 'buffer') and current_control.buffer is not None
+        except:
+            return False
 
     def get_key_bindings(self):
         """Get the key bindings object."""

@@ -63,8 +63,8 @@ class MainLayout:
             status = getattr(self, '_connection_status', 'Unknown')
 
             return FormattedText([
-                ('title', f' {self.title} '),
-                ('title.status', f' | Model: {model} | Status: {status} | Time: {current_time} ')
+                ('class:title', f' {self.title} '),
+                ('class:title.status', f' | Model: {model} | Status: {status} | Time: {current_time} ')
             ])
 
         return Window(
@@ -77,28 +77,28 @@ class MainLayout:
         def get_status_text():
             # Show keyboard shortcuts
             shortcuts = [
-                ('statusbar.key', ' F1 '),
-                ('statusbar', ' Help | '),
-                ('statusbar.key', ' F2 '),
-                ('statusbar', ' Panel | '),
-                ('statusbar.key', ' F3 '),
-                ('statusbar', ' Search | '),
-                ('statusbar.key', ' Ctrl+L '),
-                ('statusbar', ' Clear | '),
-                ('statusbar.key', ' Ctrl+Q '),
-                ('statusbar', ' Quit ')
+                ('class:statusbar.key', ' F1 '),
+                ('class:statusbar', ' Help | '),
+                ('class:statusbar.key', ' F2 '),
+                ('class:statusbar', ' Panel | '),
+                ('class:statusbar.key', ' F3 '),
+                ('class:statusbar', ' Search | '),
+                ('class:statusbar.key', ' Ctrl+L '),
+                ('class:statusbar', ' Clear | '),
+                ('class:statusbar.key', ' Ctrl+Q '),
+                ('class:statusbar', ' Quit ')
             ]
 
             # Add current operation status if any
             if hasattr(self, '_current_operation') and self._current_operation:
-                shortcuts.insert(0, ('statusbar', f' {self._current_operation} | '))
+                shortcuts.insert(0, ('class:statusbar', f' {self._current_operation} | '))
 
             return FormattedText(shortcuts)
 
         return Window(
             content=FormattedTextControl(text=get_status_text),
             height=1,
-            style='statusbar'
+            style='class:statusbar'
         )
 
     def _create_layout(self) -> Layout:

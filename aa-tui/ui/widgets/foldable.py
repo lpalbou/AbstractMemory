@@ -41,9 +41,9 @@ class FoldableSection:
         self.header_kb = KeyBindings()
 
         @self.header_kb.add('enter')
-        @self.header_kb.add(' ')
+        # Remove space binding to avoid conflicts with input typing
         def toggle_section(event):
-            """Toggle section when Enter or Space is pressed."""
+            """Toggle section when Enter is pressed."""
             self.toggle()
 
         # Create the header control
@@ -59,7 +59,7 @@ class FoldableSection:
     def _get_header_text(self) -> FormattedText:
         """Generate the header text with expand/collapse indicator."""
         indicator = "▼" if self._expanded else "▶"
-        style = f"{self.style_prefix}.header.{'expanded' if self._expanded else 'collapsed'}"
+        style = f"class:{self.style_prefix}.header.{'expanded' if self._expanded else 'collapsed'}"
         return FormattedText([
             (style, f"{indicator} {self.title}")
         ])
@@ -111,7 +111,7 @@ class FoldableSection:
         header_window = Window(
             content=self.header_control,
             height=1,
-            style=f"{self.style_prefix}.header"
+            style=f"class:{self.style_prefix}.header"
         )
 
         content_container = ConditionalContainer(
@@ -200,7 +200,7 @@ class FoldableConversationEntry:
         content_parts.append(Window(
             content=FormattedTextControl(
                 text=FormattedText([
-                    ("conversation.user", f"👤 User: {self.user_input}")
+                    ("class:conversation.user", f"👤 User: {self.user_input}")
                 ])
             ),
             height=1,
@@ -221,11 +221,11 @@ class FoldableConversationEntry:
         content_parts.append(Window(
             content=FormattedTextControl(
                 text=FormattedText([
-                    ("conversation.agent", f"🤖 Agent: {self.agent_response}")
+                    ("class:conversation.agent", f"🤖 Agent: {self.agent_response}")
                 ])
             ),
             wrap_lines=True,
-            style="conversation.agent"
+            style="class:conversation.agent"
         ))
 
         return HSplit(content_parts)
@@ -237,7 +237,7 @@ class FoldableConversationEntry:
                 text=self._format_thoughts_actions()
             ),
             wrap_lines=True,
-            style="foldable.content"
+            style="class:foldable.content"
         )
 
     def _create_tools_content(self):
@@ -247,7 +247,7 @@ class FoldableConversationEntry:
                 text=self._format_tool_executions()
             ),
             wrap_lines=True,
-            style="foldable.content"
+            style="class:foldable.content"
         )
 
     def _create_memory_content(self):
@@ -257,7 +257,7 @@ class FoldableConversationEntry:
                 text=self._format_memory_injections()
             ),
             wrap_lines=True,
-            style="foldable.content"
+            style="class:foldable.content"
         )
 
     def _format_thoughts_actions(self) -> FormattedText:
@@ -271,13 +271,13 @@ class FoldableConversationEntry:
         for line in lines:
             line = line.strip()
             if line.startswith('Thought:'):
-                formatted_parts.append(('thought', line))
+                formatted_parts.append(('class:thought', line))
             elif line.startswith('Action:'):
-                formatted_parts.append(('action', line))
+                formatted_parts.append(('class:action', line))
             elif line.startswith('Observation:'):
-                formatted_parts.append(('observation', line))
+                formatted_parts.append(('class:observation', line))
             else:
-                formatted_parts.append(('foldable.content', line))
+                formatted_parts.append(('class:foldable.content', line))
             formatted_parts.append(('', '\n'))
 
         return FormattedText(formatted_parts)
@@ -301,7 +301,7 @@ class FoldableConversationEntry:
                 ('', f"{i}. "),
                 (status_style, f"{status_icon} {tool_name}"),
                 ('', f"({tool_input})\n"),
-                ('foldable.content', f"   Result: {tool_result[:200]}"),
+                ('class:foldable.content', f"   Result: {tool_result[:200]}"),
                 ('', '...\n' if len(tool_result) > 200 else '\n'),
                 ('', '\n')
             ])
@@ -322,7 +322,7 @@ class FoldableConversationEntry:
             formatted_parts.extend([
                 ('', f"{i}. "),
                 ('memory.' + item_type, f"[{item_type}] "),
-                ('foldable.content', content),
+                ('class:foldable.content', content),
                 ('', '...\n' if len(str(item.get('content', ''))) > 100 else '\n'),
                 ('', f"   Confidence: {confidence:.2f}\n\n")
             ])

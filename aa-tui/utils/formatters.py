@@ -31,15 +31,15 @@ def format_code_block(text: str, language: str = "") -> FormattedText:
 
         for token in tokens:
             if token in keywords:
-                line_parts.append(('syntax.keyword', token))
+                line_parts.append(('class:syntax.keyword', token))
             elif token.startswith('"') and token.endswith('"'):
-                line_parts.append(('syntax.string', token))
+                line_parts.append(('class:syntax.string', token))
             elif token.startswith("'") and token.endswith("'"):
-                line_parts.append(('syntax.string', token))
+                line_parts.append(('class:syntax.string', token))
             elif token.startswith('#'):
-                line_parts.append(('syntax.comment', token))
+                line_parts.append(('class:syntax.comment', token))
             elif token.isdigit():
-                line_parts.append(('syntax.number', token))
+                line_parts.append(('class:syntax.number', token))
             else:
                 line_parts.append(('', token))
 
@@ -64,9 +64,9 @@ def format_json(text: str) -> FormattedText:
     # Simple JSON highlighting
     for char in text:
         if char in '{}[]':
-            formatted_parts.append(('syntax.keyword', char))
+            formatted_parts.append(('class:syntax.keyword', char))
         elif char in '":,':
-            formatted_parts.append(('default', char))
+            formatted_parts.append(('', char))
         else:
             formatted_parts.append(('', char))
 
@@ -92,7 +92,7 @@ def format_tool_result(tool_name: str, tool_input: dict, tool_result: str, succe
     parts = [
         (status_style, f"{status_icon} {tool_name}"),
         ('', f"({tool_input})\n"),
-        ('foldable.content', f"Result: {tool_result}")
+        ('class:foldable.content', f"Result: {tool_result}")
     ]
 
     return FormattedText(parts)
@@ -116,7 +116,7 @@ def format_memory_item(item: dict, item_type: str = "unknown") -> FormattedText:
 
     parts = [
         (type_style, f"[{item_type}] "),
-        ('foldable.content', content),
+        ('class:foldable.content', content),
         ('', '...\n' if len(str(item.get('content', ''))) > 100 else '\n'),
         ('', f"Confidence: {confidence:.2f}")
     ]
@@ -140,17 +140,17 @@ def format_thought_action(text: str) -> FormattedText:
     for line in lines:
         line = line.strip()
         if line.startswith('Thought:'):
-            formatted_parts.append(('thought', line))
+            formatted_parts.append(('class:thought', line))
         elif line.startswith('Action:'):
-            formatted_parts.append(('action', line))
+            formatted_parts.append(('class:action', line))
         elif line.startswith('Action Input:'):
-            formatted_parts.append(('action', line))
+            formatted_parts.append(('class:action', line))
         elif line.startswith('Observation:'):
-            formatted_parts.append(('observation', line))
+            formatted_parts.append(('class:observation', line))
         elif line.startswith('Final Answer:'):
-            formatted_parts.append(('conversation.agent', line))
+            formatted_parts.append(('class:conversation.agent', line))
         else:
-            formatted_parts.append(('foldable.content', line))
+            formatted_parts.append(('class:foldable.content', line))
         formatted_parts.append(('', '\n'))
 
     return FormattedText(formatted_parts)
