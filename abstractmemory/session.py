@@ -249,6 +249,10 @@ class MemorySession:
         self._interaction_count = 0
         self._users_seen = set([default_user_id])
 
+        # Track last enhanced context for debugging/transparency
+        self.last_enhanced_context = ""
+        self.last_memory_items = []
+
         logger.info(f"MemorySession initialized with memory type: {type(self.memory).__name__}")
 
     def _configure_embedding_provider(self, embedding_provider: Optional[Any]) -> None:
@@ -566,10 +570,14 @@ class MemorySession:
         effective_memory_config = memory_config or self.memory_injection_config
 
         # Build enhanced system prompt with core memory + selective context
-        enhanced_system_prompt = self._build_enhanced_system_prompt(
+        enhanced_system_prompt, memory_items = self._build_enhanced_system_prompt_with_tracking(
             prompt, effective_user_id, include_memory,
             effective_memory_config, max_memory_items
         )
+
+        # Store enhanced context and memory items for debugging/transparency
+        self.last_enhanced_context = enhanced_system_prompt + "\n\n" + prompt
+        self.last_memory_items = memory_items
 
         # Generate response using BasicSession or fallback
         if self._basic_session:
@@ -750,6 +758,50 @@ class MemorySession:
 
         return enhanced_system_prompt
 
+    def _build_enhanced_system_prompt_with_tracking(self, prompt: str, user_id: str,
+                                    include_memory: bool, memory_config: MemoryConfig,
+                                    max_memory_items: int) -> tuple[str, list]:
+        """
+        Build enhanced system prompt with core memory + selective context, tracking memory items.
+
+        Core memory is always included in system prompt (MemGPT/Letta pattern).
+        Additional context is selectively included based on configuration.
+
+        Returns:
+            tuple: (enhanced_system_prompt, memory_items_list)
+        """
+        # Start with base system prompt
+        enhanced_system_prompt = self.system_prompt or ""
+        memory_items = []
+
+        # Always include core memory in system prompt (agent identity)
+        if hasattr(self.memory, 'core') and hasattr(self.memory.core, 'get_context'):
+            try:
+                core_context = self.memory.core.get_context()
+                if core_context:
+                    enhanced_system_prompt = f"{enhanced_system_prompt}\n\n=== AGENT IDENTITY ===\n{core_context}"
+                    memory_items.append({
+                        'type': 'core',
+                        'content': core_context[:200] + '...' if len(core_context) > 200 else core_context,
+                        'source': 'core memory'
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to get core memory context: {e}")
+
+        # Add selective memory context if requested
+        if include_memory:
+            try:
+                selective_context, selective_items = self._build_selective_context_with_tracking(
+                    prompt, user_id, memory_config, max_memory_items
+                )
+                if selective_context:
+                    enhanced_system_prompt = f"{enhanced_system_prompt}\n\n=== MEMORY CONTEXT ===\n{selective_context}"
+                    memory_items.extend(selective_items)
+            except Exception as e:
+                logger.warning(f"Failed to build selective memory context: {e}")
+
+        return enhanced_system_prompt, memory_items
+
     def _build_selective_context(self, query: str, user_id: str,
                                config: MemoryConfig, max_legacy_items: int) -> str:
         """
@@ -901,6 +953,90 @@ class MemorySession:
             return f"Here is what I remember on that topic:\n\n{context_content}"
         else:
             return ""
+
+    def _build_selective_context_with_tracking(self, query: str, user_id: str,
+                               config: MemoryConfig, max_legacy_items: int) -> tuple[str, list]:
+        """
+        Build selective memory context based on configuration, tracking memory items.
+
+        Args:
+            query: Query for relevance matching
+            user_id: User ID for context filtering
+            config: Memory configuration specifying what to include
+            max_legacy_items: Legacy max items parameter (for backward compatibility)
+
+        Returns:
+            tuple: (formatted_selective_context, memory_items_list)
+        """
+        context_parts = []
+        memory_items = []
+
+        # Semantic memory (learned facts)
+        if config.include_semantic and hasattr(self.memory, 'semantic'):
+            try:
+                max_semantic = config.max_items_per_tier.get('semantic', 3)
+                semantic_facts = self.memory.semantic.retrieve(query, limit=max_semantic)
+                if semantic_facts:
+                    context_parts.append("=== Learned Facts ===")
+                    for fact in semantic_facts:
+                        confidence_str = f" (confidence: {fact.confidence:.2f})" if config.show_confidence else ""
+                        context_parts.append(f"- {fact.content}{confidence_str}")
+                        memory_items.append({
+                            'type': 'semantic_fact',
+                            'content': fact.content[:150] + '...' if len(fact.content) > 150 else fact.content,
+                            'source': 'semantic memory',
+                            'confidence': getattr(fact, 'confidence', None)
+                        })
+            except Exception as e:
+                logger.debug(f"Failed to retrieve semantic facts: {e}")
+
+        # Working memory (recent context)
+        if config.include_working and hasattr(self.memory, 'working'):
+            try:
+                max_working = config.max_items_per_tier.get('working', 5)
+                working_items = self.memory.working.retrieve(query, limit=max_working)
+                if working_items:
+                    context_parts.append("=== Recent Context ===")
+                    for item in working_items:
+                        if isinstance(item.content, dict):
+                            text = item.content.get('text', str(item.content))
+                            if config.compact_format:
+                                text = text[:100] + "..." if len(text) > 100 else text
+                            context_parts.append(f"- {text}")
+                            memory_items.append({
+                                'type': 'working_memory',
+                                'content': text[:100] + '...' if len(text) > 100 else text,
+                                'source': 'working memory'
+                            })
+            except Exception as e:
+                logger.debug(f"Failed to retrieve working memory: {e}")
+
+        # Document memory chunks (if enabled and available)
+        if config.include_document and hasattr(self.memory, 'document'):
+            try:
+                max_document = config.max_items_per_tier.get('document', 2)
+                document_chunks = self.memory.document.retrieve(query, limit=max_document)
+                if document_chunks:
+                    context_parts.append("=== Relevant Documents ===")
+                    for chunk in document_chunks:
+                        filepath = chunk.metadata.get('filepath', 'unknown')
+                        chunk_preview = str(chunk.content)[:500] + "..." if len(str(chunk.content)) > 500 else str(chunk.content)
+                        context_parts.append(f"From {filepath}:\n{chunk_preview}")
+                        memory_items.append({
+                            'type': 'document_chunk',
+                            'content': chunk_preview[:150] + '...' if len(chunk_preview) > 150 else chunk_preview,
+                            'source': f'document: {filepath}',
+                            'confidence': getattr(chunk, 'confidence', None)
+                        })
+            except Exception as e:
+                logger.debug(f"Failed to retrieve document chunks: {e}")
+
+        # Join context parts with appropriate spacing and prefix
+        if context_parts:
+            context_content = "\n\n".join(context_parts)
+            return f"Here is what I remember on that topic:\n\n{context_content}", memory_items
+        else:
+            return "", memory_items
 
     def _format_episodes(self, episodes: List[Any], config: MemoryConfig) -> List[str]:
         """

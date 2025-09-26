@@ -89,7 +89,7 @@ class ReActConfig:
     max_iterations: int = 25        # Maximum reasoning cycles
 
     # Memory injection during ReAct
-    include_memory_in_react: bool = False  # Disable memory injection in ReAct cycles
+    include_memory_in_react: bool = True  # Enable memory injection in ReAct cycles
 
     # Observation limits (for display only - full content sent to LLM)
     observation_display_limit: int = 500   # Characters for user display
@@ -132,8 +132,11 @@ class AutonomousAgentCLI:
         self.last_context_size = 0
         self.last_context_tokens = 0
         self.last_final_answer_context = ""  # Store verbatim context for /context command
+        self.last_enhanced_context = ""  # Store full enhanced context with memory injection
+        self.last_memory_items = []  # Store memory items that were injected
         self.last_react_total_time = 0.0  # Total ReAct processing time
         self.last_react_initial_tokens = 0  # Initial context tokens for ReAct
+        self.last_enhanced_tokens = 0  # Enhanced context tokens after memory injection
         self.model_max_tokens = self._get_model_max_tokens()
 
         # Interaction and scratchpad tracking
@@ -1042,7 +1045,8 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                 self.last_context_tokens = self._estimate_tokens(react_initial_context)
 
                 # Show cycle start IMMEDIATELY before thinking
-                cycle_start_line = f"🔄 Cycle {iteration + 1}/{max_iterations} | 📊 Context: {len(react_initial_context):,} chars"
+                base_tokens = self._estimate_tokens(react_initial_context)
+                cycle_start_line = f"🔄 Cycle {iteration + 1}/{max_iterations} | 📊 Context: {base_tokens} tk"
                 self.print_status(cycle_start_line, "info")
 
                 # Generate with LIMITED, CONTROLLED context (with cool spinner!)
@@ -1053,6 +1057,13 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                         user_id="cli_user",
                         include_memory=react_config.include_memory_in_react  # Configurable memory injection
                     )
+
+                    # Capture enhanced context after generation
+                    if hasattr(self.session, 'last_enhanced_context'):
+                        self.last_enhanced_context = self.session.last_enhanced_context
+                        self.last_enhanced_tokens = self._estimate_tokens(self.last_enhanced_context)
+                        if hasattr(self.session, 'last_memory_items'):
+                            self.last_memory_items = self.session.last_memory_items.copy()
 
                 # Get response content and measure timing
                 if hasattr(response, 'content'):
@@ -1104,22 +1115,24 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                             'final_answer': final_answer,
                             'timestamp': time.time(),
                             'total_time': time.time() - react_start_time,
-                            'context_tokens': self.last_react_initial_tokens
+                            'context_tokens': self.last_react_initial_tokens,
+                            'enhanced_tokens': getattr(self, 'last_enhanced_tokens', 0),
+                            'memory_items': getattr(self, 'last_memory_items', []).copy(),
+                            'enhanced_context': getattr(self, 'last_enhanced_context', '')
                         }
 
                         # Calculate total ReAct time and context info
                         self.last_react_total_time = time.time() - react_start_time
                         self.last_final_answer_context = react_initial_context  # Store for /context command
-                        final_answer_tokens = self._estimate_tokens(react_initial_context)
 
                         # Show reasoning process (for testing/debugging)
                         if cycle_logs:
                             formatted_thinking = self.format_cycle_logs(cycle_logs)
-                            thoughts_title = f"Thoughts and Actions #{interaction_id} (Ctx: {self.last_react_initial_tokens} tk; {self.last_react_total_time:.0f}s)"
+                            thoughts_title = f"Thoughts and Actions #{interaction_id} (Ctx: {self.last_enhanced_tokens} tk; {self.last_react_total_time:.0f}s)"
                             self.print_panel(formatted_thinking, thoughts_title, "yellow")
 
                         # Show final answer that merges back to main conversation
-                        response_title = f"Agent Response (Ctx: {final_answer_tokens} tk; {self.last_react_total_time:.0f}s)"
+                        response_title = f"Agent Response (Ctx: {self.last_enhanced_tokens} tk; {self.last_react_total_time:.0f}s)"
                         self.print_panel(final_answer, response_title, "blue")
                         self.print_status(f"✅ ReAct branch completed in {iteration + 1} cycles", "success")
 
@@ -1227,22 +1240,24 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                                 'final_answer': agent_response,
                                 'timestamp': time.time(),
                                 'total_time': time.time() - react_start_time,
-                                'context_tokens': self.last_react_initial_tokens
+                                'context_tokens': self.last_react_initial_tokens,
+                                'enhanced_tokens': getattr(self, 'last_enhanced_tokens', 0),
+                                'memory_items': getattr(self, 'last_memory_items', []).copy(),
+                                'enhanced_context': getattr(self, 'last_enhanced_context', '')
                             }
 
                             # Calculate total ReAct time and context info
                             self.last_react_total_time = time.time() - react_start_time
                             self.last_final_answer_context = react_initial_context  # Store for /context command
-                            final_answer_tokens = self._estimate_tokens(react_initial_context)
 
                             # Show reasoning
                             if cycle_logs:
                                 formatted_thinking = self.format_cycle_logs(cycle_logs)
-                                thoughts_title = f"Thoughts and Actions #{interaction_id} (Ctx: {self.last_react_initial_tokens} tk; {self.last_react_total_time:.0f}s)"
+                                thoughts_title = f"Thoughts and Actions #{interaction_id} (Ctx: {self.last_enhanced_tokens} tk; {self.last_react_total_time:.0f}s)"
                                 self.print_panel(formatted_thinking, thoughts_title, "yellow")
 
                             # Return answer to main conversation
-                            response_title = f"Agent Response (Ctx: {final_answer_tokens} tk; {self.last_react_total_time:.0f}s)"
+                            response_title = f"Agent Response (Ctx: {self.last_enhanced_tokens} tk; {self.last_react_total_time:.0f}s)"
                             self.print_panel(agent_response, response_title, "blue")
                             return agent_response
                         else:
@@ -1265,6 +1280,9 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                 'timestamp': time.time(),
                 'total_time': time.time() - react_start_time,
                 'context_tokens': self.last_react_initial_tokens,
+                'enhanced_tokens': getattr(self, 'last_enhanced_tokens', 0),
+                'memory_items': getattr(self, 'last_memory_items', []).copy(),
+                'enhanced_context': getattr(self, 'last_enhanced_context', ''),
                 'incomplete': True
             }
 
@@ -1966,20 +1984,54 @@ Type '/help' for commands, '/quit' to exit.
             self.print_status(f"Debug info error: {e}", "error")
 
     def show_last_context(self):
-        """Show the verbatim last context used for final answer generation."""
+        """Show detailed breakdown of context with memory provenance."""
         if not self.last_final_answer_context:
             self.print_status("No context available - no ReAct cycle completed yet", "warning")
             return
 
         context_info = []
-        context_info.append(f"**Context Size**: {len(self.last_final_answer_context):,} characters")
-        context_info.append(f"**Context Tokens**: {self._estimate_tokens(self.last_final_answer_context):,} tokens")
-        context_info.append(f"**Total ReAct Time**: {self.last_react_total_time:.1f}s")
+        context_info.append("**CONTEXT BREAKDOWN**")
+        context_info.append("=" * 50)
+
+        # Base context info
+        base_tokens = self._estimate_tokens(self.last_final_answer_context) if self.last_final_answer_context else 0
+        enhanced_tokens = self.last_enhanced_tokens if hasattr(self, 'last_enhanced_tokens') else 0
+
+        context_info.append(f"**Base Context**: {base_tokens:,} tokens")
+        if hasattr(self, 'last_enhanced_tokens') and self.last_enhanced_tokens > base_tokens:
+            memory_tokens = enhanced_tokens - base_tokens
+            context_info.append(f"**Memory Injection**: +{memory_tokens:,} tokens")
+            context_info.append(f"**Total Enhanced**: {enhanced_tokens:,} tokens")
+        else:
+            context_info.append(f"**Memory Injection**: Not enabled or no memory added")
+            context_info.append(f"**Total Context**: {base_tokens:,} tokens")
+
         context_info.append(f"**Model Max Tokens**: {self.model_max_tokens:,}")
+        context_info.append(f"**ReAct Time**: {self.last_react_total_time:.1f}s")
         context_info.append("")
-        context_info.append("**VERBATIM CONTEXT:**")
-        context_info.append("=" * 60)
-        context_info.append(self.last_final_answer_context)
+
+        # Memory items breakdown
+        if hasattr(self, 'last_memory_items') and self.last_memory_items:
+            context_info.append("**MEMORY ITEMS INJECTED**")
+            context_info.append("-" * 30)
+            for i, item in enumerate(self.last_memory_items[:10], 1):  # Show max 10 items
+                item_type = getattr(item, 'type', 'unknown')
+                item_content = str(getattr(item, 'content', item))[:100]
+                context_info.append(f"{i}. [{item_type}] {item_content}...")
+            if len(self.last_memory_items) > 10:
+                context_info.append(f"   ... and {len(self.last_memory_items) - 10} more items")
+            context_info.append("")
+
+        # Enhanced context if available
+        if hasattr(self, 'last_enhanced_context') and self.last_enhanced_context:
+            context_info.append("**FULL ENHANCED CONTEXT**")
+            context_info.append("=" * 60)
+            context_info.append(self.last_enhanced_context)
+        else:
+            # Fallback to base context
+            context_info.append("**BASE CONTEXT**")
+            context_info.append("=" * 60)
+            context_info.append(self.last_final_answer_context)
 
         context_text = "\n".join(context_info)
 
@@ -2161,7 +2213,33 @@ Type '/help' for commands, '/quit' to exit.
         timestamp = datetime.fromtimestamp(stored_data['timestamp']).strftime("%H:%M:%S")
         lines.append(f"**Question:** {stored_data['user_input']}")
         lines.append(f"**Time:** {timestamp} ({stored_data['total_time']:.1f}s total)")
-        lines.append(f"**Context Tokens:** {stored_data['context_tokens']}")
+
+        # Context information with memory breakdown
+        base_tokens = stored_data.get('context_tokens', 0)
+        enhanced_tokens = stored_data.get('enhanced_tokens', 0)
+        if enhanced_tokens > base_tokens:
+            memory_tokens = enhanced_tokens - base_tokens
+            lines.append(f"**Context Tokens:** {base_tokens} base + {memory_tokens} memory = {enhanced_tokens} total")
+        else:
+            lines.append(f"**Context Tokens:** {base_tokens}")
+
+        # Memory items used
+        memory_items = stored_data.get('memory_items', [])
+        if memory_items:
+            lines.append(f"**Memory Items Used:** {len(memory_items)} items")
+            for i, item in enumerate(memory_items[:5], 1):  # Show first 5
+                item_type = item.get('type', 'unknown')
+                source = item.get('source', 'unknown')
+                content_preview = item.get('content', '')[:80] + '...' if len(item.get('content', '')) > 80 else item.get('content', '')
+                confidence = item.get('confidence')
+                confidence_str = f" (conf: {confidence:.2f})" if confidence else ""
+                lines.append(f"  {i}. [{item_type}] {content_preview}{confidence_str}")
+                lines.append(f"     Source: {source}")
+            if len(memory_items) > 5:
+                lines.append(f"  ... and {len(memory_items) - 5} more items")
+        else:
+            lines.append(f"**Memory Items Used:** None (memory not injected)")
+
         lines.append("")
 
         # Full reasoning flow - showing complete ReAct pattern
