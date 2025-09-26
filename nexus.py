@@ -1248,7 +1248,7 @@ Type '/help' for commands, '/quit' to exit.
 
     def show_help(self):
         """Show help information."""
-        help_text = """
+        help_text = f"""
 **Available Commands:** (all commands start with /)
 - `/help` - Show this help message
 - `/status` - Show agent status and capabilities
@@ -1667,6 +1667,7 @@ Type '/help' for commands, '/quit' to exit.
         else:
             self.print_status("Compaction not available (AbstractCore BasicSession not found)", "warning")
             self.print_status("This feature requires AbstractCore with BasicSession support", "info")
+
 
 
 def parse_args():
