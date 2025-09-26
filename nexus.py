@@ -135,6 +135,10 @@ class AutonomousAgentCLI:
         self.last_react_initial_tokens = 0  # Initial context tokens for ReAct
         self.model_max_tokens = self._get_model_max_tokens()
 
+        # Interaction and scratchpad tracking
+        self.interaction_counter = 0
+        self.scratchpad_storage = {}  # Store full untruncated reasoning by interaction_id
+
         # Create memory path if it doesn't exist
         Path(config.memory_path).mkdir(parents=True, exist_ok=True)
 
@@ -231,11 +235,17 @@ class AutonomousAgentCLI:
 
             try:
                 results = self.session.search_memory(query, limit=limit)
-                if results:
+                if results and any(result.get('content') for result in results):
                     formatted = []
                     for result in results:
-                        formatted.append(f"- {result.get('content', 'No content')[:100]}...")
-                    return f"Memory search results for '{query}':\n" + "\n".join(formatted)
+                        content = result.get('content', '').strip()
+                        if content:
+                            formatted.append(f"- {content}")
+
+                    if formatted:
+                        return f"Memory search results for '{query}':\n" + "\n".join(formatted)
+                    else:
+                        return f"No relevant memories found for '{query}' (found {len(results)} items but all had empty content)"
                 else:
                     return f"No memories found for '{query}'"
             except Exception as e:
@@ -250,7 +260,7 @@ class AutonomousAgentCLI:
                 fact: The important fact to remember
             """
             if not self.session:
-                return "Memory not available"
+                return "FAILURE: Memory system not initialized.\nReason: No session available.\nNext: Contact system administrator or restart the agent."
 
             try:
                 # Check for similar facts to prevent duplication
@@ -259,18 +269,22 @@ class AutonomousAgentCLI:
                     fact_lower = fact.lower()
                     for pending_fact in self.session.memory.semantic.pending_facts:
                         if self._facts_are_similar(fact_lower, pending_fact):
-                            return f"Similar fact already exists: {pending_fact[:100]}..."
+                            return f"DUPLICATE: Similar fact already pending validation.\nExisting: {pending_fact}\nNext: Use 'get_semantic_facts' to see all pending facts, or provide a more specific fact."
 
                     # Check validated facts for similarity
                     for fact_id, fact_data in self.session.memory.semantic.facts.items():
                         existing_fact = str(fact_data.get('content', '')).lower()
                         if self._facts_are_similar(fact_lower, existing_fact):
-                            return f"Similar fact already validated: {existing_fact[:100]}..."
+                            return f"DUPLICATE: Similar fact already validated.\nExisting: {existing_fact}\nNext: This information is already in memory. Use 'search_agent_memory' to find related facts."
 
                 self.session.learn_about_user(fact)
-                return f"Remembered: {fact}"
+
+                # Provide detailed success feedback
+                storage_location = "pending validation" if hasattr(self.session.memory, 'semantic') else "working memory"
+                return f"SUCCESS: Fact stored in {storage_location}.\nStored: {fact}\nNext: Use 'search_agent_memory' to retrieve or 'get_semantic_facts' to see validated facts."
+
             except Exception as e:
-                return f"Failed to remember fact: {e}"
+                return f"FAILURE: Could not store fact.\nReason: {e}\nNext: Check memory system status or try a shorter fact."
 
         @tool
         def get_memory_context(topic: str) -> str:
@@ -325,6 +339,35 @@ class AutonomousAgentCLI:
                 return json.dumps(identity_info, indent=2)
             except Exception as e:
                 return f"Failed to get identity: {e}"
+
+        @tool
+        def get_semantic_facts(limit: int = 10) -> str:
+            """
+            Get validated semantic facts from the agent's memory.
+
+            Args:
+                limit: Maximum number of facts to return
+            """
+            if not self.session or not hasattr(self.session, 'memory'):
+                return "Memory not available"
+
+            try:
+                if hasattr(self.session.memory, 'semantic') and hasattr(self.session.memory.semantic, 'facts'):
+                    facts = self.session.memory.semantic.facts
+                    if not facts:
+                        return "No semantic facts stored yet"
+
+                    result = [f"Found {len(facts)} semantic facts:"]
+                    for i, (fact_id, fact_data) in enumerate(list(facts.items())[:limit]):
+                        content = fact_data.get('content', 'No content')
+                        confidence = fact_data.get('confidence', 0.0)
+                        result.append(f"  {i+1}. {content} (confidence: {confidence:.2f})")
+
+                    return "\n".join(result)
+                else:
+                    return "Semantic memory component not available"
+            except Exception as e:
+                return f"Failed to get semantic facts: {e}"
 
         @tool
         def search_documents(query: str, limit: int = 5) -> str:
@@ -404,11 +447,49 @@ class AutonomousAgentCLI:
             get_memory_context,
             interpret_fact_subjectively,
             get_agent_identity,
+            get_semantic_facts,
             search_documents,
             get_document_summary
         ])
 
         return memory_tools
+
+    def create_memory_aware_read_file(self):
+        """Create a read_file tool that automatically stores content in document memory."""
+        @tool
+        def read_file_with_memory(file_path: str) -> str:
+            """
+            Read a file and automatically store it in document memory for future semantic search.
+
+            Args:
+                file_path: Path to the file to read
+            """
+            try:
+                # Use the original read_file tool
+                from abstractllm.tools.common_tools import read_file
+                content = read_file(file_path)
+
+                # Store in document memory if session is available
+                if self.session and hasattr(self.session, 'memory') and hasattr(self.session.memory, 'document'):
+                    try:
+                        # Store the document for future semantic search
+                        self.session.memory.document.store_document(
+                            filepath=file_path,
+                            content=content,
+                            file_type="text"  # Could be enhanced to detect file types
+                        )
+                        return f"SUCCESS: File read and stored in document memory.\nFile: {file_path}\nContent:\n{content}\nNext: Use 'search_documents' to find this content later."
+                    except Exception as store_error:
+                        return f"SUCCESS: File read (storage failed).\nFile: {file_path}\nContent:\n{content}\nNote: Could not store in document memory: {store_error}"
+                else:
+                    return f"SUCCESS: File read (no document memory).\nFile: {file_path}\nContent:\n{content}"
+
+            except Exception as e:
+                return f"FAILURE: Could not read file.\nFile: {file_path}\nReason: {e}\nNext: Check if file exists and you have permissions."
+
+        # Set the name for tool recognition
+        read_file_with_memory.__name__ = "read_file"
+        return read_file_with_memory
 
     def _facts_are_similar(self, fact1: str, fact2: str, threshold: float = 0.75) -> bool:
         """Check if two facts are similar to prevent duplication using embeddings when available."""
@@ -482,8 +563,10 @@ class AutonomousAgentCLI:
             tools = []
 
             if ABSTRACTCORE_AVAILABLE and self.config.enable_tools and list_files and read_file:
-                tools.extend([list_files, read_file])
-                self.print_status("Added file system tools", "success")
+                # Create memory-aware file tools
+                memory_aware_read_file = self.create_memory_aware_read_file()
+                tools.extend([list_files, memory_aware_read_file])
+                self.print_status("Added file system tools with document memory integration", "success")
 
             if self.config.enable_memory_tools:
                 memory_tools = self.setup_memory_tools()
@@ -548,6 +631,7 @@ You have access to these tools (use exact names):
 - search_agent_memory: Search your persistent memory
 - remember_important_fact: Store important information
 - get_memory_context: Get relevant context for a topic
+- get_semantic_facts: Get validated facts from semantic memory
 
 ## Important Notes:
 - Use JSON format for Action Input: {{"parameter": "value"}}
@@ -626,8 +710,12 @@ Final Answer: [Write naturally and experientially about what you accomplished an
         if not self.session:
             return "Agent not initialized"
 
-        # Show user input
-        self.print_panel(user_input, "User Input", "green")
+        # Generate interaction ID
+        self.interaction_counter += 1
+        interaction_id = self.interaction_counter
+
+        # Show user input with interaction ID
+        self.print_panel(user_input, f"User Input #{interaction_id}", "green")
 
         try:
             # === CRITICAL: ReAct Branch Configuration ===
@@ -642,7 +730,8 @@ Final Answer: [Write naturally and experientially about what you accomplished an
             # Start ReAct with FIXED, LIMITED context
             react_initial_context = f"{main_context}\n\nQuestion: {user_input}\n" if main_context else f"Question: {user_input}\n"
             react_scratchpad = []  # Track ALL reasoning steps
-            cycle_logs = {}  # For UI display
+            cycle_logs = {}  # For UI display (truncated)
+            full_reasoning_log = []  # Store FULL untruncated reasoning for /scratch
 
             # Track initial context and start total timing
             import time
@@ -698,6 +787,14 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                     'generation_time': iter_time
                 })
 
+                # Store full untruncated reasoning for /scratch command
+                full_reasoning_log.append({
+                    'cycle': iteration + 1,
+                    'agent_response': agent_response,  # Full response
+                    'timestamp': time.time(),
+                    'generation_time': iter_time
+                })
+
                 # Check if this is a Final Answer
                 if "Final Answer:" in agent_response:
                     # Extract the final answer
@@ -716,6 +813,16 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                         if react_config.save_scratchpad:
                             self._save_react_scratchpad(react_scratchpad, user_input, final_answer, react_config)
 
+                        # Store full untruncated reasoning for /scratch command
+                        self.scratchpad_storage[interaction_id] = {
+                            'user_input': user_input,
+                            'full_reasoning': full_reasoning_log,
+                            'final_answer': final_answer,
+                            'timestamp': time.time(),
+                            'total_time': time.time() - react_start_time,
+                            'context_tokens': self.last_react_initial_tokens
+                        }
+
                         # Calculate total ReAct time and context info
                         self.last_react_total_time = time.time() - react_start_time
                         self.last_final_answer_context = react_initial_context  # Store for /context command
@@ -724,7 +831,7 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                         # Show reasoning process (for testing/debugging)
                         if cycle_logs:
                             formatted_thinking = self.format_cycle_logs(cycle_logs)
-                            thoughts_title = f"Thoughts and Actions (Ctx: {self.last_react_initial_tokens} tk; {self.last_react_total_time:.0f}s)"
+                            thoughts_title = f"Thoughts and Actions #{interaction_id} (Ctx: {self.last_react_initial_tokens} tk; {self.last_react_total_time:.0f}s)"
                             self.print_panel(formatted_thinking, thoughts_title, "yellow")
 
                         # Show final answer that merges back to main conversation
@@ -758,6 +865,14 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                     # Execute the actual tool
                     tool_result = self.execute_tool(tool_name, tool_input)
 
+                    # Add tool result to full reasoning log
+                    full_reasoning_log[-1]['tool_execution'] = {
+                        'tool_name': tool_name,
+                        'tool_input': tool_input,
+                        'tool_result': tool_result,  # Full untruncated result
+                        'execution_time': time.time() - iter_start_time
+                    }
+
                     # Calculate total cycle time (thinking + tool execution)
                     total_cycle_time = time.time() - iter_start_time
 
@@ -783,6 +898,14 @@ Final Answer: [Write naturally and experientially about what you accomplished an
 
                     # Add to cycle logs for display
                     cycle_logs[cycle_num].append(("observation", display_observation))
+
+                    # Store the full observation in reasoning log (this is what the agent sees in next cycle)
+                    full_reasoning_log.append({
+                        'cycle': iteration + 1,
+                        'observation': full_observation,  # Full untruncated observation
+                        'timestamp': time.time(),
+                        'type': 'observation'
+                    })
 
                     # === CRITICAL: Build up ReAct scratchpad (append, don't replace) ===
                     react_initial_context += agent_response + "\n" + full_observation + "\n"
@@ -813,6 +936,16 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                             if react_config.save_scratchpad:
                                 self._save_react_scratchpad(react_scratchpad, user_input, agent_response, react_config)
 
+                            # Store complete reasoning for /scratch command
+                            self.scratchpad_storage[interaction_id] = {
+                                'user_input': user_input,
+                                'full_reasoning': full_reasoning_log,
+                                'final_answer': agent_response,
+                                'timestamp': time.time(),
+                                'total_time': time.time() - react_start_time,
+                                'context_tokens': self.last_react_initial_tokens
+                            }
+
                             # Calculate total ReAct time and context info
                             self.last_react_total_time = time.time() - react_start_time
                             self.last_final_answer_context = react_initial_context  # Store for /context command
@@ -821,7 +954,7 @@ Final Answer: [Write naturally and experientially about what you accomplished an
                             # Show reasoning
                             if cycle_logs:
                                 formatted_thinking = self.format_cycle_logs(cycle_logs)
-                                thoughts_title = f"Thoughts and Actions (Ctx: {self.last_react_initial_tokens} tk; {self.last_react_total_time:.0f}s)"
+                                thoughts_title = f"Thoughts and Actions #{interaction_id} (Ctx: {self.last_react_initial_tokens} tk; {self.last_react_total_time:.0f}s)"
                                 self.print_panel(formatted_thinking, thoughts_title, "yellow")
 
                             # Return answer to main conversation
@@ -840,10 +973,21 @@ Final Answer: [Write naturally and experientially about what you accomplished an
             if react_config.save_scratchpad:
                 self._save_react_scratchpad(react_scratchpad, user_input, incomplete_answer, react_config)
 
+            # Store incomplete reasoning for /scratch command
+            self.scratchpad_storage[interaction_id] = {
+                'user_input': user_input,
+                'full_reasoning': full_reasoning_log,
+                'final_answer': incomplete_answer,
+                'timestamp': time.time(),
+                'total_time': time.time() - react_start_time,
+                'context_tokens': self.last_react_initial_tokens,
+                'incomplete': True
+            }
+
             # Show incomplete reasoning
             if cycle_logs:
                 formatted_thinking = self.format_cycle_logs(cycle_logs)
-                self.print_panel(formatted_thinking, "Thoughts and Actions (Incomplete)", "yellow")
+                self.print_panel(formatted_thinking, f"Thoughts and Actions #{interaction_id} (Incomplete)", "yellow")
 
             return "I apologize, I couldn't complete the reasoning within the allowed iterations."
 
@@ -1085,7 +1229,7 @@ Final Answer: [Write naturally and experientially about what you accomplished an
 
             if not target_tool:
                 available_tools = [getattr(t, '__name__', 'unknown') for t in tools]
-                return f"Error: Tool '{tool_name}' not found. Available: {available_tools}"
+                return f"Error: Tool '{tool_name}' not found. Available tools are: {', '.join(available_tools)}. Please use one of these tool names in your Action."
 
             # Execute the tool with the input
             if isinstance(tool_input, dict):
@@ -1233,6 +1377,9 @@ Type '/help' for commands, '/quit' to exit.
                 elif user_input.lower().startswith('/compact'):
                     self.handle_compact_command(user_input)
                     continue
+                elif user_input.lower().startswith('/scratch'):
+                    self.show_full_scratchpad(user_input)
+                    continue
 
                 # Process through agent
                 self.process_user_input(user_input)
@@ -1258,6 +1405,7 @@ Type '/help' for commands, '/quit' to exit.
 - `/tools` - Show available tools and their status
 - `/debug` - Show debugging information
 - `/compact [preserve_recent] [focus]` - Compact session history using AI summarization
+- `/scratch [interaction_id]` - Show FULL untruncated reasoning for an interaction
 - `/clear` - Clear the screen
 - `/quit` / `/exit` / `/q` - Exit the CLI
 
@@ -1270,7 +1418,8 @@ Type '/help' for commands, '/quit' to exit.
 **Tips:**
 - Ask the agent to remember important information
 - Request file operations or analysis
-- The agent's thoughts and actions are shown in real-time
+- The agent's thoughts and actions are shown in real-time with interaction IDs
+- Use `/scratch <id>` to see FULL untruncated reasoning, tools results, etc.
 - Memory persists across sessions in: `{self.config.memory_path}`
         """
 
@@ -1343,10 +1492,10 @@ Type '/help' for commands, '/quit' to exit.
                     memory_info.append(f"**Semantic Memory**: {semantic_count} validated facts (need {validation_threshold} repetitions)")
                     if semantic_count > 0:
                         for i, (_, fact_data) in enumerate(semantic_facts.items()):
-                            content = str(fact_data.get('content', ''))[:80]
+                            content = str(fact_data.get('content', ''))
                             confidence = fact_data.get('confidence', 0)
                             occurrence_count = fact_data.get('occurrence_count', 1)
-                            memory_info.append(f"  {i+1}. {content}{'...' if len(str(fact_data.get('content', ''))) > 80 else ''}")
+                            memory_info.append(f"  {i+1}. {content}")
                             memory_info.append(f"     Confidence: {confidence:.2f}, Occurrences: {occurrence_count}")
 
                 # Show pending facts (facts being validated)
@@ -1380,9 +1529,21 @@ Type '/help' for commands, '/quit' to exit.
                     episode_count = len(episodes)
                     memory_info.append(f"**Episodic Memory**: {episode_count} episodes")
                     if episode_count > 0:
-                        for i, (_, episode) in enumerate(list(episodes.items())[:3]):
-                            content = str(episode.get('content', ''))[:80]
-                            memory_info.append(f"  {i+1}. {content}{'...' if len(str(episode.get('content', ''))) > 80 else ''}")
+                        valid_episodes = []
+                        for episode_id, episode in episodes.items():
+                            content = str(episode.get('content', '')).strip()
+                            if content:  # Only show episodes with actual content
+                                valid_episodes.append((episode_id, episode))
+
+                        if valid_episodes:
+                            for i, (episode_id, episode) in enumerate(list(valid_episodes)[:5]):  # Show up to 5
+                                content = str(episode.get('content', ''))
+                                episode_type = episode.get('type', 'unknown')
+                                timestamp = episode.get('timestamp', 'unknown')
+                                memory_info.append(f"  {i+1}. [{episode_type}] {content}")
+                                memory_info.append(f"     Time: {timestamp}")
+                        else:
+                            memory_info.append("  (All episodes have empty content)")
                 memory_info.append("")
 
             # Document memory - stored files and documents
@@ -1667,6 +1828,89 @@ Type '/help' for commands, '/quit' to exit.
         else:
             self.print_status("Compaction not available (AbstractCore BasicSession not found)", "warning")
             self.print_status("This feature requires AbstractCore with BasicSession support", "info")
+
+    def show_full_scratchpad(self, user_input: str):
+        """Show the full untruncated reasoning scratchpad for a given interaction ID."""
+        parts = user_input.strip().split()
+
+        if len(parts) < 2:
+            # Show available interaction IDs
+            if not self.scratchpad_storage:
+                self.print_status("No interactions stored yet", "warning")
+                return
+
+            available_ids = sorted(self.scratchpad_storage.keys())
+            self.print_status(f"Available interaction IDs: {', '.join(map(str, available_ids))}", "info")
+            self.print_status("Usage: /scratch <interaction_id>", "info")
+            return
+
+        try:
+            interaction_id = int(parts[1])
+        except ValueError:
+            self.print_status("Invalid interaction ID. Must be a number.", "error")
+            return
+
+        if interaction_id not in self.scratchpad_storage:
+            available_ids = sorted(self.scratchpad_storage.keys())
+            self.print_status(f"Interaction #{interaction_id} not found", "error")
+            self.print_status(f"Available IDs: {', '.join(map(str, available_ids))}", "info")
+            return
+
+        # Get the stored reasoning
+        stored_data = self.scratchpad_storage[interaction_id]
+
+        # Format the full untruncated reasoning
+        full_content = self._format_full_reasoning(stored_data)
+
+        # Display with proper title
+        status_info = " (INCOMPLETE)" if stored_data.get('incomplete', False) else ""
+        title = f"Full Untruncated Scratchpad #{interaction_id}{status_info}"
+
+        self.print_panel(full_content, title, "magenta")
+
+    def _format_full_reasoning(self, stored_data: dict) -> str:
+        """Format the full untruncated reasoning for display."""
+        lines = []
+
+        # Header info
+        from datetime import datetime
+        timestamp = datetime.fromtimestamp(stored_data['timestamp']).strftime("%H:%M:%S")
+        lines.append(f"**Question:** {stored_data['user_input']}")
+        lines.append(f"**Time:** {timestamp} ({stored_data['total_time']:.1f}s total)")
+        lines.append(f"**Context Tokens:** {stored_data['context_tokens']}")
+        lines.append("")
+
+        # Full reasoning flow - showing complete ReAct pattern
+        current_cycle = None
+        for entry in stored_data['full_reasoning']:
+            # Check if we're starting a new cycle
+            if entry.get('type') != 'observation' and entry['cycle'] != current_cycle:
+                current_cycle = entry['cycle']
+                lines.append(f"**━━━ Cycle {current_cycle} ━━━**")
+                lines.append("")
+
+            if entry.get('type') == 'observation':
+                # This is an observation entry
+                lines.append(entry['observation'])  # Full untruncated observation
+                lines.append("")
+            else:
+                # This is an agent response entry
+                agent_response = entry['agent_response']
+                lines.append(agent_response)
+                lines.append("")
+
+                # Show tool execution metadata if present
+                if 'tool_execution' in entry:
+                    tool_data = entry['tool_execution']
+                    lines.append(f"[Tool: {tool_data['tool_name']} executed in {tool_data['execution_time']:.2f}s]")
+                    lines.append("")
+
+        # Final answer
+        lines.append("**━━━ Final Answer ━━━**")
+        lines.append("")
+        lines.append(stored_data['final_answer'])
+
+        return "\n".join(lines)
 
 
 
