@@ -571,3 +571,10 @@ Nexus
 - create a /reset to destroy current (persistent) database
 - create a /clear to reset both the chat history (and working memory ?)
 - /system (prompt) : visualize or change the prompt
+
+
+Embeddings
+ok, so for hf, the embedding models are : google/embeddinggemma-300m, Qwen/Qwen3-Embedding-0.6B, sentence-transformers/all-MiniLM-L6-v2, 
+  ibm-granite/granite-embedding-107m-multilingual, ibm-granite/granite-embedding-278m-multilingual, ibm-granite/granite-embedding-30m-english (only english, careful), 
+  nomic-ai/nomic-embed-text-v1.5 and nomic-ai/nomic-embed-text-v2-moe. Those are the models that we favor and should recognize. any HF models should be stored in the HF cache 
+  ~/.cache/huggingface/ and reused whenever possible - do not download them over and over again. by default, i suggest to stick to sentence-transformers/all-MiniLM-L6-v2

@@ -58,7 +58,8 @@ except ImportError:
 
 # Core imports - AbstractCore is installed as abstractllm
 from abstractllm import create_llm
-from abstractllm.tools.common_tools import list_files, read_file
+from abstractllm.tools.common_tools import list_files
+# read_file is implemented as a memory-aware wrapper below
 from abstractllm.tools import tool
 try:
     from abstractllm.embeddings import EmbeddingManager
@@ -138,6 +139,7 @@ class AutonomousAgentCLI:
         # Interaction and scratchpad tracking
         self.interaction_counter = 0
         self.scratchpad_storage = {}  # Store full untruncated reasoning by interaction_id
+
 
         # Create memory path if it doesn't exist
         Path(config.memory_path).mkdir(parents=True, exist_ok=True)
@@ -221,17 +223,47 @@ class AutonomousAgentCLI:
         if not tool:
             return []
 
-        @tool
+        @tool(
+            description="Search the agent's persistent memory for stored information and facts",
+            tags=["memory", "search", "recall", "information"],
+            when_to_use="When you need to recall previously stored facts, information, or context from past conversations",
+            examples=[
+                {
+                    "description": "Search for information about user preferences",
+                    "arguments": {
+                        "query": "user preferences settings",
+                        "limit": 5
+                    }
+                },
+                {
+                    "description": "Find facts about a specific topic",
+                    "arguments": {
+                        "query": "python programming",
+                        "limit": 3
+                    }
+                },
+                {
+                    "description": "Recall previous conversation context",
+                    "arguments": {
+                        "query": "previous discussion about API",
+                        "limit": 10
+                    }
+                }
+            ]
+        )
         def search_agent_memory(query: str, limit: int = 5) -> str:
             """
-            Search the agent's memory for information.
+            Search the agent's persistent memory for stored information and facts.
 
             Args:
-                query: What to search for
-                limit: Maximum number of results
+                query: What to search for in memory
+                limit: Maximum number of results to return (default: 5)
+
+            Returns:
+                Search results from memory or message if no results found
             """
             if not self.session or not hasattr(self.session, 'memory'):
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session or memory not initialized.\nNext: Check system status."
 
             try:
                 results = self.session.search_memory(query, limit=limit)
@@ -251,13 +283,46 @@ class AutonomousAgentCLI:
             except Exception as e:
                 return f"Memory search failed: {e}"
 
-        @tool
+        @tool(
+            description="Store an important fact or information in persistent memory for future recall",
+            tags=["memory", "store", "remember", "fact", "information"],
+            when_to_use="When you learn something important that should be remembered for future conversations or reference",
+            examples=[
+                {
+                    "description": "Remember user preferences",
+                    "arguments": {
+                        "fact": "User prefers Python over JavaScript for backend development"
+                    }
+                },
+                {
+                    "description": "Store important project information",
+                    "arguments": {
+                        "fact": "The main API endpoint is https://api.example.com/v1 and requires authentication"
+                    }
+                },
+                {
+                    "description": "Remember user's identity or context",
+                    "arguments": {
+                        "fact": "User is working on a machine learning project using TensorFlow and needs help with model optimization"
+                    }
+                },
+                {
+                    "description": "Store learning or insights",
+                    "arguments": {
+                        "fact": "The user's codebase uses TypeScript with strict mode enabled and follows clean architecture principles"
+                    }
+                }
+            ]
+        )
         def remember_important_fact(fact: str) -> str:
             """
-            Store an important fact in memory for future reference.
+            Store an important fact or information in persistent memory for future recall.
 
             Args:
-                fact: The important fact to remember
+                fact: The important fact or information to store in memory
+
+            Returns:
+                Confirmation of storage with next steps, or error message if storage fails
             """
             if not self.session:
                 return "FAILURE: Memory system not initialized.\nReason: No session available.\nNext: Contact system administrator or restart the agent."
@@ -272,7 +337,7 @@ class AutonomousAgentCLI:
                             return f"DUPLICATE: Similar fact already pending validation.\nExisting: {pending_fact}\nNext: Use 'get_semantic_facts' to see all pending facts, or provide a more specific fact."
 
                     # Check validated facts for similarity
-                    for fact_id, fact_data in self.session.memory.semantic.facts.items():
+                    for _, fact_data in self.session.memory.semantic.facts.items():
                         existing_fact = str(fact_data.get('content', '')).lower()
                         if self._facts_are_similar(fact_lower, existing_fact):
                             return f"DUPLICATE: Similar fact already validated.\nExisting: {existing_fact}\nNext: This information is already in memory. Use 'search_agent_memory' to find related facts."
@@ -286,16 +351,43 @@ class AutonomousAgentCLI:
             except Exception as e:
                 return f"FAILURE: Could not store fact.\nReason: {e}\nNext: Check memory system status or try a shorter fact."
 
-        @tool
+        @tool(
+            description="Get relevant memory context and background information about a specific topic",
+            tags=["memory", "context", "background", "topic"],
+            when_to_use="When you need background context or related information about a specific topic from memory",
+            examples=[
+                {
+                    "description": "Get context about a project",
+                    "arguments": {
+                        "topic": "machine learning project"
+                    }
+                },
+                {
+                    "description": "Find context about user preferences",
+                    "arguments": {
+                        "topic": "user coding preferences"
+                    }
+                },
+                {
+                    "description": "Get background on previous discussions",
+                    "arguments": {
+                        "topic": "API design decisions"
+                    }
+                }
+            ]
+        )
         def get_memory_context(topic: str) -> str:
             """
-            Get relevant memory context about a topic.
+            Get relevant memory context and background information about a specific topic.
 
             Args:
-                topic: Topic to get context for
+                topic: The topic to get memory context for
+
+            Returns:
+                Relevant context from memory or message if no context found
             """
             if not self.session:
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session not initialized.\nNext: Check system status."
 
             try:
                 context = self.session.get_memory_context(topic)
@@ -303,16 +395,43 @@ class AutonomousAgentCLI:
             except Exception as e:
                 return f"Failed to get memory context: {e}"
 
-        @tool
+        @tool(
+            description="Interpret a fact or information through the agent's identity, values, and perspective",
+            tags=["memory", "interpret", "subjective", "identity", "values"],
+            when_to_use="When you need to understand how information relates to the agent's identity, values, or perspective",
+            examples=[
+                {
+                    "description": "Interpret information about user preferences",
+                    "arguments": {
+                        "fact": "User prefers functional programming over object-oriented programming"
+                    }
+                },
+                {
+                    "description": "Understand project requirements through agent's lens",
+                    "arguments": {
+                        "fact": "The project needs to be completed by next month with high quality standards"
+                    }
+                },
+                {
+                    "description": "Interpret user feedback subjectively",
+                    "arguments": {
+                        "fact": "User expressed satisfaction with the current implementation but wants more features"
+                    }
+                }
+            ]
+        )
         def interpret_fact_subjectively(fact: str) -> str:
             """
-            Interpret a fact through the agent's identity and values.
+            Interpret a fact or information through the agent's identity, values, and perspective.
 
             Args:
-                fact: Fact to interpret subjectively
+                fact: The fact or information to interpret subjectively
+
+            Returns:
+                Subjective interpretation as JSON or error message
             """
             if not self.session or not hasattr(self.session, 'memory'):
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session or memory not initialized.\nNext: Check system status."
 
             try:
                 if hasattr(self.session.memory, 'interpret_fact_subjectively'):
@@ -323,11 +442,34 @@ class AutonomousAgentCLI:
             except Exception as e:
                 return f"Failed to interpret fact: {e}"
 
-        @tool
+        @tool(
+            description="Get comprehensive information about the agent's identity, values, and configuration",
+            tags=["memory", "identity", "self", "values", "agent"],
+            when_to_use="When you need to understand or reference the agent's identity, core values, or self-concept",
+            examples=[
+                {
+                    "description": "Get agent's basic identity information",
+                    "arguments": {}
+                },
+                {
+                    "description": "Check agent's core values and principles",
+                    "arguments": {}
+                },
+                {
+                    "description": "Understand agent's role and capabilities",
+                    "arguments": {}
+                }
+            ]
+        )
         def get_agent_identity() -> str:
-            """Get information about the agent's current identity and values."""
+            """
+            Get comprehensive information about the agent's identity, values, and configuration.
+
+            Returns:
+                Agent identity information as JSON or error message
+            """
             if not self.session or not hasattr(self.session, 'memory'):
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session or memory not initialized.\nNext: Check system status."
 
             try:
                 identity_info = {
@@ -340,16 +482,43 @@ class AutonomousAgentCLI:
             except Exception as e:
                 return f"Failed to get identity: {e}"
 
-        @tool
+        @tool(
+            description="Retrieve validated semantic facts and knowledge from the agent's long-term memory",
+            tags=["memory", "facts", "knowledge", "semantic", "validated"],
+            when_to_use="When you need to access established facts, knowledge, or validated information from memory",
+            examples=[
+                {
+                    "description": "Get recent validated facts",
+                    "arguments": {
+                        "limit": 5
+                    }
+                },
+                {
+                    "description": "Retrieve all validated knowledge",
+                    "arguments": {
+                        "limit": 20
+                    }
+                },
+                {
+                    "description": "Get top facts for context",
+                    "arguments": {
+                        "limit": 10
+                    }
+                }
+            ]
+        )
         def get_semantic_facts(limit: int = 10) -> str:
             """
-            Get validated semantic facts from the agent's memory.
+            Retrieve validated semantic facts and knowledge from the agent's long-term memory.
 
             Args:
-                limit: Maximum number of facts to return
+                limit: Maximum number of validated facts to return (default: 10)
+
+            Returns:
+                List of validated facts with confidence scores or message if no facts found
             """
             if not self.session or not hasattr(self.session, 'memory'):
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session or memory not initialized.\nNext: Check system status."
 
             try:
                 if hasattr(self.session.memory, 'semantic') and hasattr(self.session.memory.semantic, 'facts'):
@@ -358,7 +527,7 @@ class AutonomousAgentCLI:
                         return "No semantic facts stored yet"
 
                     result = [f"Found {len(facts)} semantic facts:"]
-                    for i, (fact_id, fact_data) in enumerate(list(facts.items())[:limit]):
+                    for i, (_, fact_data) in enumerate(list(facts.items())[:limit]):
                         content = fact_data.get('content', 'No content')
                         confidence = fact_data.get('confidence', 0.0)
                         result.append(f"  {i+1}. {content} (confidence: {confidence:.2f})")
@@ -369,24 +538,54 @@ class AutonomousAgentCLI:
             except Exception as e:
                 return f"Failed to get semantic facts: {e}"
 
-        @tool
+        @tool(
+            description="Search through stored documents using semantic and keyword search capabilities",
+            tags=["documents", "search", "files", "content", "semantic"],
+            when_to_use="When you need to find information within documents that have been read and stored in memory",
+            examples=[
+                {
+                    "description": "Find documents about a specific topic",
+                    "arguments": {
+                        "query": "API authentication methods",
+                        "limit": 3
+                    }
+                },
+                {
+                    "description": "Search for code examples",
+                    "arguments": {
+                        "query": "function definition example",
+                        "limit": 5
+                    }
+                },
+                {
+                    "description": "Find configuration files",
+                    "arguments": {
+                        "query": "database connection settings",
+                        "limit": 2
+                    }
+                }
+            ]
+        )
         def search_documents(query: str, limit: int = 5) -> str:
             """
-            Search stored documents using semantic and keyword search.
+            Search through stored documents using semantic and keyword search capabilities.
 
             Args:
-                query: Search query
-                limit: Maximum number of documents to return
+                query: The search query to find relevant documents
+                limit: Maximum number of documents to return (default: 5)
+
+            Returns:
+                Search results from document memory with file paths and previews
             """
             if not self.session:
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session not initialized.\nNext: Check system status."
 
             try:
                 documents = self.session.memory.search_documents(query, limit)
                 if not documents:
-                    return f"No documents found for query: '{query}'"
+                    return f"SUCCESS: No documents found for query '{query}'.\nReason: No matching documents in memory.\nNext: Try broader search terms or use 'get_document_summary' to see what's available."
 
-                results = [f"Found {len(documents)} document(s):"]
+                results = [f"SUCCESS: Found {len(documents)} document(s) for '{query}':"]
                 for i, doc in enumerate(documents, 1):
                     filepath = doc.get('filepath', 'unknown')
                     file_type = doc.get('file_type', 'unknown')
@@ -397,21 +596,45 @@ class AutonomousAgentCLI:
                     results.append(f"   Accessed: {access_count} times")
                     results.append(f"   Preview: {content_preview}{'...' if len(str(doc.get('content', ''))) > 150 else ''}")
 
+                results.append(f"\nNext: Use 'read_file' to get full content of any document listed above.")
                 return "\n".join(results)
             except Exception as e:
-                return f"Failed to search documents: {e}"
+                return f"FAILURE: Could not search documents.\nReason: {e}\nNext: Check if documents are stored or try 'get_document_summary'."
 
-        @tool
+        @tool(
+            description="Get a comprehensive summary of all documents stored in memory with statistics and overview",
+            tags=["documents", "summary", "overview", "statistics", "memory"],
+            when_to_use="When you need an overview of what documents are available in memory or want to understand document storage status",
+            examples=[
+                {
+                    "description": "Get overview of stored documents",
+                    "arguments": {}
+                },
+                {
+                    "description": "Check document storage statistics",
+                    "arguments": {}
+                },
+                {
+                    "description": "Understand what files are available for search",
+                    "arguments": {}
+                }
+            ]
+        )
         def get_document_summary() -> str:
-            """Get summary of all stored documents."""
+            """
+            Get a comprehensive summary of all documents stored in memory with statistics and overview.
+
+            Returns:
+                Document storage summary with counts, types, and most accessed files
+            """
             if not self.session:
-                return "Memory not available"
+                return "FAILURE: Memory system not available.\nReason: Session not initialized.\nNext: Check system status."
 
             try:
                 summary = self.session.memory.get_document_summary()
 
                 if summary.get('total_documents', 0) == 0:
-                    return "No documents stored in memory yet."
+                    return "SUCCESS: No documents stored in memory yet.\nReason: No files have been read and stored.\nNext: Use 'read_file' to read and automatically store documents for future search."
 
                 total_docs = summary.get('total_documents', 0)
                 total_size = summary.get('total_content_size', 0)
@@ -419,7 +642,7 @@ class AutonomousAgentCLI:
                 has_semantic = summary.get('has_semantic_search', False)
                 chunk_count = summary.get('total_chunks', 0)
 
-                result = [f"Document Memory Summary:"]
+                result = [f"SUCCESS: Document Memory Summary:"]
                 result.append(f"• Total documents: {total_docs}")
                 result.append(f"• Total content: {total_size:,} characters")
 
@@ -437,9 +660,10 @@ class AutonomousAgentCLI:
                     access_count = most_accessed.get('access_count', 0)
                     result.append(f"• Most accessed: {filepath} ({access_count} times)")
 
+                result.append(f"\nNext: Use 'search_documents' to find specific content within these {total_docs} documents.")
                 return "\n".join(result)
             except Exception as e:
-                return f"Failed to get document summary: {e}"
+                return f"FAILURE: Could not get document summary.\nReason: {e}\nNext: Check memory system status or try other memory tools."
 
         memory_tools.extend([
             search_agent_memory,
@@ -454,42 +678,100 @@ class AutonomousAgentCLI:
 
         return memory_tools
 
-    def create_memory_aware_read_file(self):
-        """Create a read_file tool that automatically stores content in document memory."""
-        @tool
-        def read_file_with_memory(file_path: str) -> str:
-            """
-            Read a file and automatically store it in document memory for future semantic search.
+    @tool(
+        description="Read the contents of a file with optional line range and hidden file access, with automatic document memory storage",
+        tags=["file", "read", "content", "text", "memory"],
+        when_to_use="When you need to read file contents, examine code, or extract specific line ranges from files",
+        examples=[
+            {
+                "description": "Read entire file",
+                "arguments": {
+                    "file_path": "README.md"
+                }
+            },
+            {
+                "description": "Read specific line range",
+                "arguments": {
+                    "file_path": "src/main.py",
+                    "should_read_entire_file": False,
+                    "start_line_one_indexed": 10,
+                    "end_line_one_indexed_inclusive": 25
+                }
+            },
+            {
+                "description": "Read hidden file",
+                "arguments": {
+                    "file_path": ".gitignore"
+                }
+            },
+            {
+                "description": "Read first 50 lines",
+                "arguments": {
+                    "file_path": "large_file.txt",
+                    "should_read_entire_file": False,
+                    "end_line_one_indexed_inclusive": 50
+                }
+            }
+        ]
+    )
+    def read_file(self, file_path: str, should_read_entire_file: bool = True, start_line_one_indexed: int = 1, end_line_one_indexed_inclusive: Optional[int] = None) -> str:
+        """
+        Read the contents of a file with optional line range and automatic document memory storage.
 
-            Args:
-                file_path: Path to the file to read
-            """
-            try:
-                # Use the original read_file tool
-                from abstractllm.tools.common_tools import read_file
-                content = read_file(file_path)
+        Args:
+            file_path: Path to the file to read
+            should_read_entire_file: Whether to read the entire file (default: True)
+                Note: Automatically set to False if start_line_one_indexed != 1 or end_line_one_indexed_inclusive is provided
+            start_line_one_indexed: Starting line number (1-indexed, default: 1)
+            end_line_one_indexed_inclusive: Ending line number (1-indexed, inclusive, optional)
 
-                # Store in document memory if session is available
-                if self.session and hasattr(self.session, 'memory') and hasattr(self.session.memory, 'document'):
-                    try:
+        Returns:
+            File contents with storage confirmation or error message
+        """
+        try:
+            from abstractllm.tools.common_tools import read_file as original_read_file
+
+            # Call original read_file with all parameters (perfect pass-through)
+            content = original_read_file(file_path, should_read_entire_file, start_line_one_indexed, end_line_one_indexed_inclusive)
+
+            # Check if it was an error from original read_file
+            if content.startswith("Error:"):
+                return f"FAILURE: {content}\nNext: Check if file exists and you have permissions."
+
+            # ALWAYS try to store in document memory (only skip if already stored)
+            if self.session and hasattr(self.session, 'memory') and hasattr(self.session.memory, 'document'):
+                try:
+                    # Check if document is already stored to avoid duplicates
+                    existing_summary = self.session.memory.document.get_document_summary()
+                    existing_docs = existing_summary.get('documents', [])
+
+                    # Check if this file path is already stored
+                    already_stored = any(doc.get('filepath') == file_path for doc in existing_docs)
+
+                    if not already_stored:
+                        # Extract just the file content (remove the "File: path (X lines)" prefix)
+                        lines = content.split('\n', 2)  # Split into at most 3 parts
+                        if len(lines) >= 3 and lines[0].startswith("File:") and lines[1] == "":
+                            file_content = lines[2]  # Everything after the empty line
+                        else:
+                            file_content = content  # Fallback to full content
+
                         # Store the document for future semantic search
                         self.session.memory.document.store_document(
                             filepath=file_path,
-                            content=content,
-                            file_type="text"  # Could be enhanced to detect file types
+                            content=file_content,
+                            file_type="text"
                         )
-                        return f"SUCCESS: File read and stored in document memory.\nFile: {file_path}\nContent:\n{content}\nNext: Use 'search_documents' to find this content later."
-                    except Exception as store_error:
-                        return f"SUCCESS: File read (storage failed).\nFile: {file_path}\nContent:\n{content}\nNote: Could not store in document memory: {store_error}"
-                else:
-                    return f"SUCCESS: File read (no document memory).\nFile: {file_path}\nContent:\n{content}"
+                        return f"SUCCESS: File read and stored in document memory.\n{content}\nNext: Use 'search_documents' to find this content later."
+                    else:
+                        return f"SUCCESS: File read (already in document memory).\n{content}\nNext: Use 'search_documents' to find this content."
+                except Exception as store_error:
+                    return f"SUCCESS: File read (storage failed).\n{content}\nNote: Could not store in document memory: {store_error}"
+            else:
+                return f"SUCCESS: File read.\n{content}"
 
-            except Exception as e:
-                return f"FAILURE: Could not read file.\nFile: {file_path}\nReason: {e}\nNext: Check if file exists and you have permissions."
-
-        # Set the name for tool recognition
-        read_file_with_memory.__name__ = "read_file"
-        return read_file_with_memory
+        except Exception as e:
+            return f"FAILURE: Could not read file.\nFile: {file_path}\nReason: {e}\nNext: Check if file exists and you have permissions."
 
     def _facts_are_similar(self, fact1: str, fact2: str, threshold: float = 0.75) -> bool:
         """Check if two facts are similar to prevent duplication using embeddings when available."""
@@ -562,10 +844,9 @@ class AutonomousAgentCLI:
             # Set up tools
             tools = []
 
-            if ABSTRACTCORE_AVAILABLE and self.config.enable_tools and list_files and read_file:
-                # Create memory-aware file tools
-                memory_aware_read_file = self.create_memory_aware_read_file()
-                tools.extend([list_files, memory_aware_read_file])
+            if ABSTRACTCORE_AVAILABLE and self.config.enable_tools and list_files:
+                # Add file system tools (read_file includes automatic document memory storage)
+                tools.extend([list_files, self.read_file])
                 self.print_status("Added file system tools with document memory integration", "success")
 
             if self.config.enable_memory_tools:
@@ -573,7 +854,6 @@ class AutonomousAgentCLI:
                 tools.extend(memory_tools)
                 self.print_status(f"Added {len(memory_tools)} memory tools", "success")
 
-            # Create memory session (let AbstractMemory auto-configure embeddings)
             # Set up memory config for autonomous agent
             memory_config = MemoryConfig.agent_mode()
             memory_config.enable_memory_tools = True
@@ -626,12 +906,16 @@ Final Answer: [your complete response]
 
 ## Available Tools:
 You have access to these tools (use exact names):
-- list_files: List directory contents
-- read_file: Read file contents
-- search_agent_memory: Search your persistent memory
-- remember_important_fact: Store important information
-- get_memory_context: Get relevant context for a topic
-- get_semantic_facts: Get validated facts from semantic memory
+- list_files: Find and list files by names/paths using patterns
+- read_file: Read file contents with automatic document memory storage
+- search_agent_memory: Search persistent memory for stored information
+- remember_important_fact: Store important facts in persistent memory
+- get_memory_context: Get relevant background context about topics
+- get_semantic_facts: Retrieve validated facts from long-term memory
+- interpret_fact_subjectively: Interpret information through agent's perspective
+- get_agent_identity: Get agent's identity, values, and configuration
+- search_documents: Search stored documents using semantic search
+- get_document_summary: Get overview of all stored documents
 
 ## Important Notes:
 - Use JSON format for Action Input: {{"parameter": "value"}}
