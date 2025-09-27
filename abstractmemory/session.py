@@ -195,7 +195,7 @@ class MemorySession:
         """
         # Initialize BasicSession if available
         if _BASIC_SESSION_AVAILABLE and provider is not None:
-            self._basic_session = BasicSession(provider, system_prompt, tools)
+            self._basic_session = BasicSession(system_prompt=system_prompt, provider=provider, tools=tools)
             self.provider = provider
             self.system_prompt = system_prompt
             self.tools = tools or []
@@ -240,7 +240,7 @@ class MemorySession:
 
                 # Re-initialize BasicSession with updated tools if available
                 if _BASIC_SESSION_AVAILABLE and provider is not None:
-                    self._basic_session = BasicSession(provider, system_prompt, self.tools)
+                    self._basic_session = BasicSession(system_prompt=system_prompt, provider=provider, tools=self.tools)
                     self.messages = self._basic_session.messages
 
                 logger.info(f"Added {len(memory_tools)} memory tools to MemorySession")

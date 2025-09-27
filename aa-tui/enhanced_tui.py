@@ -5,6 +5,7 @@ Focuses on text input working first, then adds features
 """
 
 import asyncio
+import concurrent.futures
 import sys
 import argparse
 import time
@@ -113,22 +114,30 @@ class EnhancedTUI:
             complete_while_typing=True,
         )
 
-        # Create conversation buffer - keep it simple
+        # Create conversation buffer - use proper prompt_toolkit API
+        from prompt_toolkit.filters import Condition
         self.conversation_text = f"🚀 Enhanced AbstractMemory TUI\n📦 Model: {self.model}\n🧠 Memory: {self.memory_path}\n\nType your message below or use commands like /help\n\n"
+        
+        # Create a condition for read-only state that we can control
+        self._conversation_readonly = True
+        conversation_readonly_condition = Condition(lambda: self._conversation_readonly)
+        
         self.conversation_buffer = Buffer(
             multiline=True,
-            read_only=True,
+            read_only=conversation_readonly_condition,
         )
-        # Set initial text
-        self._set_buffer_text(self.conversation_buffer, self.conversation_text)
+        # Set initial text by temporarily making it writable
+        self._conversation_readonly = False
+        self.conversation_buffer.text = self.conversation_text
+        self.conversation_buffer.cursor_position = len(self.conversation_text)
+        self._conversation_readonly = True
 
-        # Create side panel buffer
+        # Create side panel buffer - keep it simple and writable for updates
         self.side_panel_buffer = Buffer(
             multiline=True,
-            read_only=False,
+            read_only=False,  # Keep writable so we can update it easily
         )
         self.side_panel_buffer.text = "📋 Control Panel\n\n⚡ Status: Ready\n🔧 Tools: Available\n💭 Memory: Active\n\nPress F2 to toggle this panel"
-        self.side_panel_buffer.read_only = True
 
         # Key bindings - MINIMAL AND PROVEN TO WORK + Observability shortcuts
         self.kb = KeyBindings()
@@ -163,7 +172,7 @@ class EnhancedTUI:
             self.update_detail_display()
 
         # Layout components
-        conversation_window = Window(
+        self.conversation_window = Window(
             content=BufferControl(buffer=self.conversation_buffer),
             wrap_lines=True,
         )
@@ -176,7 +185,7 @@ class EnhancedTUI:
         # Create main content (with optional side panel)
         self.show_side_panel = True
         self.main_content = VSplit([
-            conversation_window,
+            self.conversation_window,
             side_panel_window,
         ])
 
@@ -234,12 +243,11 @@ class EnhancedTUI:
             self.add_system_message("Side panel hidden. Press F2 to show.")
         else:
             # Show side panel - add it back
-            conversation_window = self.main_content.children[0]
             side_panel_window = Window(
                 content=BufferControl(buffer=self.side_panel_buffer),
                 width=25,
             )
-            self.main_content.children = [conversation_window, side_panel_window]
+            self.main_content.children = [self.conversation_window, side_panel_window]
             self.show_side_panel = True
             self.add_system_message("Side panel shown. Press F2 to hide.")
 
@@ -331,6 +339,10 @@ class EnhancedTUI:
             ])
 
         self._set_buffer_text(self.side_panel_buffer, "\n".join(content_lines))
+        
+        # Force application to redraw
+        if hasattr(self, 'app'):
+            self.app.invalidate()
 
     def handle_input(self, buffer):
         """Handle when user submits input."""
@@ -338,23 +350,58 @@ class EnhancedTUI:
         if not user_input:
             return
 
+        # Immediately clear input and show user message
+        buffer.reset()
+        self.add_message("User", user_input)
+
         # Handle commands
         if user_input.startswith('/'):
             self.handle_command(user_input)
-            buffer.reset()
             return
 
-        # Add user message
-        self.add_message("User", user_input)
-
-        # Process with agent if available
+        # Show immediate thinking indicator
         if self.agent_session:
-            asyncio.create_task(self._process_agent_response(user_input))
+            # Update status to show thinking immediately
+            self.agent_state.status = "thinking"
+            self.agent_state.current_thought = "Processing your request..."
+            self.agent_state.current_action = ""
+            self.update_side_panel_content()
+
+            # Add visual indicator in chat
+            self.add_system_message("🤔 Agent is thinking...")
+
+            # Schedule agent processing
+            self.app.create_background_task(self._process_agent_response_with_completion(user_input))
         else:
             self.add_message("Assistant", f"Echo: {user_input} (Agent not connected)")
 
-        # Clear input
-        buffer.reset()
+    def _handle_task_exception(self, task):
+        """Handle exceptions from async tasks."""
+        try:
+            # This will raise any exception that occurred in the task
+            task.result()
+        except Exception as e:
+            # Add error message to conversation
+            self.add_system_message(f"❌ Error: {e}")
+            # Reset agent status
+            self.agent_state.status = "idle"
+            self.agent_state.current_thought = ""
+            self.agent_state.current_action = ""
+            self.update_side_panel_content()
+
+    async def _process_agent_response_with_completion(self, user_input: str):
+        """Wrapper that handles thinking indicator and completion properly."""
+        try:
+            await self._process_agent_response(user_input)
+        except Exception as e:
+            # Handle any unhandled exceptions
+            self.add_system_message(f"❌ Error: {e}")
+        finally:
+            # Always reset status and remove thinking indicator
+            self.agent_state.status = "idle"
+            self.agent_state.current_thought = ""
+            self.agent_state.current_action = ""
+            self.update_side_panel_content()
 
     async def _process_agent_response(self, user_input: str):
         """Process user input through proper ReAct loop with real-time observability."""
@@ -380,12 +427,19 @@ class EnhancedTUI:
                 self.agent_state.current_thought = f"ReAct iteration {iteration_count}/{max_iterations}..."
                 self.update_side_panel_content()
 
-                # Generate response using proper MemorySession method
-                response = self.agent_session.generate(
-                    react_prompt,
-                    user_id="tui_user",
-                    include_memory=True
-                )
+                # Generate response using proper MemorySession method (run in thread to avoid blocking UI)
+                loop = asyncio.get_event_loop()
+
+                # Run the blocking generate call in a thread pool
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    response = await loop.run_in_executor(
+                        executor,
+                        lambda: self.agent_session.generate(
+                            react_prompt,
+                            user_id="tui_user",
+                            include_memory=True
+                        )
+                    )
 
                 # Extract response content
                 if hasattr(response, 'content'):
@@ -637,26 +691,34 @@ You can also type regular messages to chat with the AI assistant."""
         # Update our text storage
         self.conversation_text += text
 
-        # Recreate the buffer content (this works reliably)
-        self.conversation_buffer = Buffer(
-            multiline=True,
-            read_only=True,
-        )
-        # Set the text after creating the buffer
+        # Update the existing buffer instead of recreating it
+        # This preserves the connection to the layout
         self._set_buffer_text(self.conversation_buffer, self.conversation_text)
+        
+        # Force application to redraw
+        if hasattr(self, 'app'):
+            self.app.invalidate()
 
     def _set_buffer_text(self, buffer, text):
-        """Safely set buffer text."""
-        # For read-only buffers, we need to temporarily make them writable
-        was_readonly = buffer.read_only
-        buffer.read_only = False
-        try:
+        """Set buffer text using proper prompt_toolkit API for read-only buffers."""
+        # For conversation buffer, use our controlled read-only state
+        if buffer == self.conversation_buffer:
+            # Temporarily make conversation buffer writable
+            self._conversation_readonly = False
+            
+            # Set the text content
+            buffer.text = text
+            
+            # Auto-scroll to bottom by setting cursor to end
+            buffer.cursor_position = len(text)
+            
+            # Make read-only again
+            self._conversation_readonly = True
+        else:
+            # For other buffers (like side panel), handle differently
+            # Side panel buffer is always writable for updates
             buffer.text = text
             buffer.cursor_position = len(text)
-        except:
-            # If there's still an issue, ignore it - this is fallback behavior
-            pass
-        buffer.read_only = was_readonly
 
     def clear_conversation(self):
         """Clear the conversation."""
@@ -702,36 +764,15 @@ You can also type regular messages to chat with the AI assistant."""
 
             self.add_system_message("🔄 Initializing AbstractMemory agent...")
 
-            # Create LLM provider
+            # Create LLM provider with extended timeout for long conversations - exactly like nexus.py
             self.add_system_message(f"📡 Connecting to {self.provider} with {self.model}...")
-            self.provider_instance = create_llm(
-                provider=self.provider,
-                model=self.model,
-                timeout=7200.0  # 2 hours for long conversations
-            )
+            provider = create_llm(self.provider, model=self.model, timeout=7200.0)
+            self.add_system_message("✅ LLM connection established")
 
-            # Configure memory
-            memory_config = MemoryConfig(
-                include_working=True,
-                include_semantic=True,
-                include_episodic=False,  # Start with episodic disabled for performance
-                include_document=True,
-                include_failures=True,
-                include_storage=True,
-                include_knowledge_graph=True,
-                max_items_per_tier={
-                    'working': 5,
-                    'semantic': 3,
-                    'document': 2,
-                    'storage': 3,
-                    'knowledge_graph': 3
-                },
-                relevance_threshold=0.0,
-                enable_memory_tools=True,
-                allowed_memory_operations=[
-                    "search_memory", "remember_fact", "get_user_profile"
-                ]
-            )
+            # Configure memory - using working pattern from nexus.py
+            memory_config = MemoryConfig.agent_mode()
+            memory_config.enable_memory_tools = True
+            memory_config.enable_self_editing = True
 
             # Create tools list
             tools = []
@@ -740,28 +781,34 @@ You can also type regular messages to chat with the AI assistant."""
             if list_files:
                 tools.append(list_files)
 
-            # Create the memory session
+            # Create the memory session - using EXACT pattern from nexus.py
             self.agent_session = MemorySession(
-                self.provider_instance,
-                self.get_system_prompt(),
-                tools,
-                memory_config={
-                    "path": self.memory_path,
-                    "storage": "file",
-                },
+                provider,
+                tools=tools,
+                memory_config={"path": self.memory_path, "semantic_threshold": 1},  # Immediate validation
                 default_memory_config=memory_config,
-                auto_add_memory_tools=True
+                system_prompt=self.get_system_prompt()
             )
 
             # Add memory-aware read_file tool
             read_file_tool = self.create_memory_aware_read_file(self.agent_session)
             self.agent_session.tools.append(read_file_tool)
 
+            # Set agent identity and values - using pattern from nexus.py
+            if hasattr(self.agent_session, 'memory') and hasattr(self.agent_session.memory, 'set_core_values'):
+                agent_values = {
+                    'purpose': 'serve as enhanced TUI assistant with memory',
+                    'approach': 'interactive and helpful',
+                    'lens': 'ui_focused_thinking',
+                    'domain': 'tui_agent'
+                }
+                self.agent_session.memory.set_core_values(agent_values)
+                self.add_system_message("🤖 Agent identity and values configured")
+
             # Update agent state
             self.agent_state.tools_available = [tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in self.agent_session.tools]
             self.agent_state.status = "idle"
 
-            self.add_system_message("✅ LLM connection established")
             self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools")
             self.add_system_message("🧠 Memory system configured")
             self.add_system_message("Agent initialized successfully!")
