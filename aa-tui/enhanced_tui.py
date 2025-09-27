@@ -117,6 +117,9 @@ class EnhancedTUI:
         # Create conversation buffer - use proper prompt_toolkit API
         from prompt_toolkit.filters import Condition
         self.conversation_text = f"🚀 Enhanced AbstractMemory TUI\n📦 Model: {self.model}\n🧠 Memory: {self.memory_path}\n\nType your message below or use commands like /help\n\n"
+
+        # Separate actual conversation history (for agent context)
+        self.actual_conversation_history = []
         
         # Create a condition for read-only state that we can control
         self._conversation_readonly = True
@@ -404,82 +407,36 @@ class EnhancedTUI:
             self.update_side_panel_content()
 
     async def _process_agent_response(self, user_input: str):
-        """Process user input through proper ReAct loop with real-time observability."""
+        """Process user input through MemorySession with real-time observability."""
         try:
-            # Initialize ReAct state
+            # Update status
             self.agent_state.status = "thinking"
-            self.agent_state.current_thought = "Starting ReAct reasoning..."
+            self.agent_state.current_thought = "Processing your request..."
             self.update_side_panel_content()
 
-            # Get recent context (similar to nexus.py)
-            context = self._get_recent_context(2000)  # 2000 tokens like nexus.py
-            react_prompt = f"{context}\n\nQuestion: {user_input}\n" if context else f"Question: {user_input}\n"
+            # Generate response using MemorySession (run in thread to avoid blocking UI)
+            loop = asyncio.get_event_loop()
 
-            # Track ReAct iterations
-            max_iterations = 25
-            iteration_count = 0
-
-            for iteration in range(max_iterations):
-                iteration_count = iteration + 1
-
-                # Update status with iteration info
-                self.agent_state.status = "thinking"
-                self.agent_state.current_thought = f"ReAct iteration {iteration_count}/{max_iterations}..."
-                self.update_side_panel_content()
-
-                # Generate response using proper MemorySession method (run in thread to avoid blocking UI)
-                loop = asyncio.get_event_loop()
-
-                # Run the blocking generate call in a thread pool
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    response = await loop.run_in_executor(
-                        executor,
-                        lambda: self.agent_session.generate(
-                            react_prompt,
-                            user_id="tui_user",
-                            include_memory=True
-                        )
+            # Run the blocking generate call in a thread pool
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                response = await loop.run_in_executor(
+                    executor,
+                    lambda: self.agent_session.generate(
+                        user_input,  # Just the user input, not complex prompt
+                        user_id="tui_user",
+                        include_memory=True
                     )
+                )
 
-                # Extract response content
-                if hasattr(response, 'content'):
-                    agent_response = response.content.strip()
-                else:
-                    agent_response = str(response).strip()
-
-                # Update memory and context tracking
-                self._update_memory_and_context()
-
-                # Check for Final Answer
-                if "Final Answer:" in agent_response:
-                    final_answer = self._extract_final_answer(agent_response)
-
-                    # Show any remaining thinking before final answer
-                    if self.detail_level >= 2:
-                        react_part = agent_response.split("Final Answer:")[0].strip()
-                        if react_part:
-                            self._display_react_thinking(react_part, iteration_count)
-
-                    # Display final answer
-                    self.add_message("Assistant", final_answer)
-                    self.add_system_message(f"✅ ReAct completed in {iteration_count} iterations")
-                    break
-
-                # Parse and handle actions
-                action_result = self._parse_and_execute_action(agent_response, iteration_count)
-                if action_result:
-                    # Add observation to prompt for next iteration
-                    react_prompt += f"{agent_response}\nObservation: {action_result}\n"
-                else:
-                    # No action found, might be just thinking
-                    if self.detail_level >= 2:
-                        self._display_react_thinking(agent_response, iteration_count)
-                    react_prompt += f"{agent_response}\n"
-
+            # Extract response content
+            if hasattr(response, 'content'):
+                agent_response = response.content.strip()
             else:
-                # Max iterations reached without Final Answer
-                self.add_system_message(f"⚠️ ReAct loop reached maximum iterations ({max_iterations})")
-                self.add_message("Assistant", "I've been thinking about this problem but haven't reached a final answer yet. Let me try a different approach or please rephrase your question.")
+                agent_response = str(response).strip()
+
+            # Display the response
+            self.add_message("Assistant", agent_response)
+            self.add_system_message("✅ Response completed")
 
             # Reset status
             self.agent_state.status = "idle"
@@ -498,15 +455,26 @@ class EnhancedTUI:
 
     def _get_recent_context(self, max_tokens: int = 2000) -> str:
         """Get recent conversation context limited by token count."""
-        # For now, use a simple approximation
-        # In a full implementation, this would tokenize properly
+        # Get actual conversation history (user/assistant exchanges only)
+        if not self.actual_conversation_history:
+            return ""
+
+        # Build context from actual conversation history
+        context_lines = []
+        for exchange in self.actual_conversation_history[-10:]:  # Last 10 exchanges
+            role = exchange["role"].title()
+            content = exchange["content"]
+            context_lines.append(f"{role}: {content}")
+
+        context = "\n".join(context_lines)
+
+        # Limit by token estimation
         max_chars = max_tokens * 4  # Rough estimation: 4 chars per token
+        if len(context) > max_chars:
+            # Take the last part that fits
+            context = "..." + context[-max_chars:]
 
-        if len(self.conversation_text) <= max_chars:
-            return self.conversation_text
-
-        # Return the last part of conversation that fits
-        return "..." + self.conversation_text[-max_chars:]
+        return context
 
     def _extract_final_answer(self, response: str) -> str:
         """Extract final answer from ReAct response."""
@@ -673,8 +641,12 @@ You can also type regular messages to chat with the AI assistant."""
 
         if sender == "User":
             formatted_message = f"[{timestamp}] 👤 {sender}: {message}\n"
+            # Track actual conversation history (for agent context)
+            self.actual_conversation_history.append({"role": "user", "content": message, "timestamp": timestamp})
         elif sender == "Assistant":
             formatted_message = f"[{timestamp}] 🤖 {sender}: {message}\n"
+            # Track actual conversation history (for agent context)
+            self.actual_conversation_history.append({"role": "assistant", "content": message, "timestamp": timestamp})
         else:
             formatted_message = f"[{timestamp}] {sender}: {message}\n"
 
@@ -723,6 +695,7 @@ You can also type regular messages to chat with the AI assistant."""
     def clear_conversation(self):
         """Clear the conversation."""
         self.conversation_text = f"🚀 Enhanced AbstractMemory TUI\n📦 Model: {self.model}\n🧠 Memory: {self.memory_path}\n\nConversation cleared.\n\n"
+        self.actual_conversation_history = []  # Also clear the actual conversation history
         self._set_buffer_text(self.conversation_buffer, self.conversation_text)
 
     def create_memory_aware_read_file(self, session):
