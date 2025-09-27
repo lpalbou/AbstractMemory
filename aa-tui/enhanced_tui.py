@@ -25,6 +25,7 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.widgets import TextArea, Frame
 
 # AbstractMemory imports
 try:
@@ -100,6 +101,18 @@ class EnhancedTUI:
         # Create memory path if it doesn't exist
         Path(memory_path).mkdir(parents=True, exist_ok=True)
 
+        # Animation state
+        self.thinking_animation_running = False
+        self.thinking_animation_task = None
+        self.thinking_animation_chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self.thinking_animation_index = 0
+
+        # Conversation tracking for separators
+        self.last_message_type = None
+
+        # Status line for current operations
+        self.current_status = "Ready"
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -114,33 +127,40 @@ class EnhancedTUI:
             complete_while_typing=True,
         )
 
-        # Create conversation buffer - use proper prompt_toolkit API
-        from prompt_toolkit.filters import Condition
-        self.conversation_text = f"🚀 Enhanced AbstractMemory TUI\n📦 Model: {self.model}\n🧠 Memory: {self.memory_path}\n\nType your message below or use commands like /help\n\n"
+        # Initial welcome text
+        initial_text = "Enhanced AbstractMemory TUI\nModel: {} | Provider: {}\nType /help for commands or start chatting\n\n".format(
+            self.model, self.provider
+        )
+        self.conversation_text = initial_text
 
         # Separate actual conversation history (for agent context)
         self.actual_conversation_history = []
-        
-        # Create a condition for read-only state that we can control
-        self._conversation_readonly = True
-        conversation_readonly_condition = Condition(lambda: self._conversation_readonly)
-        
-        self.conversation_buffer = Buffer(
-            multiline=True,
-            read_only=conversation_readonly_condition,
-        )
-        # Set initial text by temporarily making it writable
-        self._conversation_readonly = False
-        self.conversation_buffer.text = self.conversation_text
-        self.conversation_buffer.cursor_position = len(self.conversation_text)
-        self._conversation_readonly = True
 
-        # Create side panel buffer - keep it simple and writable for updates
-        self.side_panel_buffer = Buffer(
+        # Create conversation display using TextArea widget (has built-in scrolling)
+        # Make it NOT read-only so we can update it programmatically
+        self.conversation_textarea = TextArea(
+            text=initial_text,
             multiline=True,
-            read_only=False,  # Keep writable so we can update it easily
+            read_only=False,  # Not read-only so we can update programmatically
+            scrollbar=True,  # Enable scrollbar
+            wrap_lines=True,  # Wrap long lines
+            dont_extend_height=False,  # Allow content to grow beyond window
+            focusable=True,  # Allow focus for keyboard scrolling
         )
-        self.side_panel_buffer.text = "📋 Control Panel\n\n⚡ Status: Ready\n🔧 Tools: Available\n💭 Memory: Active\n\nPress F2 to toggle this panel"
+        # Immediately set it to read-only after creation
+        self.conversation_textarea.read_only = True
+
+        # Create side panel as TextArea for consistency
+        self.side_panel_textarea = TextArea(
+            text="📋 Info\n\n⚡ Status: Ready\n🔧 Tools: Available\n💭 Memory: Active\n\nF2: toggle panel",
+            multiline=True,
+            read_only=False,  # Start writable so we can update it
+            scrollbar=False,  # No scrollbar needed for side panel
+            wrap_lines=True,
+            focusable=False,  # Don't allow focus on side panel
+        )
+        # Make it read-only after creation
+        self.side_panel_textarea.read_only = True
 
         # Key bindings - MINIMAL AND PROVEN TO WORK + Observability shortcuts
         self.kb = KeyBindings()
@@ -174,22 +194,25 @@ class EnhancedTUI:
             self.detail_level = 4 if self.detail_level != 4 else 1
             self.update_detail_display()
 
-        # Layout components
-        self.conversation_window = Window(
-            content=BufferControl(buffer=self.conversation_buffer),
-            wrap_lines=True,
-        )
+        # TextArea has built-in scrolling with PageUp/PageDown
+        # No need for custom scrolling handlers - TextArea handles it automatically
 
-        side_panel_window = Window(
-            content=BufferControl(buffer=self.side_panel_buffer),
-            width=25,
+        # TextArea handles arrow keys, home, end automatically for scrolling
+
+        # Layout components - Use TextArea for proper scrolling
+        # TextArea already is a complete widget with scrolling
+
+        # Create a narrower side panel to avoid crowding
+        side_panel_container = Window(
+            content=self.side_panel_textarea.control,
+            width=25,  # Reduced width to avoid crowding
         )
 
         # Create main content (with optional side panel)
         self.show_side_panel = True
         self.main_content = VSplit([
-            self.conversation_window,
-            side_panel_window,
+            self.conversation_textarea,  # TextArea widget with built-in scrolling
+            side_panel_container,
         ])
 
         input_prompt = Window(
@@ -208,6 +231,14 @@ class EnhancedTUI:
             input_window,
         ])
 
+        # Status line above input
+        status_line = Window(
+            content=FormattedTextControl(
+                text=self.get_status_text
+            ),
+            height=1,
+        )
+
         help_bar = Window(
             content=FormattedTextControl(
                 text=self.get_help_text
@@ -218,6 +249,7 @@ class EnhancedTUI:
         # Root container
         root_container = HSplit([
             self.main_content,  # Top: conversation + side panel
+            status_line,        # Status line showing current operations
             input_area,         # Middle: input
             help_bar,          # Bottom: help
         ])
@@ -232,6 +264,22 @@ class EnhancedTUI:
                 'input': '#ffffff',
                 'conversation': '#cccccc',
                 'side-panel': '#e6e6e6',
+                # ReAct pattern colors
+                'user': 'cyan bold',
+                'assistant': 'white bold',
+                'thought': 'blue',
+                'action': 'yellow bold',
+                'observation': 'green',
+                'system': 'ansibrightblack',  # Grey for system messages
+                'error': 'red bold',
+                'timestamp': 'ansibrightblack',
+                'separator': 'ansibrightblack',
+                # UI elements
+                'thinking-animation': 'yellow',
+                'status-idle': 'green',
+                'status-thinking': 'yellow',
+                'status-acting': 'orange',
+                'status-observing': 'blue',
             }),
             full_screen=True,
             mouse_support=False,  # Keep disabled to avoid complications
@@ -246,46 +294,91 @@ class EnhancedTUI:
             self.add_system_message("Side panel hidden. Press F2 to show.")
         else:
             # Show side panel - add it back
-            side_panel_window = Window(
-                content=BufferControl(buffer=self.side_panel_buffer),
+            side_panel_container = Window(
+                content=self.side_panel_textarea.control,
                 width=25,
             )
-            self.main_content.children = [self.conversation_window, side_panel_window]
+            self.main_content.children = [self.conversation_textarea, side_panel_container]
             self.show_side_panel = True
             self.add_system_message("Side panel shown. Press F2 to hide.")
 
         self.app.invalidate()
 
+    def get_status_text(self):
+        """Get current status text for the status line."""
+        # Color codes for status
+        if self.agent_state.status == "thinking":
+            char = self.thinking_animation_chars[self.thinking_animation_index % len(self.thinking_animation_chars)]
+            return HTML(f'<ansibrightblack>Status:</ansibrightblack> <thinking-animation>{char}</thinking-animation> <ansibrightblack>{self.current_status}</ansibrightblack>')
+        elif self.agent_state.status == "acting":
+            return HTML(f'<ansibrightblack>Status:</ansibrightblack> <action>🔧 {self.current_status}</action>')
+        elif self.agent_state.status == "observing":
+            return HTML(f'<ansibrightblack>Status:</ansibrightblack> <observation>👁️ {self.current_status}</observation>')
+        else:
+            return HTML(f'<ansibrightblack>Status:</ansibrightblack> <status-idle>⚡ {self.current_status}</status-idle>')
+
     def get_help_text(self):
         """Get dynamic help text based on current detail level."""
-        base_shortcuts = "Press <b>Enter</b> to send | <b>Ctrl+Q</b> to quit"
+        base_shortcuts = "<b>Enter</b> send | <b>Ctrl+Q</b> quit | <b>PgUp/PgDn</b> scroll | <b>↑↓</b> scroll lines"
 
         if self.detail_level == 1:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F3</b> details | <b>F4</b> debug | <b>F5</b> raw")
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel")
         elif self.detail_level == 2:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F3</b> simple | <i>Details mode active</i>")
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F3</b> simple")
         elif self.detail_level == 3:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F4</b> exit debug | <i>Debug mode active</i>")
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F4</b> exit debug")
         elif self.detail_level == 4:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F5</b> exit raw | <i>Raw mode active</i>")
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F5</b> exit raw")
+
 
     def update_detail_display(self):
         """Update the display based on current detail level."""
         self.update_side_panel_content()
         self.app.invalidate()
 
-    def update_side_panel_content(self):
-        """Update side panel with current agent state."""
-        # Context meter
-        context_percent = min(100, (self.agent_state.context_tokens / self.agent_state.max_tokens) * 100)
-        filled_bars = int(context_percent // 10)
-        context_bar = "▓" * filled_bars + "░" * (10 - filled_bars)
 
-        # Memory component bars
-        memory_bars = {}
-        for component, count in self.agent_state.memory_components.items():
-            bar_length = min(4, count)
-            memory_bars[component] = "▓" * bar_length + "░" * (4 - bar_length)
+    async def start_thinking_animation(self):
+        """Start the thinking animation."""
+        if self.thinking_animation_running:
+            return
+
+        self.thinking_animation_running = True
+        self.thinking_animation_task = asyncio.create_task(self._animate_thinking())
+
+    async def stop_thinking_animation(self):
+        """Stop the thinking animation."""
+        self.thinking_animation_running = False
+        if self.thinking_animation_task:
+            self.thinking_animation_task.cancel()
+            try:
+                await self.thinking_animation_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _animate_thinking(self):
+        """Animate the thinking indicator."""
+        try:
+            while self.thinking_animation_running:
+                char = self.thinking_animation_chars[self.thinking_animation_index]
+                # Update the thinking message in the conversation
+                if "🤔 Agent is thinking..." in self.conversation_text:
+                    self.conversation_text = self.conversation_text.replace(
+                        "🤔 Agent is thinking...",
+                        f'<thinking-animation>{char}</thinking-animation> <system>Agent is thinking...</system>'
+                    )
+                    if hasattr(self, 'app'):
+                        self.app.invalidate()
+
+                self.thinking_animation_index = (self.thinking_animation_index + 1) % len(self.thinking_animation_chars)
+                await asyncio.sleep(0.1)  # 100ms animation speed
+        except asyncio.CancelledError:
+            pass
+
+    def update_side_panel_content(self):
+        """Update side panel with current agent state and time."""
+        # Get current time
+        now = __import__('datetime').datetime.now()
+        time_str = now.strftime("%H:%M:%S")
 
         # Status indicator
         status_icon = {
@@ -295,22 +388,74 @@ class EnhancedTUI:
             "observing": "📋"
         }.get(self.agent_state.status, "⚡")
 
-        # Build content based on detail level
+        # Build content with real agent information
         content_lines = [
-            f"📊 Context [{self.agent_state.context_tokens}/{self.agent_state.max_tokens} tokens]",
-            f"{context_bar}",
+            f"⏰ {time_str}",
             "",
-            "💭 Memory Components:",
+            "🤖 Agent Status",
+            f"{status_icon} {self.agent_state.status.title()}",
+            "",
         ]
 
-        for component, bar in memory_bars.items():
-            count = self.agent_state.memory_components[component]
-            content_lines.append(f"{bar} {component.title()} ({count} items)")
+        # Show LLM information
+        if self.agent_session:
+            content_lines.extend([
+                "🧠 LLM Connection",
+                f"Model: {self.model}",
+                f"Provider: {self.provider}",
+                f"Status: Connected",
+                "",
+            ])
 
-        content_lines.extend([
-            "",
-            f"{status_icon} Status: {self.agent_state.status.title()}",
-        ])
+            # Show conversation stats
+            conv_count = len(self.actual_conversation_history)
+            content_lines.extend([
+                "💬 Conversation",
+                f"Exchanges: {conv_count // 2}",
+                f"Messages: {conv_count}",
+                "",
+            ])
+
+            # Show memory information if available
+            total_memory = sum(self.agent_state.memory_components.values())
+            if total_memory > 0:
+                content_lines.extend([
+                    "🧠 Memory Active",
+                    f"Items: {total_memory}",
+                    f"Path: {self.memory_path}",
+                    "",
+                ])
+
+            # Show tools
+            tool_count = len(self.agent_state.tools_available)
+            content_lines.extend([
+                "🔧 Tools Available",
+                f"Count: {tool_count}",
+            ])
+        else:
+            content_lines.extend([
+                "🧠 LLM Connection",
+                "Status: Not Connected",
+                "",
+                "💬 Conversation",
+                "Mode: Echo Only",
+                "",
+            ])
+
+        # Current operation
+        if self.agent_state.current_thought:
+            content_lines.extend([
+                "",
+                "💭 Current Thought:",
+                self.agent_state.current_thought[:30] + "..." if len(self.agent_state.current_thought) > 30 else self.agent_state.current_thought,
+            ])
+
+        if self.agent_state.current_action:
+            content_lines.extend([
+                "",
+                "⚡ Current Action:",
+                self.agent_state.current_action[:30] + "..." if len(self.agent_state.current_action) > 30 else self.agent_state.current_action,
+            ])
 
         if self.detail_level >= 2:
             content_lines.extend([
@@ -341,7 +486,11 @@ class EnhancedTUI:
                 f"Session Active: {self.agent_session is not None}",
             ])
 
-        self._set_buffer_text(self.side_panel_buffer, "\n".join(content_lines))
+        # Update side panel TextArea (temporarily make writable)
+        was_readonly = self.side_panel_textarea.read_only
+        self.side_panel_textarea.read_only = False
+        self.side_panel_textarea.buffer.text = "\n".join(content_lines)
+        self.side_panel_textarea.read_only = was_readonly
         
         # Force application to redraw
         if hasattr(self, 'app'):
@@ -368,10 +517,14 @@ class EnhancedTUI:
             self.agent_state.status = "thinking"
             self.agent_state.current_thought = "Processing your request..."
             self.agent_state.current_action = ""
+            self.current_status = "Agent is thinking..."
             self.update_side_panel_content()
 
-            # Add visual indicator in chat
-            self.add_system_message("🤔 Agent is thinking...")
+            # Don't add system message to chat - it's shown in status line
+            # Status is already shown in the status line above input
+
+            # Start thinking animation
+            asyncio.create_task(self.start_thinking_animation())
 
             # Schedule agent processing
             self.app.create_background_task(self._process_agent_response_with_completion(user_input))
@@ -400,10 +553,14 @@ class EnhancedTUI:
             # Handle any unhandled exceptions
             self.add_system_message(f"❌ Error: {e}")
         finally:
+            # Stop thinking animation
+            await self.stop_thinking_animation()
+
             # Always reset status and remove thinking indicator
             self.agent_state.status = "idle"
             self.agent_state.current_thought = ""
             self.agent_state.current_action = ""
+            self.current_status = "Ready"
             self.update_side_panel_content()
 
     async def _process_agent_response(self, user_input: str):
@@ -436,7 +593,10 @@ class EnhancedTUI:
 
             # Display the response
             self.add_message("Assistant", agent_response)
-            self.add_system_message("✅ Response completed")
+            # Don't add system message - keep chat clean
+
+            # Update memory display with new information
+            self._update_memory_display()
 
             # Reset status
             self.agent_state.status = "idle"
@@ -585,10 +745,7 @@ class EnhancedTUI:
 
     def _update_memory_display(self):
         """Update memory component display based on current memory state."""
-        if not hasattr(self.agent_session, 'last_memory_items'):
-            return
-
-        # Count memory items by type
+        # Try multiple ways to get memory information
         memory_counts = {
             'working': 0,
             'semantic': 0,
@@ -596,11 +753,33 @@ class EnhancedTUI:
             'document': 0
         }
 
-        for item in self.agent_session.last_memory_items:
-            if hasattr(item, 'tier'):
-                tier = item.tier.lower()
-                if tier in memory_counts:
-                    memory_counts[tier] += 1
+        # Method 1: Check last_memory_items
+        if hasattr(self.agent_session, 'last_memory_items') and self.agent_session.last_memory_items:
+            for item in self.agent_session.last_memory_items:
+                if hasattr(item, 'tier'):
+                    tier = item.tier.lower()
+                    if tier in memory_counts:
+                        memory_counts[tier] += 1
+
+        # Method 2: Check memory session directly
+        elif hasattr(self.agent_session, 'memory') and self.agent_session.memory:
+            # Try to get memory items from the memory session
+            try:
+                # This is a rough estimate - count actual conversation history items
+                memory_counts['working'] = len(self.actual_conversation_history)
+
+                # If we have tools, we have some memory structure
+                if hasattr(self.agent_session, 'tools'):
+                    memory_counts['semantic'] = len([tool for tool in self.agent_session.tools if 'memory' in str(tool).lower()])
+
+            except Exception:
+                pass
+
+        # Method 3: Fallback - show basic activity
+        else:
+            if self.agent_session and len(self.actual_conversation_history) > 0:
+                memory_counts['working'] = len(self.actual_conversation_history)
+                memory_counts['semantic'] = 1 if self.agent_session else 0
 
         self.agent_state.memory_components = memory_counts
         self.update_side_panel_content()
@@ -639,64 +818,83 @@ You can also type regular messages to chat with the AI assistant."""
         """Add a message to the conversation."""
         timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S")
 
+        # Store timestamp for side panel display
+        self.agent_state.last_activity = __import__('datetime').datetime.now()
+
+        # Add visual separator between conversation pairs
+        separator_line = ""
+        if sender == "User" and self.last_message_type == "Assistant":
+            separator_line = "\n" + "─" * 60 + "\n\n"
+
         if sender == "User":
-            formatted_message = f"[{timestamp}] 👤 {sender}: {message}\n"
-            # Track actual conversation history (for agent context)
+            formatted_message = f'{separator_line}You: {message}\n'
+            # Track actual conversation history
             self.actual_conversation_history.append({"role": "user", "content": message, "timestamp": timestamp})
+            self.last_message_type = "User"
         elif sender == "Assistant":
-            formatted_message = f"[{timestamp}] 🤖 {sender}: {message}\n"
-            # Track actual conversation history (for agent context)
+            formatted_message = f'Assistant: {message}\n\n'
+            # Track actual conversation history
             self.actual_conversation_history.append({"role": "assistant", "content": message, "timestamp": timestamp})
+            self.last_message_type = "Assistant"
+        elif sender.startswith("🔧 Action"):
+            formatted_message = f'Action: {message}\n'
+            self.last_message_type = "Action"
+        elif sender.startswith("📋 Observation"):
+            formatted_message = f'Result: {message}\n'
+            self.last_message_type = "Observation"
         else:
-            formatted_message = f"[{timestamp}] {sender}: {message}\n"
+            formatted_message = f'{sender}: {message}\n'
+            self.last_message_type = "Other"
 
         self._append_to_conversation(formatted_message)
 
     def add_system_message(self, message):
         """Add a system message to the conversation."""
-        timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] ℹ️  System: {message}\n"
+        formatted_message = f'[System] {message}\n'
         self._append_to_conversation(formatted_message)
 
     def _append_to_conversation(self, text):
-        """Append text to conversation buffer."""
+        """Append text to conversation TextArea."""
         # Update our text storage
         self.conversation_text += text
 
-        # Update the existing buffer instead of recreating it
-        # This preserves the connection to the layout
-        self._set_buffer_text(self.conversation_buffer, self.conversation_text)
-        
+        # Temporarily make TextArea writable to update it
+        was_readonly = self.conversation_textarea.read_only
+        self.conversation_textarea.read_only = False
+
+        # Update the TextArea text
+        self.conversation_textarea.buffer.text = self.conversation_text
+
+        # Move cursor to end for auto-scroll
+        self.conversation_textarea.buffer.cursor_position = len(self.conversation_text)
+
+        # Restore read-only state
+        self.conversation_textarea.read_only = was_readonly
+
         # Force application to redraw
         if hasattr(self, 'app'):
             self.app.invalidate()
 
     def _set_buffer_text(self, buffer, text):
-        """Set buffer text using proper prompt_toolkit API for read-only buffers."""
-        # For conversation buffer, use our controlled read-only state
-        if buffer == self.conversation_buffer:
-            # Temporarily make conversation buffer writable
-            self._conversation_readonly = False
-            
-            # Set the text content
-            buffer.text = text
-            
-            # Auto-scroll to bottom by setting cursor to end
-            buffer.cursor_position = len(text)
-            
-            # Make read-only again
-            self._conversation_readonly = True
-        else:
-            # For other buffers (like side panel), handle differently
-            # Side panel buffer is always writable for updates
-            buffer.text = text
-            buffer.cursor_position = len(text)
+        """Set buffer text for buffers."""
+        # Update buffer text
+        buffer.document = buffer.document.insert_after(text)
+        buffer.cursor_position = len(buffer.text)
 
     def clear_conversation(self):
         """Clear the conversation."""
-        self.conversation_text = f"🚀 Enhanced AbstractMemory TUI\n📦 Model: {self.model}\n🧠 Memory: {self.memory_path}\n\nConversation cleared.\n\n"
+        self.conversation_text = "Conversation cleared.\n\n"
         self.actual_conversation_history = []  # Also clear the actual conversation history
-        self._set_buffer_text(self.conversation_buffer, self.conversation_text)
+        self.last_message_type = None  # Reset message type tracking
+
+        # Temporarily make writable
+        was_readonly = self.conversation_textarea.read_only
+        self.conversation_textarea.read_only = False
+        self.conversation_textarea.buffer.text = self.conversation_text
+        self.conversation_textarea.read_only = was_readonly
+
+        if hasattr(self, 'app'):
+            self.app.invalidate()
 
     def create_memory_aware_read_file(self, session):
         """Create a memory-aware read_file tool similar to nexus.py"""
@@ -785,6 +983,9 @@ You can also type regular messages to chat with the AI assistant."""
             self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools")
             self.add_system_message("🧠 Memory system configured")
             self.add_system_message("Agent initialized successfully!")
+
+            # Initialize memory display
+            self._update_memory_display()
 
             # Update side panel
             self.update_side_panel_content()
