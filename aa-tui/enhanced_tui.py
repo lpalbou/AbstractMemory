@@ -194,10 +194,103 @@ class EnhancedTUI:
             self.detail_level = 4 if self.detail_level != 4 else 1
             self.update_detail_display()
 
-        # TextArea has built-in scrolling with PageUp/PageDown
-        # No need for custom scrolling handlers - TextArea handles it automatically
+        # Add Tab navigation to switch focus between input and conversation
+        @self.kb.add('tab')
+        def focus_next(event):
+            """Tab to switch focus to conversation panel"""
+            # If input has focus, switch to conversation
+            if event.app.layout.current_buffer == self.input_buffer:
+                event.app.layout.focus(self.conversation_textarea)
+            else:
+                # Otherwise switch to input
+                event.app.layout.focus(self.input_buffer)
 
-        # TextArea handles arrow keys, home, end automatically for scrolling
+        @self.kb.add('s-tab')  # Shift+Tab
+        def focus_previous(event):
+            """Shift+Tab to switch focus back"""
+            # Reverse of Tab
+            if event.app.layout.current_buffer == self.input_buffer:
+                event.app.layout.focus(self.conversation_textarea)
+            else:
+                event.app.layout.focus(self.input_buffer)
+
+        # Add explicit scrolling key bindings - these work when conversation is focused
+        @self.kb.add('pageup')
+        def scroll_up_page(event):
+            """Scroll conversation up with PageUp"""
+            # If conversation is focused OR input is empty, scroll
+            if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
+                buffer = self.conversation_textarea.buffer
+                # Move cursor up by ~10 lines
+                for _ in range(10):
+                    buffer.cursor_up()
+                event.app.invalidate()
+
+        @self.kb.add('pagedown')
+        def scroll_down_page(event):
+            """Scroll conversation down with PageDown"""
+            # If conversation is focused OR input is empty, scroll
+            if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
+                buffer = self.conversation_textarea.buffer
+                # Move cursor down by ~10 lines
+                for _ in range(10):
+                    buffer.cursor_down()
+                event.app.invalidate()
+
+        @self.kb.add('c-u')
+        def scroll_up_half(event):
+            """Scroll up half page with Ctrl+U"""
+            buffer = self.conversation_textarea.buffer
+            for _ in range(5):
+                buffer.cursor_up()
+            event.app.invalidate()
+
+        @self.kb.add('c-d')
+        def scroll_down_half(event):
+            """Scroll down half page with Ctrl+D"""
+            buffer = self.conversation_textarea.buffer
+            for _ in range(5):
+                buffer.cursor_down()
+            event.app.invalidate()
+
+        # Arrow keys for scrolling
+        @self.kb.add('up')
+        def scroll_up_line(event):
+            """Scroll up one line with Up arrow"""
+            # Works when conversation is focused or input is empty
+            if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
+                self.conversation_textarea.buffer.cursor_up()
+                event.app.invalidate()
+
+        @self.kb.add('down')
+        def scroll_down_line(event):
+            """Scroll down one line with Down arrow"""
+            # Works when conversation is focused or input is empty
+            if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
+                self.conversation_textarea.buffer.cursor_down()
+                event.app.invalidate()
+
+        @self.kb.add('home')
+        def scroll_to_top(event):
+            """Scroll to top with Home key"""
+            if event.app.layout.current_buffer != self.input_buffer:
+                buffer = self.conversation_textarea.buffer
+                buffer.cursor_position = 0
+                event.app.invalidate()
+
+        @self.kb.add('end')
+        def scroll_to_bottom(event):
+            """Scroll to bottom with End key"""
+            if event.app.layout.current_buffer != self.input_buffer:
+                buffer = self.conversation_textarea.buffer
+                buffer.cursor_position = len(buffer.text)
+                event.app.invalidate()
+
+        # Escape key to return focus to input
+        @self.kb.add('escape')
+        def focus_input(event):
+            """Escape to return focus to input field"""
+            event.app.layout.focus(self.input_buffer)
 
         # Layout components - Use TextArea for proper scrolling
         # TextArea already is a complete widget with scrolling
@@ -319,16 +412,16 @@ class EnhancedTUI:
 
     def get_help_text(self):
         """Get dynamic help text based on current detail level."""
-        base_shortcuts = "<b>Enter</b> send | <b>Ctrl+Q</b> quit | <b>PgUp/PgDn</b> scroll | <b>↑↓</b> scroll lines"
+        base_shortcuts = "<b>Tab</b> switch focus | <b>Enter</b> send | <b>Ctrl+Q</b> quit | <b>PgUp/PgDn</b> scroll | <b>F2</b> panel"
 
         if self.detail_level == 1:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel")
+            return HTML(f"{base_shortcuts}")
         elif self.detail_level == 2:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F3</b> simple")
+            return HTML(f"{base_shortcuts} | <b>F3</b> simple")
         elif self.detail_level == 3:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F4</b> exit debug")
+            return HTML(f"{base_shortcuts} | <b>F4</b> exit debug")
         elif self.detail_level == 4:
-            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F5</b> exit raw")
+            return HTML(f"{base_shortcuts} | <b>F5</b> exit raw")
 
 
     def update_detail_display(self):
