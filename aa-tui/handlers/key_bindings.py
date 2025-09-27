@@ -55,6 +55,13 @@ class GlobalKeyBindings:
 
     def get_key_bindings(self):
         """Get the key bindings object."""
+        # Merge with input area key bindings if available
+        if hasattr(self.main_layout, 'input_area') and hasattr(self.main_layout.input_area, 'kb'):
+            from prompt_toolkit.key_binding import merge_key_bindings
+            return merge_key_bindings([
+                self.kb,
+                self.main_layout.input_area.kb
+            ])
         return self.kb
 
 

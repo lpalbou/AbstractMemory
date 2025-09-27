@@ -139,7 +139,10 @@ class MainLayout:
             floats=[]  # Dialogs will be added here dynamically
         )
 
-        return Layout(container=root_container)
+        # Create layout - focus will be set when the app starts
+        layout = Layout(container=root_container)
+
+        return layout
 
     def get_layout(self) -> Layout:
         """Get the prompt_toolkit Layout object."""

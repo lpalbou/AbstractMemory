@@ -108,9 +108,9 @@ class InputArea:
         self._setup_key_bindings()
 
         # Create buffer control - let prompt_toolkit handle input processing naturally
+        # Remove key_bindings to allow natural text input
         self.buffer_control = BufferControl(
             buffer=self.buffer,
-            key_bindings=self.kb,
             focusable=True
         )
 
@@ -121,17 +121,13 @@ class InputArea:
     def _setup_key_bindings(self):
         """Setup key bindings for the input area."""
 
-        @self.kb.add('escape', 'enter')
+        @self.kb.add('enter')
         def submit_input(event):
-            """Submit input with Meta+Enter (Alt+Enter)."""
+            """Submit input with Enter."""
             self.buffer.validate_and_handle()
 
-        # Note: Shift+Enter is not supported by terminals/prompt_toolkit
-        # Using Meta+Enter (Alt+Enter) instead, which is the standard
-        # All other keys go directly to the buffer for typing
-
-        # Remove ALL other key bindings - let prompt_toolkit handle them naturally
-        # This allows normal typing, arrow keys, backspace, etc. to work naturally
+        # All other keys go directly to the buffer for natural text input
+        # No other key bindings to avoid conflicts
 
     def _accept_handler(self, buffer):
         """Handle when user submits input."""
@@ -195,7 +191,8 @@ class InputArea:
             style='class:input.prompt'
         )
 
-        input_window = Window(
+        # Store reference to input window for focus management
+        self.input_window = Window(
             content=self.buffer_control,
             height=3 if self.enable_multiline else 1,
             wrap_lines=True,
@@ -211,7 +208,7 @@ class InputArea:
         from prompt_toolkit.layout.containers import VSplit
         input_line = VSplit([
             prompt_window,
-            input_window
+            self.input_window
         ])
 
         return HSplit([
@@ -222,7 +219,12 @@ class InputArea:
     def focus(self):
         """Focus the input area."""
         try:
-            get_app().layout.focus(self.buffer_control)
+            # Focus the window containing the buffer control, not the control itself
+            if hasattr(self, 'input_window'):
+                get_app().layout.focus(self.input_window)
+            else:
+                # Fallback: try to focus the buffer control directly
+                get_app().layout.focus(self.buffer_control)
         except:
             # Layout might not be ready yet, ignore for now
             pass

@@ -51,7 +51,7 @@ def run_text_mode_info(args):
     print("   • Interactive text input and conversation")
     print("   • Foldable conversation entries")
     print("   • Side panel with memory/tools info")
-    print("   • Alt+Enter to submit messages")
+    print("   • Enter to submit messages")
     print("   • Ctrl+Q to quit")
     print("   • F2 to toggle side panel")
     print()
