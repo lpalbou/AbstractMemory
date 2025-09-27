@@ -52,7 +52,14 @@ class AgentState:
     tools_available: List[str] = None
     memory_components: Dict[str, int] = None
     context_tokens: int = 0
+    enhanced_tokens: int = 0
+    system_prompt_tokens: int = 0
     max_tokens: int = 8192
+    # Core memory tracking
+    core_memories: int = 0
+    core_size: int = 0
+    # Additional metrics
+    last_activity: Any = None
 
     def __post_init__(self):
         if self.tools_available is None:
@@ -292,20 +299,25 @@ class EnhancedTUI:
             """Escape to return focus to input field"""
             event.app.layout.focus(self.input_buffer)
 
+        # Note: Mouse wheel scrolling is handled automatically by TextArea when mouse_support=True
+
         # Layout components - Use TextArea for proper scrolling
         # TextArea already is a complete widget with scrolling
 
         # Create a narrower side panel to avoid crowding
-        side_panel_container = Window(
+        self.side_panel_container = Window(
             content=self.side_panel_textarea.control,
             width=25,  # Reduced width to avoid crowding
         )
 
+        # Keep reference to conversation container (TextArea is a complete widget)
+        self.conversation_container = self.conversation_textarea
+
         # Create main content (with optional side panel)
         self.show_side_panel = True
         self.main_content = VSplit([
-            self.conversation_textarea,  # TextArea widget with built-in scrolling
-            side_panel_container,
+            self.conversation_container,  # TextArea widget with built-in scrolling
+            self.side_panel_container,
         ])
 
         input_prompt = Window(
@@ -375,7 +387,7 @@ class EnhancedTUI:
                 'status-observing': 'blue',
             }),
             full_screen=True,
-            mouse_support=False,  # Keep disabled to avoid complications
+            mouse_support=True,  # Enable mouse for scrolling
         )
 
     def toggle_side_panel(self):
@@ -387,11 +399,7 @@ class EnhancedTUI:
             self.add_system_message("Side panel hidden. Press F2 to show.")
         else:
             # Show side panel - add it back
-            side_panel_container = Window(
-                content=self.side_panel_textarea.control,
-                width=25,
-            )
-            self.main_content.children = [self.conversation_textarea, side_panel_container]
+            self.main_content.children = [self.conversation_container, self.side_panel_container]
             self.show_side_panel = True
             self.add_system_message("Side panel shown. Press F2 to hide.")
 
@@ -509,15 +517,51 @@ class EnhancedTUI:
                 "",
             ])
 
-            # Show memory information if available
-            total_memory = sum(self.agent_state.memory_components.values())
-            if total_memory > 0:
+            # Show memory metrics in nexus.py format
+            working = self.agent_state.memory_components.get('working', 0)
+            semantic = self.agent_state.memory_components.get('semantic', 0)
+            episodic = self.agent_state.memory_components.get('episodic', 0)
+            files = self.agent_state.memory_components.get('document', 0)
+            user = self.agent_state.memory_components.get('user_profile', 0)
+            total_mem = working + semantic + episodic + files + user
+
+            content_lines.extend([
+                "📊 Memory Stats",
+                f"Total: {total_mem}",
+                f"├─ Working: {working}",
+                f"├─ Semantic: {semantic}",
+                f"├─ Episodic: {episodic}",
+                f"├─ Files: {files}",
+                f"└─ User: {user}",
+                "",
+            ])
+
+            # Show core memory if available
+            if self.agent_state.core_memories > 0:
                 content_lines.extend([
-                    "🧠 Memory Active",
-                    f"Items: {total_memory}",
-                    f"Path: {self.memory_path}",
+                    "🧠 Core Memory",
+                    f"Items: {self.agent_state.core_memories}",
+                    f"Size: {self.agent_state.core_size:,} b",
                     "",
                 ])
+
+            # Show token usage in nexus.py format
+            ctx = self.agent_state.context_tokens
+            enh = self.agent_state.enhanced_tokens
+            sys_prompt = self.agent_state.system_prompt_tokens
+            max_tok = self.agent_state.max_tokens
+            used = ctx + sys_prompt
+            percent = (used / max_tok * 100) if max_tok > 0 else 0
+
+            content_lines.extend([
+                "📈 Token Usage",
+                f"Used: {used:,}/{max_tok:,} ({percent:.1f}%)",
+                f"├─ Context: {ctx:,} tk",
+                f"├─ Enhanced: {enh:,} tk",
+                f"├─ System: {sys_prompt:,} tk",
+                f"└─ Available: {max_tok - used:,} tk",
+                "",
+            ])
 
             # Show tools
             tool_count = len(self.agent_state.tools_available)
@@ -874,8 +918,59 @@ class EnhancedTUI:
                 memory_counts['working'] = len(self.actual_conversation_history)
                 memory_counts['semantic'] = 1 if self.agent_session else 0
 
+        # Update core memory metrics if available
+        if hasattr(self.agent_session, 'memory') and self.agent_session.memory:
+            try:
+                # Try to access core memories
+                if hasattr(self.agent_session.memory, 'core_memories'):
+                    self.agent_state.core_memories = len(self.agent_session.memory.core_memories)
+                    # Estimate size
+                    total_size = sum(len(str(m)) for m in self.agent_session.memory.core_memories)
+                    self.agent_state.core_size = total_size
+            except:
+                pass
+
         self.agent_state.memory_components = memory_counts
+
+        # Update token metrics
+        self._update_token_metrics()
+
         self.update_side_panel_content()
+
+    def _update_token_metrics(self):
+        """Update token usage metrics."""
+        # Estimate tokens (1 token ≈ 4 chars)
+        if self.agent_session:
+            # Context tokens from conversation
+            context_text = "\n".join([f"{m['role']}: {m['content']}" for m in self.actual_conversation_history[-10:]])  # Last 10 messages
+            self.agent_state.context_tokens = len(context_text) // 4
+
+            # System prompt tokens
+            if hasattr(self.agent_session, 'system_prompt'):
+                self.agent_state.system_prompt_tokens = len(self.agent_session.system_prompt) // 4
+            elif hasattr(self.agent_session, 'agent') and hasattr(self.agent_session.agent, 'system_prompt'):
+                self.agent_state.system_prompt_tokens = len(self.agent_session.agent.system_prompt) // 4
+
+            # Enhanced tokens (if memory was injected)
+            if hasattr(self.agent_session, 'last_enhanced_context'):
+                self.agent_state.enhanced_tokens = len(self.agent_session.last_enhanced_context) // 4
+            elif self.agent_state.context_tokens > 0:
+                # Estimate enhanced as context + some memory
+                self.agent_state.enhanced_tokens = int(self.agent_state.context_tokens * 1.2)
+
+            # Max tokens
+            if hasattr(self.agent_session, 'model_max_tokens'):
+                self.agent_state.max_tokens = self.agent_session.model_max_tokens
+            elif hasattr(self.agent_session, 'agent') and hasattr(self.agent_session.agent, 'max_tokens'):
+                self.agent_state.max_tokens = self.agent_session.agent.max_tokens
+            else:
+                # Default based on model
+                if 'gpt-4' in self.model.lower():
+                    self.agent_state.max_tokens = 128000
+                elif 'claude' in self.model.lower():
+                    self.agent_state.max_tokens = 200000
+                else:
+                    self.agent_state.max_tokens = 8192
 
     def handle_command(self, command):
         """Handle slash commands."""
