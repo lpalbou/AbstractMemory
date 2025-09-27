@@ -7,7 +7,10 @@ Focuses on text input working first, then adds features
 import asyncio
 import sys
 import argparse
+import time
 from pathlib import Path
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
 
 # Add the project root to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -21,6 +24,44 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 from prompt_toolkit.completion import Completer, Completion
+
+# AbstractMemory imports
+try:
+    from abstractllm import create_llm
+    from abstractllm.tools.common_tools import list_files
+    from abstractllm.tools import tool
+    from abstractmemory import MemorySession, MemoryConfig
+    ABSTRACTCORE_AVAILABLE = True
+except ImportError:
+    ABSTRACTCORE_AVAILABLE = False
+    create_llm = None
+    list_files = None
+    MemorySession = None
+    MemoryConfig = None
+
+
+@dataclass
+class AgentState:
+    """Track the current state of the agent for real-time display."""
+    status: str = "idle"  # idle, thinking, acting, observing
+    current_thought: str = ""
+    current_action: str = ""
+    current_observation: str = ""
+    tools_available: List[str] = None
+    memory_components: Dict[str, int] = None
+    context_tokens: int = 0
+    max_tokens: int = 8192
+
+    def __post_init__(self):
+        if self.tools_available is None:
+            self.tools_available = []
+        if self.memory_components is None:
+            self.memory_components = {
+                'working': 0,
+                'semantic': 0,
+                'episodic': 0,
+                'document': 0
+            }
 
 
 class CommandCompleter(Completer):
@@ -47,11 +88,17 @@ class CommandCompleter(Completer):
 class EnhancedTUI:
     """Enhanced TUI with AbstractMemory integration."""
 
-    def __init__(self, model="qwen3-coder:30b", memory_path="./agent_memory"):
+    def __init__(self, model="qwen3-coder:30b", memory_path="./agent_memory", provider="ollama"):
         self.model = model
+        self.provider = provider
         self.memory_path = memory_path
         self.conversation_history = []
         self.agent_session = None
+        self.agent_state = AgentState()
+
+        # Create memory path if it doesn't exist
+        Path(memory_path).mkdir(parents=True, exist_ok=True)
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -72,6 +119,8 @@ class EnhancedTUI:
             multiline=True,
             read_only=True,
         )
+        # Set initial text
+        self._set_buffer_text(self.conversation_buffer, self.conversation_text)
 
         # Create side panel buffer
         self.side_panel_buffer = Buffer(
@@ -81,8 +130,9 @@ class EnhancedTUI:
         self.side_panel_buffer.text = "📋 Control Panel\n\n⚡ Status: Ready\n🔧 Tools: Available\n💭 Memory: Active\n\nPress F2 to toggle this panel"
         self.side_panel_buffer.read_only = True
 
-        # Key bindings - MINIMAL AND PROVEN TO WORK
+        # Key bindings - MINIMAL AND PROVEN TO WORK + Observability shortcuts
         self.kb = KeyBindings()
+        self.detail_level = 1  # 1=clean, 2=details, 3=debug, 4=raw
 
         @self.kb.add('c-q')
         def quit_app(event):
@@ -93,6 +143,24 @@ class EnhancedTUI:
         def toggle_side_panel(event):
             """Toggle side panel with F2"""
             self.toggle_side_panel()
+
+        @self.kb.add('f3')
+        def toggle_details(event):
+            """Toggle detail level with F3"""
+            self.detail_level = 2 if self.detail_level == 1 else 1
+            self.update_detail_display()
+
+        @self.kb.add('f4')
+        def debug_mode(event):
+            """Toggle debug mode with F4"""
+            self.detail_level = 3 if self.detail_level != 3 else 1
+            self.update_detail_display()
+
+        @self.kb.add('f5')
+        def raw_mode(event):
+            """Toggle raw mode with F5"""
+            self.detail_level = 4 if self.detail_level != 4 else 1
+            self.update_detail_display()
 
         # Layout components
         conversation_window = Window(
@@ -130,7 +198,7 @@ class EnhancedTUI:
 
         help_bar = Window(
             content=FormattedTextControl(
-                text=HTML("Press <b>Enter</b> to send | <b>F2</b> toggle panel | <b>Ctrl+Q</b> to quit | Type <b>/help</b> for commands")
+                text=self.get_help_text
             ),
             height=1,
         )
@@ -177,6 +245,93 @@ class EnhancedTUI:
 
         self.app.invalidate()
 
+    def get_help_text(self):
+        """Get dynamic help text based on current detail level."""
+        base_shortcuts = "Press <b>Enter</b> to send | <b>Ctrl+Q</b> to quit"
+
+        if self.detail_level == 1:
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F3</b> details | <b>F4</b> debug | <b>F5</b> raw")
+        elif self.detail_level == 2:
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F3</b> simple | <i>Details mode active</i>")
+        elif self.detail_level == 3:
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F4</b> exit debug | <i>Debug mode active</i>")
+        elif self.detail_level == 4:
+            return HTML(f"{base_shortcuts} | <b>F2</b> panel | <b>F5</b> exit raw | <i>Raw mode active</i>")
+
+    def update_detail_display(self):
+        """Update the display based on current detail level."""
+        self.update_side_panel_content()
+        self.app.invalidate()
+
+    def update_side_panel_content(self):
+        """Update side panel with current agent state."""
+        # Context meter
+        context_percent = min(100, (self.agent_state.context_tokens / self.agent_state.max_tokens) * 100)
+        filled_bars = int(context_percent // 10)
+        context_bar = "▓" * filled_bars + "░" * (10 - filled_bars)
+
+        # Memory component bars
+        memory_bars = {}
+        for component, count in self.agent_state.memory_components.items():
+            bar_length = min(4, count)
+            memory_bars[component] = "▓" * bar_length + "░" * (4 - bar_length)
+
+        # Status indicator
+        status_icon = {
+            "idle": "⚡",
+            "thinking": "🤔",
+            "acting": "🔧",
+            "observing": "📋"
+        }.get(self.agent_state.status, "⚡")
+
+        # Build content based on detail level
+        content_lines = [
+            f"📊 Context [{self.agent_state.context_tokens}/{self.agent_state.max_tokens} tokens]",
+            f"{context_bar}",
+            "",
+            "💭 Memory Components:",
+        ]
+
+        for component, bar in memory_bars.items():
+            count = self.agent_state.memory_components[component]
+            content_lines.append(f"{bar} {component.title()} ({count} items)")
+
+        content_lines.extend([
+            "",
+            f"{status_icon} Status: {self.agent_state.status.title()}",
+        ])
+
+        if self.detail_level >= 2:
+            content_lines.extend([
+                "",
+                "🛠️ Active Tools:",
+            ])
+            for tool in self.agent_state.tools_available[:5]:  # Show first 5
+                content_lines.append(f"✓ {tool}")
+
+            if len(self.agent_state.tools_available) > 5:
+                content_lines.append(f"... and {len(self.agent_state.tools_available) - 5} more")
+
+        if self.detail_level >= 3:
+            content_lines.extend([
+                "",
+                "🧠 Current State:",
+                f"Thought: {self.agent_state.current_thought[:50]}..." if len(self.agent_state.current_thought) > 50 else f"Thought: {self.agent_state.current_thought}",
+                f"Action: {self.agent_state.current_action}",
+            ])
+
+        if self.detail_level >= 4:
+            content_lines.extend([
+                "",
+                "🔍 Raw Debug Info:",
+                f"Model: {self.model}",
+                f"Provider: {self.provider}",
+                f"Memory Path: {self.memory_path}",
+                f"Session Active: {self.agent_session is not None}",
+            ])
+
+        self._set_buffer_text(self.side_panel_buffer, "\n".join(content_lines))
+
     def handle_input(self, buffer):
         """Handle when user submits input."""
         user_input = buffer.text.strip()
@@ -192,14 +347,241 @@ class EnhancedTUI:
         # Add user message
         self.add_message("User", user_input)
 
-        # For now, simple echo - can be replaced with actual agent call
+        # Process with agent if available
         if self.agent_session:
-            self.add_message("Assistant", "Agent integration will be added here")
+            asyncio.create_task(self._process_agent_response(user_input))
         else:
             self.add_message("Assistant", f"Echo: {user_input} (Agent not connected)")
 
         # Clear input
         buffer.reset()
+
+    async def _process_agent_response(self, user_input: str):
+        """Process user input through proper ReAct loop with real-time observability."""
+        try:
+            # Initialize ReAct state
+            self.agent_state.status = "thinking"
+            self.agent_state.current_thought = "Starting ReAct reasoning..."
+            self.update_side_panel_content()
+
+            # Get recent context (similar to nexus.py)
+            context = self._get_recent_context(2000)  # 2000 tokens like nexus.py
+            react_prompt = f"{context}\n\nQuestion: {user_input}\n" if context else f"Question: {user_input}\n"
+
+            # Track ReAct iterations
+            max_iterations = 25
+            iteration_count = 0
+
+            for iteration in range(max_iterations):
+                iteration_count = iteration + 1
+
+                # Update status with iteration info
+                self.agent_state.status = "thinking"
+                self.agent_state.current_thought = f"ReAct iteration {iteration_count}/{max_iterations}..."
+                self.update_side_panel_content()
+
+                # Generate response using proper MemorySession method
+                response = self.agent_session.generate(
+                    react_prompt,
+                    user_id="tui_user",
+                    include_memory=True
+                )
+
+                # Extract response content
+                if hasattr(response, 'content'):
+                    agent_response = response.content.strip()
+                else:
+                    agent_response = str(response).strip()
+
+                # Update memory and context tracking
+                self._update_memory_and_context()
+
+                # Check for Final Answer
+                if "Final Answer:" in agent_response:
+                    final_answer = self._extract_final_answer(agent_response)
+
+                    # Show any remaining thinking before final answer
+                    if self.detail_level >= 2:
+                        react_part = agent_response.split("Final Answer:")[0].strip()
+                        if react_part:
+                            self._display_react_thinking(react_part, iteration_count)
+
+                    # Display final answer
+                    self.add_message("Assistant", final_answer)
+                    self.add_system_message(f"✅ ReAct completed in {iteration_count} iterations")
+                    break
+
+                # Parse and handle actions
+                action_result = self._parse_and_execute_action(agent_response, iteration_count)
+                if action_result:
+                    # Add observation to prompt for next iteration
+                    react_prompt += f"{agent_response}\nObservation: {action_result}\n"
+                else:
+                    # No action found, might be just thinking
+                    if self.detail_level >= 2:
+                        self._display_react_thinking(agent_response, iteration_count)
+                    react_prompt += f"{agent_response}\n"
+
+            else:
+                # Max iterations reached without Final Answer
+                self.add_system_message(f"⚠️ ReAct loop reached maximum iterations ({max_iterations})")
+                self.add_message("Assistant", "I've been thinking about this problem but haven't reached a final answer yet. Let me try a different approach or please rephrase your question.")
+
+            # Reset status
+            self.agent_state.status = "idle"
+            self.agent_state.current_thought = ""
+            self.agent_state.current_action = ""
+            self.update_side_panel_content()
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            self.add_system_message(f"Error processing request: {e}")
+            if self.detail_level >= 4:  # Show full error in raw mode
+                self.add_system_message(f"Debug details: {error_details}")
+            self.agent_state.status = "idle"
+            self.update_side_panel_content()
+
+    def _get_recent_context(self, max_tokens: int = 2000) -> str:
+        """Get recent conversation context limited by token count."""
+        # For now, use a simple approximation
+        # In a full implementation, this would tokenize properly
+        max_chars = max_tokens * 4  # Rough estimation: 4 chars per token
+
+        if len(self.conversation_text) <= max_chars:
+            return self.conversation_text
+
+        # Return the last part of conversation that fits
+        return "..." + self.conversation_text[-max_chars:]
+
+    def _extract_final_answer(self, response: str) -> str:
+        """Extract final answer from ReAct response."""
+        if "Final Answer:" in response:
+            parts = response.split("Final Answer:", 1)
+            if len(parts) > 1:
+                return parts[1].strip()
+        return response.strip()
+
+    def _display_react_thinking(self, react_text: str, iteration: int):
+        """Display ReAct thinking process based on detail level."""
+        if self.detail_level < 2:
+            return
+
+        lines = react_text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("Thought:"):
+                thought = line[8:].strip()
+                self.add_message(f"🤔 Thinking #{iteration}", thought)
+            elif line.startswith("Action:"):
+                action = line[7:].strip()
+                self.add_message(f"🔧 Action #{iteration}", action)
+                self.agent_state.current_action = action
+            elif line.startswith("Action Input:"):
+                action_input = line[13:].strip()
+                if self.detail_level >= 3:
+                    self.add_message(f"📝 Input #{iteration}", action_input)
+
+    def _parse_and_execute_action(self, response: str, iteration: int) -> Optional[str]:
+        """Parse action from response and execute tool."""
+        lines = response.split('\n')
+        action_name = None
+        action_input = None
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Action:"):
+                action_name = line[7:].strip()
+            elif line.startswith("Action Input:"):
+                action_input_str = line[13:].strip()
+                try:
+                    # Try to parse as JSON
+                    import json
+                    action_input = json.loads(action_input_str)
+                except:
+                    # Fallback: treat as string
+                    action_input = {"input": action_input_str}
+
+        if not action_name:
+            return None
+
+        # Update status to show tool execution
+        self.agent_state.status = "acting"
+        self.agent_state.current_action = f"{action_name}({action_input})"
+        self.update_side_panel_content()
+
+        # Execute the tool
+        observation = self._execute_tool(action_name, action_input)
+
+        # Display observation based on detail level
+        if self.detail_level >= 2:
+            # Truncate long observations for display
+            display_obs = observation
+            if len(observation) > 200:
+                display_obs = observation[:200] + "... (truncated)"
+            self.add_message(f"📋 Observation #{iteration}", display_obs)
+
+        # Update status
+        self.agent_state.status = "observing"
+        self.update_side_panel_content()
+
+        return observation
+
+    def _execute_tool(self, tool_name: str, tool_input: dict) -> str:
+        """Execute a tool and return the observation."""
+        try:
+            # Find the tool in the session
+            for tool in self.agent_session.tools:
+                if hasattr(tool, '__name__') and tool.__name__ == tool_name:
+                    # Execute the tool with the provided input
+                    if isinstance(tool_input, dict):
+                        result = tool(**tool_input)
+                    else:
+                        result = tool(tool_input)
+                    return str(result)
+
+            # Tool not found
+            return f"Error: Tool '{tool_name}' not found. Available tools: {[t.__name__ for t in self.agent_session.tools if hasattr(t, '__name__')]}"
+
+        except Exception as e:
+            return f"Error executing tool '{tool_name}': {e}"
+
+    def _update_memory_and_context(self):
+        """Update memory components and context tracking."""
+        # Update memory display if available
+        if hasattr(self.agent_session, 'last_memory_items'):
+            self._update_memory_display()
+
+        # Update context tokens if available
+        if hasattr(self.agent_session, 'last_enhanced_context'):
+            # Rough token estimation: 1 token ≈ 0.75 words ≈ 4 chars
+            estimated_tokens = len(self.agent_session.last_enhanced_context) // 4
+            self.agent_state.context_tokens = estimated_tokens
+
+    def _update_memory_display(self):
+        """Update memory component display based on current memory state."""
+        if not hasattr(self.agent_session, 'last_memory_items'):
+            return
+
+        # Count memory items by type
+        memory_counts = {
+            'working': 0,
+            'semantic': 0,
+            'episodic': 0,
+            'document': 0
+        }
+
+        for item in self.agent_session.last_memory_items:
+            if hasattr(item, 'tier'):
+                tier = item.tier.lower()
+                if tier in memory_counts:
+                    memory_counts[tier] += 1
+
+        self.agent_state.memory_components = memory_counts
+        self.update_side_panel_content()
 
     def handle_command(self, command):
         """Handle slash commands."""
@@ -281,17 +663,152 @@ You can also type regular messages to chat with the AI assistant."""
         self.conversation_text = f"🚀 Enhanced AbstractMemory TUI\n📦 Model: {self.model}\n🧠 Memory: {self.memory_path}\n\nConversation cleared.\n\n"
         self._set_buffer_text(self.conversation_buffer, self.conversation_text)
 
+    def create_memory_aware_read_file(self, session):
+        """Create a memory-aware read_file tool similar to nexus.py"""
+        @tool
+        def read_file(filename: str) -> str:
+            """Read a file and automatically remember its contents for future reference.
+
+            Args:
+                filename: Path to the file to read
+
+            Returns:
+                The contents of the file
+            """
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    contents = f.read()
+
+                # Store in document memory for future reference
+                if hasattr(session, 'memory'):
+                    session.memory.store_document(
+                        title=f"File: {filename}",
+                        content=contents,
+                        metadata={"type": "file", "path": filename}
+                    )
+
+                return contents
+            except Exception as e:
+                return f"Error reading file {filename}: {e}"
+
+        return read_file
+
     def init_agent(self):
-        """Initialize the AbstractMemory agent (mock for now)."""
+        """Initialize the real AbstractMemory agent."""
         try:
-            # This would be replaced with actual agent initialization
-            # For now, just mark as "connected"
-            self.agent_session = True
+            if not ABSTRACTCORE_AVAILABLE:
+                self.add_system_message("AbstractCore not available. Install abstractllm and abstractmemory packages.")
+                return False
+
+            self.add_system_message("🔄 Initializing AbstractMemory agent...")
+
+            # Create LLM provider
+            self.add_system_message(f"📡 Connecting to {self.provider} with {self.model}...")
+            self.provider_instance = create_llm(
+                provider=self.provider,
+                model=self.model,
+                timeout=7200.0  # 2 hours for long conversations
+            )
+
+            # Configure memory
+            memory_config = MemoryConfig(
+                include_working=True,
+                include_semantic=True,
+                include_episodic=False,  # Start with episodic disabled for performance
+                include_document=True,
+                include_failures=True,
+                include_storage=True,
+                include_knowledge_graph=True,
+                max_items_per_tier={
+                    'working': 5,
+                    'semantic': 3,
+                    'document': 2,
+                    'storage': 3,
+                    'knowledge_graph': 3
+                },
+                relevance_threshold=0.0,
+                enable_memory_tools=True,
+                allowed_memory_operations=[
+                    "search_memory", "remember_fact", "get_user_profile"
+                ]
+            )
+
+            # Create tools list
+            tools = []
+
+            # Add basic file system tools
+            if list_files:
+                tools.append(list_files)
+
+            # Create the memory session
+            self.agent_session = MemorySession(
+                self.provider_instance,
+                self.get_system_prompt(),
+                tools,
+                memory_config={
+                    "path": self.memory_path,
+                    "storage": "file",
+                },
+                default_memory_config=memory_config,
+                auto_add_memory_tools=True
+            )
+
+            # Add memory-aware read_file tool
+            read_file_tool = self.create_memory_aware_read_file(self.agent_session)
+            self.agent_session.tools.append(read_file_tool)
+
+            # Update agent state
+            self.agent_state.tools_available = [tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in self.agent_session.tools]
+            self.agent_state.status = "idle"
+
+            self.add_system_message("✅ LLM connection established")
+            self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools")
+            self.add_system_message("🧠 Memory system configured")
             self.add_system_message("Agent initialized successfully!")
+
+            # Update side panel
+            self.update_side_panel_content()
+
             return True
+
         except Exception as e:
-            self.add_system_message(f"Agent initialization failed: {e}")
+            import traceback
+            error_msg = f"Agent initialization failed: {e}"
+            self.add_system_message(error_msg)
+            self.add_system_message("Running in limited mode")
+            # Still update the UI
+            self.update_side_panel_content()
             return False
+
+    def get_system_prompt(self) -> str:
+        """Get the system prompt for the autonomous agent."""
+        return f"""You are Nexus, an AI assistant with persistent memory and identity.
+
+## CRITICAL: Iterative ReAct Format ##
+You are part of an iterative ReAct loop. In each iteration, you should:
+
+1. If you need to use a tool, respond with:
+Thought: [what you're thinking]
+Action: [exact tool name]
+Action Input: {{"parameter": "value"}}
+
+2. If you can answer directly, respond with:
+Final Answer: [your complete response]
+
+## Your Identity and Capabilities ##
+- You have persistent memory across conversations
+- You can read, analyze, and remember files using read_file
+- You can search your memory for relevant information
+- You maintain user profiles and adapt to individual preferences
+- You learn from every interaction and build knowledge over time
+
+## Response Guidelines ##
+- Always be helpful and thorough
+- Use your memory to provide contextual responses
+- When analyzing code or files, remember key insights for future reference
+- Be proactive in offering relevant information from your memory
+
+Remember: Your memory persists across sessions, so everything you learn becomes part of your knowledge base."""
 
     async def run(self):
         """Run the TUI application."""
@@ -312,6 +829,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Enhanced AbstractMemory TUI")
     parser.add_argument('--model', default='qwen3-coder:30b', help='LLM model to use')
+    parser.add_argument('--provider', default='ollama', help='LLM provider (ollama, openai, etc.)')
     parser.add_argument('--memory-path', default='./agent_memory', help='Path to agent memory')
     return parser.parse_args()
 
@@ -322,11 +840,12 @@ def main():
 
     print("🚀 Starting Enhanced AbstractMemory TUI...")
     print(f"📦 Model: {args.model}")
+    print(f"🔗 Provider: {args.provider}")
     print(f"🧠 Memory: {args.memory_path}")
-    print("✨ Features: Working text input, side panel, commands")
+    print("✨ Features: Real agent integration, observability, progressive disclosure")
     print()
 
-    tui = EnhancedTUI(model=args.model, memory_path=args.memory_path)
+    tui = EnhancedTUI(model=args.model, provider=args.provider, memory_path=args.memory_path)
     asyncio.run(tui.run())
 
 
