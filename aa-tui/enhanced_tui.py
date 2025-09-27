@@ -134,10 +134,8 @@ class EnhancedTUI:
             complete_while_typing=True,
         )
 
-        # Initial welcome text
-        initial_text = "Enhanced AbstractMemory TUI\nModel: {} | Provider: {}\nType /help for commands or start chatting\n\n".format(
-            self.model, self.provider
-        )
+        # Start with empty conversation - info is in side panel
+        initial_text = ""
         self.conversation_text = initial_text
 
         # Separate actual conversation history (for agent context)
@@ -396,12 +394,12 @@ class EnhancedTUI:
             # Hide side panel - show only conversation
             self.main_content.children = [self.main_content.children[0]]  # Keep only conversation
             self.show_side_panel = False
-            self.add_system_message("Side panel hidden. Press F2 to show.")
+            pass  # No system message, info is in help bar
         else:
             # Show side panel - add it back
             self.main_content.children = [self.conversation_container, self.side_panel_container]
             self.show_side_panel = True
-            self.add_system_message("Side panel shown. Press F2 to hide.")
+            pass  # No system message, info is in help bar
 
         self.app.invalidate()
 
@@ -989,12 +987,21 @@ class EnhancedTUI:
 /quit - Exit application
 
 You can also type regular messages to chat with the AI assistant."""
-            self.add_system_message(help_text)
+            # Show help in a temporary popup or just in conversation
+            # Use dimmed color for help text
+            DIM = '\033[2m'
+            RESET = '\033[0m'
+            formatted_help = f'{DIM}{help_text}{RESET}\n'
+            self._append_to_conversation(formatted_help)
         elif cmd == '/clear':
             self.clear_conversation()
         elif cmd == '/status':
             status = f"Model: {self.model}\nMemory: {self.memory_path}\nAgent: {'Connected' if self.agent_session else 'Not connected'}\nSide panel: {'Visible' if self.show_side_panel else 'Hidden'}"
-            self.add_system_message(status)
+            # Show status in dimmed text
+            DIM = '\033[2m'
+            RESET = '\033[0m'
+            formatted_status = f'{DIM}{status}{RESET}\n'
+            self._append_to_conversation(formatted_status)
         elif cmd == '/memory':
             self.add_system_message("Memory information would be displayed here")
         elif cmd == '/tools':
@@ -1009,18 +1016,21 @@ You can also type regular messages to chat with the AI assistant."""
         # Store timestamp for side panel display
         self.agent_state.last_activity = __import__('datetime').datetime.now()
 
-        # Add visual separator between conversation pairs
-        separator_line = ""
-        if sender == "User" and self.last_message_type == "Assistant":
-            separator_line = "\n" + "─" * 60 + "\n\n"
+        # Format with colors for better visibility
+        # Using ANSI escape codes for colors
+        CYAN_BOLD = '\033[1;36m'  # Cyan bold for You
+        GREEN_BOLD = '\033[1;32m'  # Green bold for Assistant
+        RESET = '\033[0m'
 
         if sender == "User":
-            formatted_message = f'{separator_line}You: {message}\n'
+            # Add spacing between conversations (not separator line)
+            spacing = "\n" if self.last_message_type == "Assistant" else ""
+            formatted_message = f'{spacing}{CYAN_BOLD}You:{RESET} {message}\n'
             # Track actual conversation history
             self.actual_conversation_history.append({"role": "user", "content": message, "timestamp": timestamp})
             self.last_message_type = "User"
         elif sender == "Assistant":
-            formatted_message = f'Assistant: {message}\n\n'
+            formatted_message = f'{GREEN_BOLD}Assistant:{RESET} {message}\n\n'
             # Track actual conversation history
             self.actual_conversation_history.append({"role": "assistant", "content": message, "timestamp": timestamp})
             self.last_message_type = "Assistant"
@@ -1038,8 +1048,9 @@ You can also type regular messages to chat with the AI assistant."""
 
     def add_system_message(self, message):
         """Add a system message to the conversation."""
-        formatted_message = f'[System] {message}\n'
-        self._append_to_conversation(formatted_message)
+        # Don't add system messages to chat - they pollute the conversation
+        # Information is available in the side panel
+        pass
 
     def _append_to_conversation(self, text):
         """Append text to conversation TextArea."""
