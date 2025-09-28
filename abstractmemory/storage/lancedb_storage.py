@@ -105,12 +105,12 @@ class LanceDBStorage(IStorage):
 
         # Create tables if they don't exist
         import pandas as pd
+        import pyarrow as pa  # Move import to top level to avoid scope issues
 
         try:
             self.interactions_table = self.db.open_table("interactions")
         except (FileNotFoundError, ValueError):
             # Create table with proper schema and sample data
-            import pyarrow as pa
 
             # Get actual embedding dimension from adapter
             test_embedding = self.embedding_adapter.generate_embedding("test")

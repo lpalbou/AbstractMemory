@@ -79,7 +79,7 @@ class CommandCompleter(Completer):
 
     def __init__(self):
         self.commands = [
-            '/help', '/status', '/memory', '/tools', '/clear', '/quit'
+            '/help', '/status', '/memory', '/tools', '/clear', '/reset', '/quit'
         ]
 
     def get_completions(self, document, complete_event):
@@ -725,38 +725,41 @@ class EnhancedTUI:
             self.update_side_panel_content()
 
     async def _process_agent_response(self, user_input: str):
-        """Process user input through MemorySession with real-time observability."""
+        """Process user input through ReAct loop with real-time observability."""
         try:
-            # Update status
+            from react_loop import ReactLoop, ReactConfig
+
+            # Configure ReAct loop
+            config = ReactConfig(
+                max_iterations=25,
+                observation_display_limit=500,
+                include_memory=True
+            )
+
+            # Create ReAct loop instance
+            reactor = ReactLoop(self.agent_session, config)
+
+            # Set up callbacks for UI updates
+            callbacks = {
+                'on_iteration': self._on_react_iteration,
+                'on_response': self._on_react_response,
+                'on_action': self._on_react_action,
+                'on_observation': self._on_react_observation,
+                'on_final_answer': self._on_react_final_answer
+            }
+
+            # Initial status
             self.agent_state.status = "thinking"
-            self.agent_state.current_thought = "Processing your request..."
+            self.agent_state.current_thought = "Starting ReAct reasoning..."
             self.update_side_panel_content()
 
-            # Generate response using MemorySession (run in thread to avoid blocking UI)
-            loop = asyncio.get_event_loop()
+            # Process through ReAct loop
+            final_answer = await reactor.process_query(user_input, callbacks)
 
-            # Run the blocking generate call in a thread pool
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                response = await loop.run_in_executor(
-                    executor,
-                    lambda: self.agent_session.generate(
-                        user_input,  # Just the user input, not complex prompt
-                        user_id="tui_user",
-                        include_memory=True
-                    )
-                )
+            # Display the final answer
+            self.add_message("Assistant", final_answer)
 
-            # Extract response content
-            if hasattr(response, 'content'):
-                agent_response = response.content.strip()
-            else:
-                agent_response = str(response).strip()
-
-            # Display the response
-            self.add_message("Assistant", agent_response)
-            # Don't add system message - keep chat clean
-
-            # Update memory display with new information
+            # Update memory display
             self._update_memory_display()
 
             # Reset status
@@ -768,11 +771,60 @@ class EnhancedTUI:
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
-            self.add_system_message(f"Error processing request: {e}")
+            self.add_system_message(f"Error in ReAct processing: {e}")
             if self.detail_level >= 4:  # Show full error in raw mode
                 self.add_system_message(f"Debug details: {error_details}")
             self.agent_state.status = "idle"
+            self.agent_state.current_thought = ""
+            self.agent_state.current_action = ""
             self.update_side_panel_content()
+
+    def _on_react_iteration(self, iteration: int, max_iterations: int):
+        """Callback for ReAct iteration start."""
+        self.agent_state.current_thought = f"ReAct cycle {iteration}/{max_iterations}"
+        self.update_side_panel_content()
+
+    def _on_react_response(self, response: str):
+        """Callback for ReAct response."""
+        # Show thinking in detail mode
+        if self.detail_level >= 2:
+            # Extract and display thoughts
+            lines = response.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Thought:"):
+                    thought = line[8:].strip()
+                    self.add_message("🤔 Thinking", thought)
+
+    def _on_react_action(self, tool_name: str, tool_input: dict):
+        """Callback for ReAct tool action."""
+        self.agent_state.status = "acting"
+        self.agent_state.current_action = f"{tool_name}"
+        self.update_side_panel_content()
+
+        # Show action in detail mode
+        if self.detail_level >= 2:
+            params_str = ", ".join([f"{k}={v}" for k, v in tool_input.items()]) if tool_input else "no params"
+            self.add_message("🔧 Action", f"{tool_name}({params_str})")
+
+    def _on_react_observation(self, tool_result: str):
+        """Callback for ReAct observation."""
+        self.agent_state.status = "observing"
+        self.update_side_panel_content()
+
+        # Show observation in detail mode
+        if self.detail_level >= 2:
+            # Truncate long observations for display
+            display_obs = tool_result
+            if len(tool_result) > 200:
+                display_obs = tool_result[:200] + "... (truncated)"
+            self.add_message("📋 Observation", display_obs)
+
+    def _on_react_final_answer(self, answer: str):
+        """Callback for ReAct final answer."""
+        self.agent_state.status = "completing"
+        self.agent_state.current_thought = "Finalizing response..."
+        self.update_side_panel_content()
 
     def _get_recent_context(self, max_tokens: int = 2000) -> str:
         """Get recent conversation context limited by token count."""
@@ -1010,6 +1062,7 @@ class EnhancedTUI:
 /memory - Show memory information
 /tools - Show available tools
 /clear - Clear conversation
+/reset - Reset all memory (conversation + stored memory)
 /quit - Exit application
 
 You can also type regular messages to chat with the AI assistant."""
@@ -1032,6 +1085,8 @@ You can also type regular messages to chat with the AI assistant."""
             self.add_system_message("Memory information would be displayed here")
         elif cmd == '/tools':
             self.add_system_message("Available tools would be listed here")
+        elif cmd == '/reset':
+            self.reset_memory()
         else:
             self.add_system_message(f"Unknown command: {cmd}. Type /help for available commands.")
 
@@ -1116,6 +1171,262 @@ You can also type regular messages to chat with the AI assistant."""
         if hasattr(self, 'app'):
             self.app.invalidate()
 
+    def reset_memory(self):
+        """Reset all memory - conversation, agent memory, and storage files."""
+        import shutil
+        from pathlib import Path
+
+        try:
+            # Show reset confirmation message
+            self._append_to_conversation("🔄 Resetting all memory...\n")
+
+            # 1. Clear conversation history
+            self.conversation_text = "Memory reset completed.\n\n"
+            self.actual_conversation_history = []
+            self.last_message_type = None
+
+            # 2. Reset agent session memory if available
+            if self.agent_session:
+                try:
+                    # Clear conversation history in MemorySession
+                    if hasattr(self.agent_session, 'clear_history'):
+                        self.agent_session.clear_history(keep_system=True)
+                        self._append_to_conversation("✅ MemorySession conversation history cleared\n")
+
+                    # Clear memory components if available
+                    if hasattr(self.agent_session, 'memory'):
+                        memory = self.agent_session.memory
+
+                        # Clear all memory components by accessing their internal data structures
+                        if hasattr(memory, 'working') and memory.working:
+                            if hasattr(memory.working, 'items'):
+                                memory.working.items.clear()  # Clear the deque
+
+                        if hasattr(memory, 'semantic') and memory.semantic:
+                            if hasattr(memory.semantic, 'facts'):
+                                memory.semantic.facts.clear()  # Clear the facts dict
+                            if hasattr(memory.semantic, 'embeddings'):
+                                memory.semantic.embeddings.clear()  # Clear embeddings if they exist
+
+                        if hasattr(memory, 'episodic') and memory.episodic:
+                            if hasattr(memory.episodic, 'episodes'):
+                                memory.episodic.episodes.clear()  # Clear episodes list
+
+                        if hasattr(memory, 'document') and memory.document:
+                            if hasattr(memory.document, 'documents'):
+                                memory.document.documents.clear()  # Clear documents dict
+                            if hasattr(memory.document, 'chunks'):
+                                memory.document.chunks.clear()  # Clear chunks dict
+
+                        if hasattr(memory, 'core') and memory.core:
+                            if hasattr(memory.core, 'blocks'):
+                                memory.core.blocks.clear()  # Clear core memory blocks
+
+                        # Clear user profiles and patterns
+                        if hasattr(memory, 'user_profiles'):
+                            memory.user_profiles.clear()
+                        if hasattr(memory, 'failure_patterns'):
+                            memory.failure_patterns.clear()
+                        if hasattr(memory, 'success_patterns'):
+                            memory.success_patterns.clear()
+
+                        # Clear knowledge graph if available
+                        if hasattr(memory, 'kg') and memory.kg:
+                            if hasattr(memory.kg, 'facts'):
+                                memory.kg.facts.clear()  # Clear KG facts
+                            if hasattr(memory.kg, 'relationships'):
+                                memory.kg.relationships.clear()  # Clear relationships
+
+                        self._append_to_conversation("✅ Agent memory components cleared\n")
+
+                except Exception as e:
+                    self._append_to_conversation(f"⚠️ Warning: Could not clear agent memory: {e}\n")
+
+            # 3. Clear storage backends (LanceDB and markdown files)
+            storage_paths = []
+
+            # Get configured memory path (default or from arguments)
+            if hasattr(self, 'memory_path') and self.memory_path:
+                storage_paths.append(Path(self.memory_path))
+
+            # Get storage paths from agent session configuration
+            if self.agent_session and hasattr(self.agent_session, 'storage_config'):
+                storage_config = self.agent_session.storage_config
+                if 'path' in storage_config and storage_config['path']:
+                    storage_paths.append(Path(storage_config['path']))
+                if 'uri' in storage_config and storage_config['uri']:
+                    # LanceDB URI might be a file path like "./memory.db"
+                    uri_path = Path(storage_config['uri'])
+                    if not uri_path.is_absolute():
+                        # Make relative to current directory
+                        uri_path = Path.cwd() / uri_path
+                    storage_paths.append(uri_path)
+
+            # Add default paths that might exist
+            default_paths = [
+                Path("./memory.db"),
+                Path("./agent_memory"),
+                Path("./memory"),
+            ]
+            storage_paths.extend(default_paths)
+
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_paths = []
+            for path in storage_paths:
+                resolved_path = path.resolve()
+                if resolved_path not in seen:
+                    seen.add(resolved_path)
+                    unique_paths.append(path)
+
+            # Clear storage paths
+            cleared_paths = []
+            for storage_path in unique_paths:
+                try:
+                    if storage_path.exists():
+                        if storage_path.is_dir():
+                            shutil.rmtree(storage_path)
+                            cleared_paths.append(str(storage_path))
+                        elif storage_path.is_file():
+                            storage_path.unlink()
+                            cleared_paths.append(str(storage_path))
+                except Exception as e:
+                    self._append_to_conversation(f"⚠️ Warning: Could not clear {storage_path}: {e}\n")
+
+            if cleared_paths:
+                self._append_to_conversation(f"✅ Cleared storage: {', '.join(cleared_paths)}\n")
+            else:
+                self._append_to_conversation("ℹ️ No storage files found to clear\n")
+
+            # 4. Recreate memory path if needed
+            if hasattr(self, 'memory_path') and self.memory_path:
+                Path(self.memory_path).mkdir(parents=True, exist_ok=True)
+
+            # 5. Reset agent state
+            if hasattr(self, 'agent_state'):
+                self.agent_state.memory_components = {
+                    'working': 0,
+                    'semantic': 0,
+                    'episodic': 0,
+                    'document': 0
+                }
+                self.agent_state.core_memories = 0
+                self.agent_state.core_size = 0
+                self.agent_state.context_tokens = 0
+                self.agent_state.enhanced_tokens = 0
+
+            # 6. Update UI
+            was_readonly = self.conversation_textarea.read_only
+            self.conversation_textarea.read_only = False
+            self.conversation_textarea.buffer.text = self.conversation_text
+            self.conversation_textarea.read_only = was_readonly
+
+            # Update side panel
+            self.update_side_panel_content()
+
+            if hasattr(self, 'app'):
+                self.app.invalidate()
+
+            self._append_to_conversation("🎉 Memory reset complete! Fresh start ready.\n")
+
+        except Exception as e:
+            error_msg = f"❌ Error during memory reset: {e}\n"
+            self._append_to_conversation(error_msg)
+            # Still try to update UI even if reset failed
+            if hasattr(self, 'app'):
+                self.app.invalidate()
+
+    def setup_memory_tools(self) -> list:
+        """Create memory manipulation tools for the agent."""
+        if not ABSTRACTCORE_AVAILABLE:
+            return []
+
+        memory_tools = []
+
+        if not tool:
+            return []
+
+        @tool
+        def search_agent_memory(query: str, limit: int = 5) -> str:
+            """Search the agent's persistent memory for stored information and facts."""
+            if not self.agent_session or not hasattr(self.agent_session, 'memory'):
+                return "FAILURE: Memory system not available."
+
+            try:
+                results = self.agent_session.search_memory(query, limit=limit)
+                if results and any(result.get('content') for result in results):
+                    formatted = []
+                    for result in results:
+                        content = result.get('content', '').strip()
+                        if content:
+                            formatted.append(f"- {content}")
+
+                    if formatted:
+                        return f"Memory search results for '{query}':\n" + "\n".join(formatted)
+                    else:
+                        return f"No relevant memories found for '{query}'"
+                else:
+                    return f"No memories found for '{query}'"
+            except Exception as e:
+                return f"Memory search failed: {e}"
+
+        @tool
+        def remember_important_fact(fact: str) -> str:
+            """Store an important fact or information in persistent memory for future recall."""
+            if not self.agent_session:
+                return "FAILURE: Memory system not initialized."
+
+            try:
+                self.agent_session.learn_about_user(fact)
+                return f"SUCCESS: Fact stored in memory.\nStored: {fact}"
+            except Exception as e:
+                return f"FAILURE: Could not store fact.\nReason: {e}"
+
+        @tool
+        def get_memory_context(topic: str) -> str:
+            """Get relevant memory context and background information about a specific topic."""
+            if not self.agent_session:
+                return "FAILURE: Memory system not available."
+
+            try:
+                context = self.agent_session.get_memory_context(topic)
+                return f"Memory context for '{topic}':\n{context}"
+            except Exception as e:
+                return f"Failed to get memory context: {e}"
+
+        @tool
+        def get_semantic_facts(limit: int = 10) -> str:
+            """Retrieve validated semantic facts and knowledge from the agent's long-term memory."""
+            if not self.agent_session or not hasattr(self.agent_session, 'memory'):
+                return "FAILURE: Memory system not available."
+
+            try:
+                if hasattr(self.agent_session.memory, 'semantic') and hasattr(self.agent_session.memory.semantic, 'facts'):
+                    facts = self.agent_session.memory.semantic.facts
+                    if not facts:
+                        return "No semantic facts stored yet"
+
+                    result = [f"Found {len(facts)} semantic facts:"]
+                    for i, (_, fact_data) in enumerate(list(facts.items())[:limit]):
+                        content = fact_data.get('content', 'No content')
+                        confidence = fact_data.get('confidence', 0.0)
+                        result.append(f"  {i+1}. {content} (confidence: {confidence:.2f})")
+
+                    return "\n".join(result)
+                else:
+                    return "Semantic memory component not available"
+            except Exception as e:
+                return f"Failed to get semantic facts: {e}"
+
+        memory_tools.extend([
+            search_agent_memory,
+            remember_important_fact,
+            get_memory_context,
+            get_semantic_facts
+        ])
+
+        return memory_tools
+
     def create_memory_aware_read_file(self, session):
         """Create a memory-aware read_file tool similar to nexus.py"""
         @tool
@@ -1160,10 +1471,25 @@ You can also type regular messages to chat with the AI assistant."""
             provider = create_llm(self.provider, model=self.model, timeout=7200.0)
             self.add_system_message("✅ LLM connection established")
 
-            # Configure memory - using working pattern from nexus.py
-            memory_config = MemoryConfig.agent_mode()
+            # Configure advanced memory with dual storage for observability and performance
+            memory_config = MemoryConfig.comprehensive()  # Use comprehensive config for full features
             memory_config.enable_memory_tools = True
             memory_config.enable_self_editing = True
+
+            # Enhanced memory configuration for TUI agent
+            memory_config.include_episodic = True  # Include conversation episodes
+            memory_config.include_document = True  # Include document chunks
+            memory_config.include_knowledge_graph = True  # Include KG facts
+            memory_config.show_confidence = True  # Show confidence scores
+            memory_config.show_timestamps = False  # Keep UI clean
+            memory_config.max_items_per_tier = {
+                'working': 8,     # More working memory for TUI context
+                'semantic': 6,    # More semantic facts
+                'episodic': 4,    # Recent conversation episodes
+                'document': 3,    # Document chunks (added for TUI)
+                'storage': 5,     # Stored interactions
+                'knowledge_graph': 4
+            }
 
             # Create tools list
             tools = []
@@ -1172,18 +1498,32 @@ You can also type regular messages to chat with the AI assistant."""
             if list_files:
                 tools.append(list_files)
 
-            # Create the memory session - using EXACT pattern from nexus.py
+            # Add memory-aware read_file tool (will be updated after session creation)
+            read_file_tool = self.create_memory_aware_read_file(None)
+            tools.append(read_file_tool)
+
+            # Storage configuration for dual backend (markdown + LanceDB)
+            storage_config = {
+                "storage": "dual",  # Use both markdown and LanceDB
+                "path": self.memory_path,  # Markdown storage path
+                "uri": "./memory.db",      # LanceDB path
+                "semantic_threshold": 1,   # Immediate validation
+                "working_capacity": 15,    # Larger working memory capacity
+                "enable_kg": True          # Enable knowledge graph
+            }
+
+            # Create the enhanced memory session
             self.agent_session = MemorySession(
                 provider,
                 tools=tools,
-                memory_config={"path": self.memory_path, "semantic_threshold": 1},  # Immediate validation
-                default_memory_config=memory_config,
-                system_prompt=self.get_system_prompt()
+                memory_config=storage_config,           # Storage configuration
+                default_memory_config=memory_config,    # Memory injection configuration
+                system_prompt=self.get_system_prompt(),
+                auto_add_memory_tools=True              # Auto-add memory tools
             )
 
-            # Add memory-aware read_file tool
-            read_file_tool = self.create_memory_aware_read_file(self.agent_session)
-            self.agent_session.tools.append(read_file_tool)
+            # Memory tools are now auto-added by MemorySession
+            self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools (including auto-added memory tools)")
 
             # Set agent identity and values - using pattern from nexus.py
             if hasattr(self.agent_session, 'memory') and hasattr(self.agent_session.memory, 'set_core_values'):
@@ -1200,8 +1540,8 @@ You can also type regular messages to chat with the AI assistant."""
             self.agent_state.tools_available = [tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in self.agent_session.tools]
             self.agent_state.status = "idle"
 
-            self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools")
-            self.add_system_message("🧠 Memory system configured")
+            self.add_system_message("🧠 Advanced memory system configured with dual storage")
+            self.add_system_message("📊 Memory features: episodic, semantic, document, KG, auto-tools")
             self.add_system_message("Agent initialized successfully!")
 
             # Initialize memory display
@@ -1236,20 +1576,45 @@ Action Input: {{"parameter": "value"}}
 2. If you can answer directly, respond with:
 Final Answer: [your complete response]
 
-## Your Identity and Capabilities ##
-- You have persistent memory across conversations
-- You can read, analyze, and remember files using read_file
-- You can search your memory for relevant information
-- You maintain user profiles and adapt to individual preferences
-- You learn from every interaction and build knowledge over time
+## Available Tools:
+You have access to these tools (use exact names):
+- list_files: Find and list files by names/paths using patterns
+- read_file: Read file contents with automatic document memory storage
+- search_agent_memory: Search persistent memory for stored information
+- remember_important_fact: Store important facts in persistent memory
+- get_memory_context: Get relevant background context about topics
+- get_semantic_facts: Retrieve validated facts from long-term memory
 
-## Response Guidelines ##
-- Always be helpful and thorough
-- Use your memory to provide contextual responses
-- When analyzing code or files, remember key insights for future reference
-- Be proactive in offering relevant information from your memory
+## Important Notes:
+- Use JSON format for Action Input: {{"parameter": "value"}}
+- You will receive real tool results as "Observation:"
+- Continue reasoning until you can provide a Final Answer
+- Keep each iteration focused - don't try to do everything at once
 
-Remember: Your memory persists across sessions, so everything you learn becomes part of your knowledge base."""
+## Example Flow:
+Thought: I need to check what files are available first.
+Action: list_files
+Action Input: {{"directory_path": "."}}
+
+[System will execute tool and provide real Observation]
+
+Thought: Now I can read the specific file I found.
+Action: read_file
+Action Input: {{"filename": "example.txt"}}
+
+[System will execute tool and provide real Observation]
+
+Thought: Based on the file contents, I now have the information to answer the user's question.
+Final Answer: [Write naturally and experientially about what you accomplished and learned. Reflect on the experience, insights gained, and how it changed your understanding. Use "I discovered...", "I realized...", "What struck me was...", "This experience taught me..." - be authentic and reflective, not mechanical.]
+
+## CRITICAL: Final Answer Rules:
+- Write in natural, experiential, self-reflective language
+- Use phrases like "I discovered...", "I realized...", "What struck me was...", "This experience taught me..."
+- Reflect authentically on what you learned and how it changed your understanding
+- NEVER copy-paste raw tool results verbatim into Final Answer
+- NEVER use mechanical bullet points or step-by-step lists
+- Be comprehensive but natural - tell the story of your learning journey
+- Show genuine insight and self-awareness about the experience"""
 
     async def run(self):
         """Run the TUI application."""
