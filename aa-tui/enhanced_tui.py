@@ -27,6 +27,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.widgets import TextArea, Frame
+from prompt_toolkit.layout.margins import ScrollbarMargin, Margin
 
 # AbstractMemory imports
 try:
@@ -143,9 +144,8 @@ class EnhancedTUI:
         # Separate actual conversation history (for agent context)
         self.actual_conversation_history = []
 
-        # Create conversation display using TextArea widget (has built-in scrolling)
-        # Make it NOT read-only so we can update it programmatically
-        self.conversation_textarea = TextArea(
+        # Create conversation display (we'll add an internal right spacer before the scrollbar)
+        conversation_textarea_raw = TextArea(
             text=initial_text,
             multiline=True,
             read_only=False,  # Not read-only so we can update programmatically
@@ -154,8 +154,39 @@ class EnhancedTUI:
             dont_extend_height=False,  # Allow content to grow beyond window
             focusable=True,  # Allow focus for keyboard scrolling
         )
-        # Immediately set it to read-only after creation
-        self.conversation_textarea.read_only = True
+        conversation_textarea_raw.read_only = True
+
+        # Add a small blank margin before the scrollbar for readability
+        # This ensures text doesn't touch the scrollbar directly
+        class BlankMargin(Margin):
+            def __init__(self, width: int = 5, style: str = 'class:margin'):
+                self._width = width
+                self.style = style
+
+            def get_width(self, get_ui_content):
+                return self._width
+
+            def create_margin(self, window_render_info, width, height):
+                blank = ' ' * self._width
+                fragments = []
+                for i in range(height):
+                    fragments.append((self.style, blank))
+                    # Newline between rows, not after the last
+                    if i < height - 1:
+                        fragments.append((self.style, '\n'))
+                return fragments
+
+        # Replace the default right margins with a spacer and a scrollbar
+        # Note: TextArea exposes its underlying Window via `.window`.
+        conversation_textarea_raw.window.right_margins = [
+            BlankMargin(width=5),
+            ScrollbarMargin(display_arrows=False),
+        ]
+
+        # Use the TextArea directly (simpler than wrapping in extra containers)
+        self.conversation_textarea = conversation_textarea_raw
+        # Keep reference to the textarea for updates and focus helpers
+        self._conversation_textarea_widget = conversation_textarea_raw
 
         # Create side panel as TextArea for consistency
         self.side_panel_textarea = TextArea(
@@ -207,7 +238,7 @@ class EnhancedTUI:
             """Tab to switch focus to conversation panel"""
             # If input has focus, switch to conversation
             if event.app.layout.current_buffer == self.input_buffer:
-                event.app.layout.focus(self.conversation_textarea)
+                event.app.layout.focus(self._conversation_textarea_widget)
             else:
                 # Otherwise switch to input
                 event.app.layout.focus(self.input_buffer)
@@ -217,7 +248,7 @@ class EnhancedTUI:
             """Shift+Tab to switch focus back"""
             # Reverse of Tab
             if event.app.layout.current_buffer == self.input_buffer:
-                event.app.layout.focus(self.conversation_textarea)
+                event.app.layout.focus(self._conversation_textarea_widget)
             else:
                 event.app.layout.focus(self.input_buffer)
 
@@ -227,7 +258,7 @@ class EnhancedTUI:
             """Scroll conversation up with PageUp"""
             # If conversation is focused OR input is empty, scroll
             if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
-                buffer = self.conversation_textarea.buffer
+                buffer = self._conversation_textarea_widget.buffer
                 # Move cursor up by ~10 lines
                 for _ in range(10):
                     buffer.cursor_up()
@@ -238,7 +269,7 @@ class EnhancedTUI:
             """Scroll conversation down with PageDown"""
             # If conversation is focused OR input is empty, scroll
             if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
-                buffer = self.conversation_textarea.buffer
+                buffer = self._conversation_textarea_widget.buffer
                 # Move cursor down by ~10 lines
                 for _ in range(10):
                     buffer.cursor_down()
@@ -247,7 +278,7 @@ class EnhancedTUI:
         @self.kb.add('c-u')
         def scroll_up_half(event):
             """Scroll up half page with Ctrl+U"""
-            buffer = self.conversation_textarea.buffer
+            buffer = self._conversation_textarea_widget.buffer
             for _ in range(5):
                 buffer.cursor_up()
             event.app.invalidate()
@@ -255,7 +286,7 @@ class EnhancedTUI:
         @self.kb.add('c-d')
         def scroll_down_half(event):
             """Scroll down half page with Ctrl+D"""
-            buffer = self.conversation_textarea.buffer
+            buffer = self._conversation_textarea_widget.buffer
             for _ in range(5):
                 buffer.cursor_down()
             event.app.invalidate()
@@ -267,7 +298,7 @@ class EnhancedTUI:
         def scroll_to_top(event):
             """Scroll to top with Home key"""
             if event.app.layout.current_buffer != self.input_buffer:
-                buffer = self.conversation_textarea.buffer
+                buffer = self._conversation_textarea_widget.buffer
                 buffer.cursor_position = 0
                 event.app.invalidate()
 
@@ -275,7 +306,7 @@ class EnhancedTUI:
         def scroll_to_bottom(event):
             """Scroll to bottom with End key"""
             if event.app.layout.current_buffer != self.input_buffer:
-                buffer = self.conversation_textarea.buffer
+                buffer = self._conversation_textarea_widget.buffer
                 buffer.cursor_position = len(buffer.text)
                 event.app.invalidate()
 
@@ -339,10 +370,22 @@ class EnhancedTUI:
             filter=is_side_panel_visible
         )
 
-        # Create main content with conditional side panel
+        # Create a minimal separator between conversation and side panel
+        margin_spacer = ConditionalContainer(
+            Window(
+                content=FormattedTextControl(text="│"),  # Thin visual separator
+                width=1,
+                dont_extend_width=True,
+                style='class:separator',  # Use separator styling
+            ),
+            filter=is_side_panel_visible  # Only show margin when side panel is visible
+        )
+
+        # Create main content with proper spacing between conversation and side panel
         self.main_content = VSplit([
             self.conversation_textarea,  # TextArea widget with built-in scrolling
-            side_panel_container,  # Conditionally visible side panel
+            margin_spacer,               # Visual separator when side panel is visible
+            side_panel_container,        # Conditionally visible side panel
         ])
 
         input_prompt = Window(
@@ -414,6 +457,7 @@ class EnhancedTUI:
                 'error': 'red bold',
                 'timestamp': 'ansibrightblack',
                 'separator': 'ansibrightblack',
+                'margin': 'ansibrightblack',  # Margin area styling
                 # UI elements
                 'thinking-animation': 'yellow',
                 'status-idle': 'green',
@@ -1129,26 +1173,30 @@ You can also type regular messages to chat with the AI assistant."""
         pass
 
     def _append_to_conversation(self, text):
-        """Append text to conversation TextArea."""
+        """Append text to conversation TextArea with right padding to prevent crowding."""
         # Update our text storage
         self.conversation_text += text
 
+        # The text now has built-in padding from the layout structure
+        padded_text = self.conversation_text
+
         # Temporarily make TextArea writable to update it
-        was_readonly = self.conversation_textarea.read_only
-        self.conversation_textarea.read_only = False
+        was_readonly = self._conversation_textarea_widget.read_only
+        self._conversation_textarea_widget.read_only = False
 
         # Update the TextArea text
-        self.conversation_textarea.buffer.text = self.conversation_text
+        self._conversation_textarea_widget.buffer.text = padded_text
 
         # Move cursor to end for auto-scroll
-        self.conversation_textarea.buffer.cursor_position = len(self.conversation_text)
+        self._conversation_textarea_widget.buffer.cursor_position = len(padded_text)
 
         # Restore read-only state
-        self.conversation_textarea.read_only = was_readonly
+        self._conversation_textarea_widget.read_only = was_readonly
 
         # Force application to redraw
         if hasattr(self, 'app'):
             self.app.invalidate()
+
 
     def _set_buffer_text(self, buffer, text):
         """Set buffer text for buffers."""
@@ -1163,10 +1211,10 @@ You can also type regular messages to chat with the AI assistant."""
         self.last_message_type = None  # Reset message type tracking
 
         # Temporarily make writable
-        was_readonly = self.conversation_textarea.read_only
-        self.conversation_textarea.read_only = False
-        self.conversation_textarea.buffer.text = self.conversation_text
-        self.conversation_textarea.read_only = was_readonly
+        was_readonly = self._conversation_textarea_widget.read_only
+        self._conversation_textarea_widget.read_only = False
+        self._conversation_textarea_widget.buffer.text = self.conversation_text
+        self._conversation_textarea_widget.read_only = was_readonly
 
         if hasattr(self, 'app'):
             self.app.invalidate()
@@ -1471,25 +1519,10 @@ You can also type regular messages to chat with the AI assistant."""
             provider = create_llm(self.provider, model=self.model, timeout=7200.0)
             self.add_system_message("✅ LLM connection established")
 
-            # Configure advanced memory with dual storage for observability and performance
-            memory_config = MemoryConfig.comprehensive()  # Use comprehensive config for full features
+            # Configure memory - using EXACT pattern from nexus.py to avoid embedding issues
+            memory_config = MemoryConfig.agent_mode()  # Use agent_mode like nexus.py
             memory_config.enable_memory_tools = True
             memory_config.enable_self_editing = True
-
-            # Enhanced memory configuration for TUI agent
-            memory_config.include_episodic = True  # Include conversation episodes
-            memory_config.include_document = True  # Include document chunks
-            memory_config.include_knowledge_graph = True  # Include KG facts
-            memory_config.show_confidence = True  # Show confidence scores
-            memory_config.show_timestamps = False  # Keep UI clean
-            memory_config.max_items_per_tier = {
-                'working': 8,     # More working memory for TUI context
-                'semantic': 6,    # More semantic facts
-                'episodic': 4,    # Recent conversation episodes
-                'document': 3,    # Document chunks (added for TUI)
-                'storage': 5,     # Stored interactions
-                'knowledge_graph': 4
-            }
 
             # Create tools list
             tools = []
@@ -1498,32 +1531,23 @@ You can also type regular messages to chat with the AI assistant."""
             if list_files:
                 tools.append(list_files)
 
-            # Add memory-aware read_file tool (will be updated after session creation)
+            # Add memory-aware read_file tool
             read_file_tool = self.create_memory_aware_read_file(None)
             tools.append(read_file_tool)
 
-            # Storage configuration for dual backend (markdown + LanceDB)
-            storage_config = {
-                "storage": "dual",  # Use both markdown and LanceDB
-                "path": self.memory_path,  # Markdown storage path
-                "uri": "./memory.db",      # LanceDB path
-                "semantic_threshold": 1,   # Immediate validation
-                "working_capacity": 15,    # Larger working memory capacity
-                "enable_kg": True          # Enable knowledge graph
-            }
+            # Add memory tools (like nexus.py)
+            memory_tools = self.setup_memory_tools()
+            tools.extend(memory_tools)
+            self.add_system_message(f"🔧 Added {len(memory_tools)} memory tools")
 
-            # Create the enhanced memory session
+            # Create memory session - using EXACT pattern from nexus.py
             self.agent_session = MemorySession(
                 provider,
                 tools=tools,
-                memory_config=storage_config,           # Storage configuration
-                default_memory_config=memory_config,    # Memory injection configuration
-                system_prompt=self.get_system_prompt(),
-                auto_add_memory_tools=True              # Auto-add memory tools
+                memory_config={"path": self.memory_path, "semantic_threshold": 1},  # Simple config like nexus.py
+                default_memory_config=memory_config,
+                system_prompt=self.get_system_prompt()
             )
-
-            # Memory tools are now auto-added by MemorySession
-            self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools (including auto-added memory tools)")
 
             # Set agent identity and values - using pattern from nexus.py
             if hasattr(self.agent_session, 'memory') and hasattr(self.agent_session.memory, 'set_core_values'):
@@ -1540,8 +1564,8 @@ You can also type regular messages to chat with the AI assistant."""
             self.agent_state.tools_available = [tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in self.agent_session.tools]
             self.agent_state.status = "idle"
 
-            self.add_system_message("🧠 Advanced memory system configured with dual storage")
-            self.add_system_message("📊 Memory features: episodic, semantic, document, KG, auto-tools")
+            self.add_system_message(f"🔧 Added {len(self.agent_session.tools)} tools")
+            self.add_system_message("🧠 Memory system configured")
             self.add_system_message("Agent initialized successfully!")
 
             # Initialize memory display
