@@ -125,10 +125,11 @@ class EnhancedTUI:
     def setup_ui(self):
         """Set up the UI components with PROVEN working input approach."""
 
-        # Create input buffer - SAME APPROACH THAT WORKS
+        # Create input buffer - multiline for better input
+        # Note: In multiline mode, Enter creates newline, our bindings handle send
         self.input_buffer = Buffer(
-            multiline=False,
-            accept_handler=self.handle_input,
+            multiline=True,  # Allow multiline input
+            accept_handler=self.handle_input,  # Called on our custom bindings
             read_only=False,
             completer=CommandCompleter(),
             complete_while_typing=True,
@@ -258,22 +259,8 @@ class EnhancedTUI:
                 buffer.cursor_down()
             event.app.invalidate()
 
-        # Arrow keys for scrolling
-        @self.kb.add('up')
-        def scroll_up_line(event):
-            """Scroll up one line with Up arrow"""
-            # Works when conversation is focused or input is empty
-            if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
-                self.conversation_textarea.buffer.cursor_up()
-                event.app.invalidate()
-
-        @self.kb.add('down')
-        def scroll_down_line(event):
-            """Scroll down one line with Down arrow"""
-            # Works when conversation is focused or input is empty
-            if event.app.layout.current_buffer != self.input_buffer or not self.input_buffer.text:
-                self.conversation_textarea.buffer.cursor_down()
-                event.app.invalidate()
+        # Note: Arrow keys are handled naturally by the focused buffer
+        # No need to override them - they work in both input and conversation
 
         @self.kb.add('home')
         def scroll_to_top(event):
@@ -296,6 +283,38 @@ class EnhancedTUI:
         def focus_input(event):
             """Escape to return focus to input field"""
             event.app.layout.focus(self.input_buffer)
+
+        # Control+J to send message (works like Ctrl+Enter)
+        @self.kb.add('c-j')
+        def send_message_ctrl_j(event):
+            """Send message with Ctrl+J"""
+            # Only send if we have text and input buffer has focus
+            if event.app.layout.current_buffer == self.input_buffer and self.input_buffer.text.strip():
+                self.input_buffer.validate_and_handle()
+
+        # Also bind Escape+Enter as alternative (works like Shift+Enter in some terminals)
+        @self.kb.add('escape', 'enter')
+        def send_message_alt_enter(event):
+            """Send message with Alt+Enter (alternative)"""
+            # Only send if we have text and input buffer has focus
+            if event.app.layout.current_buffer == self.input_buffer and self.input_buffer.text.strip():
+                self.input_buffer.validate_and_handle()
+
+        # Control+M is another way to send (some terminals)
+        @self.kb.add('c-m')
+        def send_message_ctrl_m(event):
+            """Send message with Ctrl+M (Return key)"""
+            # Check if we're in the input buffer
+            if event.app.layout.current_buffer == self.input_buffer:
+                # If there's text and it's not multiline, send it
+                text = self.input_buffer.text.strip()
+                if text and '\n' not in text:
+                    # Single line - send
+                    self.input_buffer.validate_and_handle()
+                elif text:
+                    # Multiline - insert newline
+                    self.input_buffer.insert_text('\n')
+                # else: empty - do nothing
 
         # Note: Mouse wheel scrolling is handled automatically by TextArea when mouse_support=True
 
@@ -326,7 +345,7 @@ class EnhancedTUI:
 
         input_window = Window(
             content=BufferControl(buffer=self.input_buffer),
-            height=1,
+            height=3,  # 3 lines for multiline input with scrolling
         )
 
         input_area = VSplit([
@@ -349,11 +368,21 @@ class EnhancedTUI:
             height=1,
         )
 
+        # Horizontal separator line
+        separator = Window(
+            content=FormattedTextControl(
+                text=lambda: '─' * 200  # Horizontal line
+            ),
+            height=1,
+            style='class:separator',
+        )
+
         # Root container
         root_container = HSplit([
             self.main_content,  # Top: conversation + side panel
             status_line,        # Status line showing current operations
-            input_area,         # Middle: input
+            input_area,         # Middle: input (now 2 lines)
+            separator,          # Horizontal line separator
             help_bar,          # Bottom: help
         ])
 
@@ -392,14 +421,18 @@ class EnhancedTUI:
         """Toggle side panel visibility."""
         if self.show_side_panel:
             # Hide side panel - show only conversation
-            self.main_content.children = [self.main_content.children[0]]  # Keep only conversation
+            # Keep only the conversation widget
+            self.main_content.children = [self.conversation_container]
             self.show_side_panel = False
-            pass  # No system message, info is in help bar
         else:
             # Show side panel - add it back
-            self.main_content.children = [self.conversation_container, self.side_panel_container]
+            # Recreate side panel container to ensure it's a Window
+            side_panel_container = Window(
+                content=self.side_panel_textarea.control,
+                width=25,
+            )
+            self.main_content.children = [self.conversation_container, side_panel_container]
             self.show_side_panel = True
-            pass  # No system message, info is in help bar
 
         self.app.invalidate()
 
@@ -418,7 +451,7 @@ class EnhancedTUI:
 
     def get_help_text(self):
         """Get dynamic help text based on current detail level."""
-        base_shortcuts = "<b>Tab</b> switch focus | <b>Enter</b> send | <b>Ctrl+Q</b> quit | <b>PgUp/PgDn</b> scroll | <b>F2</b> panel"
+        base_shortcuts = "<b>Tab</b> switch | <b>Ctrl+J</b> or <b>Alt+Enter</b> send | <b>Ctrl+Q</b> quit | <b>F2</b> panel"
 
         if self.detail_level == 1:
             return HTML(f"{base_shortcuts}")
@@ -458,17 +491,13 @@ class EnhancedTUI:
         """Animate the thinking indicator."""
         try:
             while self.thinking_animation_running:
-                char = self.thinking_animation_chars[self.thinking_animation_index]
-                # Update the thinking message in the conversation
-                if "🤔 Agent is thinking..." in self.conversation_text:
-                    self.conversation_text = self.conversation_text.replace(
-                        "🤔 Agent is thinking...",
-                        f'<thinking-animation>{char}</thinking-animation> <system>Agent is thinking...</system>'
-                    )
-                    if hasattr(self, 'app'):
-                        self.app.invalidate()
-
+                # Update the animation index
                 self.thinking_animation_index = (self.thinking_animation_index + 1) % len(self.thinking_animation_chars)
+
+                # Trigger UI redraw to show the new animation frame
+                if hasattr(self, 'app'):
+                    self.app.invalidate()
+
                 await asyncio.sleep(0.1)  # 100ms animation speed
         except asyncio.CancelledError:
             pass
@@ -683,6 +712,8 @@ class EnhancedTUI:
     async def _process_agent_response_with_completion(self, user_input: str):
         """Wrapper that handles thinking indicator and completion properly."""
         try:
+            # Start thinking animation
+            await self.start_thinking_animation()
             await self._process_agent_response(user_input)
         except Exception as e:
             # Handle any unhandled exceptions
@@ -1016,21 +1047,16 @@ You can also type regular messages to chat with the AI assistant."""
         # Store timestamp for side panel display
         self.agent_state.last_activity = __import__('datetime').datetime.now()
 
-        # Format with colors for better visibility
-        # Using ANSI escape codes for colors
-        CYAN_BOLD = '\033[1;36m'  # Cyan bold for You
-        GREEN_BOLD = '\033[1;32m'  # Green bold for Assistant
-        RESET = '\033[0m'
-
+        # Format messages with clear labels (TextArea doesn't support colors)
         if sender == "User":
-            # Add spacing between conversations (not separator line)
+            # Add spacing between conversations
             spacing = "\n" if self.last_message_type == "Assistant" else ""
-            formatted_message = f'{spacing}{CYAN_BOLD}You:{RESET} {message}\n'
+            formatted_message = f'{spacing}You: {message}\n'
             # Track actual conversation history
             self.actual_conversation_history.append({"role": "user", "content": message, "timestamp": timestamp})
             self.last_message_type = "User"
         elif sender == "Assistant":
-            formatted_message = f'{GREEN_BOLD}Assistant:{RESET} {message}\n\n'
+            formatted_message = f'Assistant: {message}\n\n'
             # Track actual conversation history
             self.actual_conversation_history.append({"role": "assistant", "content": message, "timestamp": timestamp})
             self.last_message_type = "Assistant"
