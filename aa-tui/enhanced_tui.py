@@ -19,9 +19,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window, ConditionalContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout import Layout
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 from prompt_toolkit.completion import Completer, Completion
@@ -322,19 +323,26 @@ class EnhancedTUI:
         # TextArea already is a complete widget with scrolling
 
         # Create a narrower side panel to avoid crowding
-        self.side_panel_container = Window(
-            content=self.side_panel_textarea.control,
-            width=25,  # Reduced width to avoid crowding
+        # Use ConditionalContainer to show/hide the side panel
+        self.show_side_panel = True
+
+        # Create condition for side panel visibility
+        @Condition
+        def is_side_panel_visible():
+            return self.show_side_panel
+
+        side_panel_container = ConditionalContainer(
+            Window(
+                content=self.side_panel_textarea.control,
+                width=25,  # Reduced width to avoid crowding
+            ),
+            filter=is_side_panel_visible
         )
 
-        # Keep reference to conversation container (TextArea is a complete widget)
-        self.conversation_container = self.conversation_textarea
-
-        # Create main content (with optional side panel)
-        self.show_side_panel = True
+        # Create main content with conditional side panel
         self.main_content = VSplit([
-            self.conversation_container,  # TextArea widget with built-in scrolling
-            self.side_panel_container,
+            self.conversation_textarea,  # TextArea widget with built-in scrolling
+            side_panel_container,  # Conditionally visible side panel
         ])
 
         input_prompt = Window(
@@ -419,21 +427,8 @@ class EnhancedTUI:
 
     def toggle_side_panel(self):
         """Toggle side panel visibility."""
-        if self.show_side_panel:
-            # Hide side panel - show only conversation
-            # Keep only the conversation widget
-            self.main_content.children = [self.conversation_container]
-            self.show_side_panel = False
-        else:
-            # Show side panel - add it back
-            # Recreate side panel container to ensure it's a Window
-            side_panel_container = Window(
-                content=self.side_panel_textarea.control,
-                width=25,
-            )
-            self.main_content.children = [self.conversation_container, side_panel_container]
-            self.show_side_panel = True
-
+        # Simply toggle the flag - ConditionalContainer handles the rest
+        self.show_side_panel = not self.show_side_panel
         self.app.invalidate()
 
     def get_status_text(self):
