@@ -146,6 +146,9 @@ class EnhancedTUI:
         self.clipboard_feedback = ""
         self.feedback_timer = None
 
+        # Streaming mode flag
+        self.stream_mode = False
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -925,8 +928,37 @@ class EnhancedTUI:
                 final_answer = getattr(resp, 'content', None) or str(resp)
                 final_answer = final_answer.strip()
 
-            # Display the final answer
-            self.add_message("Assistant", final_answer)
+            # Display the final answer based on streaming mode
+            if self.stream_mode:
+                # In streaming mode, we need to process the response token by token
+                # Since reactor.process_query returns the full final answer, we'll simulate streaming
+                # by splitting the response into chunks and displaying them with small delays
+                
+                # First, clear any existing assistant message
+                self.add_message("Assistant", "")
+                
+                # Split into chunks and stream them
+                chunk_size = 20  # Characters per chunk
+                for i in range(0, len(final_answer), chunk_size):
+                    chunk = final_answer[i:i + chunk_size]
+                    # Add the chunk to conversation
+                    self._append_to_conversation(chunk)
+                    
+                    # Force UI update after each chunk to show streaming effect
+                    if hasattr(self, 'app'):
+                        self.app.invalidate()
+                    
+                    # Small delay to create streaming effect
+                    await asyncio.sleep(0.05)  # 50ms delay between chunks
+                
+                # Add final newline after streaming is complete
+                self._append_to_conversation("\n\n")
+                if hasattr(self, 'app'):
+                    self.app.invalidate()
+                    
+            else:
+                # Display full answer at once (original behavior)
+                self.add_message("Assistant", final_answer)
 
             # Persist chat history (if BasicSession available)
             self.save_chat_history()
@@ -1291,7 +1323,7 @@ class EnhancedTUI:
                     self.agent_state.max_tokens = 8192
 
             # todo : fix logic above; we have abstractcore.architecture who normally detect that
-            self.agent_state.max_tokens = 80000
+            self.agent_state.max_tokens = 50000
 
     def handle_command(self, command):
         """Handle slash commands."""
@@ -1309,6 +1341,7 @@ class EnhancedTUI:
 /clear - Clear conversation
 /reset - Reset all memory (conversation + stored memory)
 /quit - Exit application
+/stream - Toggle streaming mode
 
 You can also type regular messages to chat with the AI assistant."""
             # Show help in a temporary popup or just in conversation
@@ -1332,6 +1365,10 @@ You can also type regular messages to chat with the AI assistant."""
             self.add_system_message("Available tools would be listed here")
         elif cmd == '/reset':
             self.reset_memory()
+        elif cmd == '/stream':
+            self.stream_mode = not self.stream_mode
+            status = "enabled" if self.stream_mode else "disabled"
+            self.add_system_message(f"✅ Streaming mode {status}")
         else:
             self.add_system_message(f"Unknown command: {cmd}. Type /help for available commands.")
 
