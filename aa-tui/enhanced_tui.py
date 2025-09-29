@@ -733,8 +733,12 @@ class EnhancedTUI:
             tool_count = len(self.agent_state.tools_available)
             content_lines.extend([
                 "🔧 Tools Available",
-                f"Count: {tool_count}",
             ])
+            if tool_count > 0:
+                for tool in self.agent_state.tools_available:
+                    content_lines.append(f"✓ {tool}")
+            else:
+                content_lines.append("No tools available")
         else:
             content_lines.extend([
                 "🧠 AI Models",
