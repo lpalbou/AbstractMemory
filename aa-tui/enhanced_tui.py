@@ -472,7 +472,7 @@ class EnhancedTUI:
             height=1,
         )
 
-        # Horizontal separator line
+        # Horizontal separator line between conversation and input (between "You:" and status)
         separator = Window(
             content=FormattedTextControl(
                 text=lambda: '─' * 200  # Horizontal line
@@ -485,9 +485,10 @@ class EnhancedTUI:
         root_container = HSplit([
             self.main_content,  # Top: conversation + side panel
             status_line,        # Status line showing current operations
+            separator,          # Horizontal line separator between status and input
             input_area,         # Middle: input (now 2 lines)
-            separator,          # Horizontal line separator
-            help_bar,          # Bottom: help
+            separator,          # Horizontal line separator between status and input
+            help_bar,           # Bottom: help
         ])
 
         self.layout = Layout(root_container)
