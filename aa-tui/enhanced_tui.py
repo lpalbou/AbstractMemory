@@ -393,7 +393,7 @@ class EnhancedTUI:
                 sft_format = f"[INST] {user_msg} [/INST]\n{assistant_msg}"
                 try:
                     subprocess.run(['pbcopy'], input=sft_format.encode('utf-8'), check=True)
-                    self.set_clipboard_feedback("✅ Copied user query and assistant response in SFT format")
+                    self.set_clipboard_feedback("✅ Copied to clipboard")
                 except subprocess.CalledProcessError:
                     self.set_clipboard_feedback("❌ Failed to copy to clipboard")
             else:
@@ -1816,9 +1816,11 @@ You can also type regular messages to chat with the AI assistant."""
             # Build robust storage config with absolute paths
             memory_dir = Path(self.memory_path).resolve()
             memory_dir.mkdir(parents=True, exist_ok=True)
-            lancedb_uri = memory_dir / "memory.db"
-            lancedb_uri.parent.mkdir(parents=True, exist_ok=True)
-
+            
+            # Use a dedicated directory for LanceDB database (not a file)
+            lancedb_dir = memory_dir / "lancedb"
+            lancedb_dir.mkdir(parents=True, exist_ok=True)
+            
             # Prefer dual storage if LanceDB is available; otherwise fallback to markdown-only
             # In offline mode, we might not have embeddings, so prefer markdown
             try:
@@ -1841,7 +1843,7 @@ You can also type regular messages to chat with the AI assistant."""
                 storage_config = {
                     "path": str(memory_dir),
                     "storage": "dual",  # markdown + LanceDB
-                    "uri": str(lancedb_uri),
+                    "uri": str(lancedb_dir),  # Point to directory, not file
                     "semantic_threshold": 1
                 }
                 self.agent_state.storage_backend = "dual"
