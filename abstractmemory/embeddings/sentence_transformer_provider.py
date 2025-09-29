@@ -32,7 +32,52 @@ class SentenceTransformerProvider:
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading SentenceTransformer model: {model_name}")
-            self.model = SentenceTransformer(model_name, device=device)
+
+            # Check if we're in offline mode
+            import os
+            offline_mode = (
+                os.environ.get('TRANSFORMERS_OFFLINE') == '1' or
+                os.environ.get('HF_HUB_OFFLINE') == '1'
+            )
+
+            if offline_mode:
+                logger.info("Offline mode detected - using local files only")
+                # Try to load with local_files_only flag
+                try:
+                    # First try to find the cached model path
+                    cache_base = os.path.expanduser('~/.cache/huggingface/hub')
+                    model_folder = f"models--{model_name.replace('/', '--')}"
+                    model_cache_path = os.path.join(cache_base, model_folder)
+
+                    if os.path.exists(model_cache_path):
+                        snapshots_path = os.path.join(model_cache_path, 'snapshots')
+                        if os.path.exists(snapshots_path):
+                            # Get the latest snapshot
+                            snapshots = [d for d in os.listdir(snapshots_path) if os.path.isdir(os.path.join(snapshots_path, d))]
+                            if snapshots:
+                                # Use the first (usually only) snapshot
+                                snapshot_path = os.path.join(snapshots_path, snapshots[0])
+                                logger.info(f"Found cached model at: {snapshot_path}")
+                                # Load from the local snapshot path directly
+                                self.model = SentenceTransformer(snapshot_path, device=device)
+                            else:
+                                raise RuntimeError(f"No snapshots found in {snapshots_path}")
+                        else:
+                            raise RuntimeError(f"No snapshots directory in {model_cache_path}")
+                    else:
+                        raise RuntimeError(f"Model not found in cache: {model_cache_path}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to load model in offline mode: {e}")
+                    # Re-raise with clearer error message
+                    raise RuntimeError(
+                        f"Cannot load embedding model '{model_name}' in offline mode. "
+                        f"Model may not be cached. Run with internet connection once to cache the model, "
+                        f"or disable semantic features. Error: {e}"
+                    )
+            else:
+                self.model = SentenceTransformer(model_name, device=device)
+
             logger.info(f"Successfully loaded model: {model_name}")
         except ImportError:
             raise ImportError(

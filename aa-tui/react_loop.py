@@ -202,14 +202,38 @@ class ReactLoop:
                 loop = asyncio.get_event_loop()
 
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    response = await loop.run_in_executor(
-                        executor,
-                        lambda: self.session.generate(
-                            context,  # CRITICAL: Use accumulated context
+                    def _safe_generate():
+                        # Ensure BasicSession conversation history has correct types
+                        try:
+                            if hasattr(self.session, '_basic_session') and self.session._basic_session:
+                                msgs = getattr(self.session._basic_session, 'messages', [])
+                                normalized = []
+                                for m in msgs:
+                                    if isinstance(m, dict) and 'role' in m and 'content' in m:
+                                        # Re-add via session API to normalize types
+                                        normalized.append(('__dict__', m['role'], m['content']))
+                                    else:
+                                        normalized.append(('__ok__', m))
+                                # If we found dicts, rebuild history once
+                                if any(tag == '__dict__' for tag, *_ in normalized):
+                                    self.session.clear_history(keep_system=True)
+                                    for tag, *rest in normalized:
+                                        if tag == '__dict__':
+                                            role, content = rest
+                                            try:
+                                                self.session.add_message(role, content)
+                                            except Exception:
+                                                pass
+                        except Exception:
+                            pass
+
+                        return self.session.generate(
+                            context,
                             user_id="react_user",
                             include_memory=self.config.include_memory
                         )
-                    )
+
+                    response = await loop.run_in_executor(executor, _safe_generate)
 
                 # Extract response content
                 if hasattr(response, 'content'):

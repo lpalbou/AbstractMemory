@@ -7,14 +7,25 @@ Focuses on text input working first, then adds features
 import asyncio
 import concurrent.futures
 import sys
+import os
 import argparse
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
-# Add the project root to path
+# Force offline mode for Hugging Face models (use cached models only)
+# This MUST be set before any imports that might use transformers
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['HF_DATASETS_OFFLINE'] = '1'
+# Point to the default cache directory
+os.environ.setdefault('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
+os.environ.setdefault('SENTENCE_TRANSFORMERS_HOME', os.path.expanduser('~/.cache/huggingface'))
+
+# Add the project root and aa-tui dir to path for local imports
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent))
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
@@ -769,11 +780,11 @@ class EnhancedTUI:
             self.update_side_panel_content()
 
     async def _process_agent_response(self, user_input: str):
-        """Process user input through ReAct loop with real-time observability."""
+        """Process user input through ReAct loop with real-time observability (non-blocking)."""
         try:
             from react_loop import ReactLoop, ReactConfig
 
-            # Configure ReAct loop
+            # Configure ReAct loop (keeps calls off the UI thread)
             config = ReactConfig(
                 max_iterations=25,
                 observation_display_limit=500,
@@ -783,7 +794,7 @@ class EnhancedTUI:
             # Create ReAct loop instance
             reactor = ReactLoop(self.agent_session, config)
 
-            # Set up callbacks for UI updates
+            # Set up callbacks for live UI updates
             callbacks = {
                 'on_iteration': self._on_react_iteration,
                 'on_response': self._on_react_response,
@@ -795,13 +806,29 @@ class EnhancedTUI:
             # Initial status
             self.agent_state.status = "thinking"
             self.agent_state.current_thought = "Starting ReAct reasoning..."
+            self.current_status = "Agent is thinking..."
             self.update_side_panel_content()
 
-            # Process through ReAct loop
+            # Process through ReAct loop (generation runs in a worker thread)
             final_answer = await reactor.process_query(user_input, callbacks)
+
+            # If reactor could not complete, fall back to direct MemorySession.generate
+            if not final_answer or final_answer.strip().startswith("I apologize"):
+                self.current_status = "Fallback generation"
+                self.update_side_panel_content()
+                resp = self.agent_session.generate(
+                    user_input,
+                    user_id="tui_user",
+                    include_memory=True
+                )
+                final_answer = getattr(resp, 'content', None) or str(resp)
+                final_answer = final_answer.strip()
 
             # Display the final answer
             self.add_message("Assistant", final_answer)
+
+            # Persist chat history (if BasicSession available)
+            self.save_chat_history()
 
             # Update memory display
             self._update_memory_display()
@@ -810,6 +837,7 @@ class EnhancedTUI:
             self.agent_state.status = "idle"
             self.agent_state.current_thought = ""
             self.agent_state.current_action = ""
+            self.current_status = "Ready"
             self.update_side_panel_content()
 
         except Exception as e:
@@ -821,11 +849,75 @@ class EnhancedTUI:
             self.agent_state.status = "idle"
             self.agent_state.current_thought = ""
             self.agent_state.current_action = ""
+            self.current_status = "Ready"
             self.update_side_panel_content()
+
+    def save_chat_history(self):
+        """Save chat history from BasicSession to disk (compatible with nexus)."""
+        try:
+            if self.agent_session and hasattr(self.agent_session, '_basic_session') and self.agent_session._basic_session:
+                history_path = Path(self.memory_path) / "chat_history.json"
+                history_path.parent.mkdir(parents=True, exist_ok=True)
+
+                messages = getattr(self.agent_session._basic_session, 'messages', [])
+                messages_data = []
+                for msg in messages:
+                    # Prefer a simple interoperable format
+                    if hasattr(msg, 'role') and hasattr(msg, 'content'):
+                        messages_data.append({
+                            'role': getattr(msg, 'role'),
+                            'content': getattr(msg, 'content')
+                        })
+                    elif isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+                        messages_data.append({'role': msg['role'], 'content': msg['content']})
+                    elif hasattr(msg, 'to_dict'):
+                        try:
+                            d = msg.to_dict()
+                            messages_data.append({'role': d.get('role'), 'content': d.get('content', '')})
+                        except Exception:
+                            continue
+
+                import json
+                with open(history_path, 'w', encoding='utf-8') as f:
+                    json.dump(messages_data, f, indent=2, default=str)
+        except Exception:
+            pass
+
+    def load_chat_history(self):
+        """Load chat history into BasicSession if available (compatible with nexus)."""
+        try:
+            if self.agent_session and hasattr(self.agent_session, '_basic_session') and self.agent_session._basic_session:
+                history_path = Path(self.memory_path) / "chat_history.json"
+                if history_path.exists():
+                    import json
+                    with open(history_path, 'r', encoding='utf-8') as f:
+                        messages_data = json.load(f)
+
+                    # Normalize by reconstructing messages via API instead of assigning raw dicts
+                    # 1) Clear existing history but keep system message (system prompt)
+                    try:
+                        self.agent_session.clear_history(keep_system=True)
+                    except Exception:
+                        pass
+
+                    # 2) Re-add messages using the session API to ensure proper types
+                    for msg in messages_data:
+                        if not isinstance(msg, dict):
+                            continue
+                        role = msg.get('role')
+                        content = msg.get('content', '')
+                        if role in ('user', 'assistant') and content:
+                            try:
+                                self.agent_session.add_message(role, content)
+                            except Exception:
+                                continue
+        except Exception:
+            pass
 
     def _on_react_iteration(self, iteration: int, max_iterations: int):
         """Callback for ReAct iteration start."""
         self.agent_state.current_thought = f"ReAct cycle {iteration}/{max_iterations}"
+        self.current_status = f"Cycle {iteration}/{max_iterations}"
         self.update_side_panel_content()
 
     def _on_react_response(self, response: str):
@@ -844,6 +936,7 @@ class EnhancedTUI:
         """Callback for ReAct tool action."""
         self.agent_state.status = "acting"
         self.agent_state.current_action = f"{tool_name}"
+        self.current_status = f"Running {tool_name}"
         self.update_side_panel_content()
 
         # Show action in detail mode
@@ -854,6 +947,7 @@ class EnhancedTUI:
     def _on_react_observation(self, tool_result: str):
         """Callback for ReAct observation."""
         self.agent_state.status = "observing"
+        self.current_status = "Observing tool results"
         self.update_side_panel_content()
 
         # Show observation in detail mode
@@ -868,6 +962,7 @@ class EnhancedTUI:
         """Callback for ReAct final answer."""
         self.agent_state.status = "completing"
         self.agent_state.current_thought = "Finalizing response..."
+        self.current_status = "Finalizing"
         self.update_side_panel_content()
 
     def _get_recent_context(self, max_tokens: int = 2000) -> str:
@@ -1167,10 +1262,9 @@ You can also type regular messages to chat with the AI assistant."""
         self._append_to_conversation(formatted_message)
 
     def add_system_message(self, message):
-        """Add a system message to the conversation."""
-        # Don't add system messages to chat - they pollute the conversation
-        # Information is available in the side panel
-        pass
+        """Add a system message to the conversation (lightweight for observability)."""
+        formatted_message = f"⚙️ System: {message}\n"
+        self._append_to_conversation(formatted_message)
 
     def _append_to_conversation(self, text):
         """Append text to conversation TextArea with right padding to prevent crowding."""
@@ -1519,10 +1613,29 @@ You can also type regular messages to chat with the AI assistant."""
             provider = create_llm(self.provider, model=self.model, timeout=7200.0)
             self.add_system_message("✅ LLM connection established")
 
-            # Configure memory - using EXACT pattern from nexus.py to avoid embedding issues
+            # Configure memory - offline-first approach for embeddings
             memory_config = MemoryConfig.agent_mode()  # Use agent_mode like nexus.py
             memory_config.enable_memory_tools = True
             memory_config.enable_self_editing = True
+
+            # Disable semantic embeddings if offline and model not cached
+            # This prevents attempts to download models
+            if os.environ.get('TRANSFORMERS_OFFLINE') == '1':
+                # Check if the model is already cached
+                cache_dir = os.path.expanduser('~/.cache/huggingface/hub')
+                model_cached = False
+                if os.path.exists(cache_dir):
+                    # Check for common embedding model in cache
+                    for item in os.listdir(cache_dir):
+                        if 'all-MiniLM-L6-v2' in item or 'sentence-transformers' in item:
+                            model_cached = True
+                            break
+
+                if not model_cached:
+                    self.add_system_message("⚠️ Embedding model not cached - disabling semantic features")
+                    memory_config.semantic_threshold = 999  # Effectively disable semantic memory
+                else:
+                    self.add_system_message("✅ Using cached embedding model for semantic features")
 
             # Create tools list
             tools = []
@@ -1531,23 +1644,113 @@ You can also type regular messages to chat with the AI assistant."""
             if list_files:
                 tools.append(list_files)
 
-            # Add memory-aware read_file tool
-            read_file_tool = self.create_memory_aware_read_file(None)
-            tools.append(read_file_tool)
+            # Add read_file tool that also stores content into document memory
+            if tool:
+                @tool
+                def read_file(file_path: str) -> str:
+                    """Read a file and store its contents in document memory for recall."""
+                    try:
+                        try:
+                            from abstractllm.tools.common_tools import read_file as original_read_file
+                        except Exception:
+                            original_read_file = None
+
+                        if original_read_file:
+                            content = original_read_file(file_path)
+                        else:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+
+                        # Store in document memory if available
+                        try:
+                            if self.agent_session and hasattr(self.agent_session, 'memory') and hasattr(self.agent_session.memory, 'document'):
+                                preview = content[:50000]
+                                self.agent_session.memory.document.store_document(
+                                    filepath=file_path,
+                                    content=preview,
+                                    file_type="text"
+                                )
+                        except Exception as store_err:
+                            return f"SUCCESS: File read (storage failed).\n{content}\nNote: Document memory store failed: {store_err}"
+
+                        return f"SUCCESS: File read.\n{content}"
+                    except Exception as e:
+                        return f"Error reading file {file_path}: {e}"
+
+                tools.append(read_file)
 
             # Add memory tools (like nexus.py)
             memory_tools = self.setup_memory_tools()
             tools.extend(memory_tools)
             self.add_system_message(f"🔧 Added {len(memory_tools)} memory tools")
 
-            # Create memory session - using EXACT pattern from nexus.py
-            self.agent_session = MemorySession(
-                provider,
-                tools=tools,
-                memory_config={"path": self.memory_path, "semantic_threshold": 1},  # Simple config like nexus.py
-                default_memory_config=memory_config,
-                system_prompt=self.get_system_prompt()
-            )
+            # Build robust storage config with absolute paths
+            memory_dir = Path(self.memory_path).resolve()
+            memory_dir.mkdir(parents=True, exist_ok=True)
+            lancedb_uri = memory_dir / "memory.db"
+            lancedb_uri.parent.mkdir(parents=True, exist_ok=True)
+
+            # Prefer dual storage if LanceDB is available; otherwise fallback to markdown-only
+            # In offline mode, we might not have embeddings, so prefer markdown
+            try:
+                import lancedb  # noqa: F401
+                use_lancedb = True
+                # Only use LanceDB if we have embeddings available
+                if os.environ.get('TRANSFORMERS_OFFLINE') == '1':
+                    # Check if embedding model is cached
+                    cache_dir = os.path.expanduser('~/.cache/huggingface/hub')
+                    if not os.path.exists(cache_dir) or not any(
+                        'all-MiniLM-L6-v2' in item or 'sentence-transformers' in item
+                        for item in os.listdir(cache_dir) if os.path.exists(cache_dir)
+                    ):
+                        use_lancedb = False
+                        self.add_system_message("📝 Using markdown-only storage (no embeddings)")
+            except Exception:
+                use_lancedb = False
+
+            if use_lancedb:
+                storage_config = {
+                    "path": str(memory_dir),
+                    "storage": "dual",  # markdown + LanceDB
+                    "uri": str(lancedb_uri),
+                    "semantic_threshold": 1
+                }
+            else:
+                storage_config = {
+                    "path": str(memory_dir),
+                    "storage": "markdown",
+                    "semantic_threshold": 999  # Effectively disable semantic features
+                }
+
+            # Create memory session with error handling for offline mode
+            try:
+                self.agent_session = MemorySession(
+                    provider,
+                    tools=tools,
+                    memory_config=storage_config,
+                    default_memory_config=memory_config,
+                    system_prompt=self.get_system_prompt()
+                )
+            except Exception as e:
+                # If initialization fails due to embeddings, retry with markdown-only
+                if "huggingface" in str(e).lower() or "sentence" in str(e).lower() or "embedding" in str(e).lower():
+                    self.add_system_message("⚠️ Embeddings initialization failed, retrying with markdown-only storage")
+                    storage_config = {
+                        "path": str(memory_dir),
+                        "storage": "markdown",
+                        "semantic_threshold": 999
+                    }
+                    memory_config.semantic_threshold = 999
+
+                    self.agent_session = MemorySession(
+                        provider,
+                        tools=tools,
+                        memory_config=storage_config,
+                        default_memory_config=memory_config,
+                        system_prompt=self.get_system_prompt()
+                    )
+                else:
+                    raise
 
             # Set agent identity and values - using pattern from nexus.py
             if hasattr(self.agent_session, 'memory') and hasattr(self.agent_session.memory, 'set_core_values'):
@@ -1559,6 +1762,14 @@ You can also type regular messages to chat with the AI assistant."""
                 }
                 self.agent_session.memory.set_core_values(agent_values)
                 self.add_system_message("🤖 Agent identity and values configured")
+
+            # Attempt to load existing memory state from storage (non-fatal if empty)
+            try:
+                if hasattr(self.agent_session, 'memory') and hasattr(self.agent_session.memory, 'load_from_storage'):
+                    self.agent_session.memory.load_from_storage()
+            except Exception as e:
+                # Avoid hard failure on corrupted or missing LanceDB files. We'll continue with markdown-only content.
+                self.add_system_message(f"⚠️ Memory load warning: {e}")
 
             # Update agent state
             self.agent_state.tools_available = [tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in self.agent_session.tools]
@@ -1573,6 +1784,9 @@ You can also type regular messages to chat with the AI assistant."""
 
             # Update side panel
             self.update_side_panel_content()
+
+            # Load previous chat history if available
+            self.load_chat_history()
 
             return True
 
