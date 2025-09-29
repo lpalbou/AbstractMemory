@@ -73,6 +73,11 @@ class AgentState:
     core_size: int = 0
     # Additional metrics
     last_activity: Any = None
+    # Embedding tracking
+    embedding_model: str = None  # Model name if active
+    embedding_status: str = "disabled"  # enabled, disabled, offline, error
+    embedding_dim: int = 0  # Dimension of embeddings
+    storage_backend: str = "markdown"  # markdown, dual
 
     def __post_init__(self):
         if self.tools_available is None:
@@ -575,15 +580,46 @@ class EnhancedTUI:
             "",
         ]
 
-        # Show LLM information
+        # Show LLM & Embeddings information with enhanced UI/UX
         if self.agent_session:
+            # LLM Status with better visual hierarchy
+            llm_status = "✅ Connected" if self.agent_session else "⚠️ Disconnected"
             content_lines.extend([
-                "🧠 LLM Connection",
-                f"Model: {self.model}",
-                f"Provider: {self.provider}",
-                f"Status: Connected",
-                "",
+                "🧠 AI Models",
+                f"├─ LLM: {llm_status}",
+                f"│  ├─ {self.model}",
+                f"│  └─ {self.provider}",
             ])
+
+            # Embeddings status with clear visual indicators
+            if self.agent_state.embedding_status == "enabled":
+                embed_icon = "✅"
+                embed_status = "Active"
+            elif self.agent_state.embedding_status == "offline":
+                embed_icon = "📵"
+                embed_status = "Offline"
+            elif self.agent_state.embedding_status == "error":
+                embed_icon = "❌"
+                embed_status = "Error"
+            else:
+                embed_icon = "⭕"
+                embed_status = "Disabled"
+
+            content_lines.append(f"├─ Embeddings: {embed_icon} {embed_status}")
+
+            if self.agent_state.embedding_model:
+                content_lines.append(f"│  ├─ {self.agent_state.embedding_model}")
+                content_lines.append(f"│  └─ {self.agent_state.embedding_dim}D vectors")
+            elif self.agent_state.embedding_status == "offline":
+                content_lines.append(f"│  └─ No cached model")
+            else:
+                content_lines.append(f"│  └─ Not available")
+
+            # Storage backend info
+            storage_icon = "🗂️" if self.agent_state.storage_backend == "dual" else "📝"
+            content_lines.append(f"└─ Storage: {storage_icon} {self.agent_state.storage_backend.title()}")
+
+            content_lines.append("")
 
             # Show conversation stats
             conv_count = len(self.actual_conversation_history)
@@ -648,8 +684,10 @@ class EnhancedTUI:
             ])
         else:
             content_lines.extend([
-                "🧠 LLM Connection",
-                "Status: Not Connected",
+                "🧠 AI Models",
+                "├─ LLM: ⚠️ Not Connected",
+                "├─ Embeddings: ⭕ Disabled",
+                "└─ Storage: 📝 Local Only",
                 "",
                 "💬 Conversation",
                 "Mode: Echo Only",
@@ -841,8 +879,10 @@ class EnhancedTUI:
             self.update_side_panel_content()
 
         except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
+            error_details = ""
+            if self.detail_level >= 4:  # Only get traceback in raw mode
+                import traceback
+                error_details = traceback.format_exc()
             self.add_system_message(f"Error in ReAct processing: {e}")
             if self.detail_level >= 4:  # Show full error in raw mode
                 self.add_system_message(f"Debug details: {error_details}")
@@ -1618,10 +1658,9 @@ You can also type regular messages to chat with the AI assistant."""
             memory_config.enable_memory_tools = True
             memory_config.enable_self_editing = True
 
-            # Disable semantic embeddings if offline and model not cached
-            # This prevents attempts to download models
+            # Check embeddings availability based on offline mode
             if os.environ.get('TRANSFORMERS_OFFLINE') == '1':
-                # Check if the model is already cached
+                # In offline mode, check if model is cached
                 cache_dir = os.path.expanduser('~/.cache/huggingface/hub')
                 model_cached = False
                 if os.path.exists(cache_dir):
@@ -1629,13 +1668,44 @@ You can also type regular messages to chat with the AI assistant."""
                     for item in os.listdir(cache_dir):
                         if 'all-MiniLM-L6-v2' in item or 'sentence-transformers' in item:
                             model_cached = True
+                            # Determine the actual model name
+                            if 'all-MiniLM-L6-v2' in item:
+                                self.agent_state.embedding_model = "all-MiniLM-L6-v2"
+                                self.agent_state.embedding_dim = 384
+                            elif 'all-mpnet-base-v2' in item:
+                                self.agent_state.embedding_model = "all-mpnet-base-v2"
+                                self.agent_state.embedding_dim = 768
                             break
 
                 if not model_cached:
                     self.add_system_message("⚠️ Embedding model not cached - disabling semantic features")
                     memory_config.semantic_threshold = 999  # Effectively disable semantic memory
+                    self.agent_state.embedding_status = "offline"
+                    self.agent_state.embedding_model = None
                 else:
                     self.add_system_message("✅ Using cached embedding model for semantic features")
+                    self.agent_state.embedding_status = "enabled"
+            else:
+                # Online mode - embeddings should be available but check cache first
+                cache_dir = os.path.expanduser('~/.cache/huggingface/hub')
+                if os.path.exists(cache_dir):
+                    for item in os.listdir(cache_dir):
+                        if 'all-MiniLM-L6-v2' in item:
+                            self.agent_state.embedding_model = "all-MiniLM-L6-v2"
+                            self.agent_state.embedding_dim = 384
+                            break
+                        elif 'all-mpnet-base-v2' in item:
+                            self.agent_state.embedding_model = "all-mpnet-base-v2"
+                            self.agent_state.embedding_dim = 768
+                            break
+
+                if not self.agent_state.embedding_model:
+                    # Will try to download if online
+                    self.agent_state.embedding_model = "all-MiniLM-L6-v2"
+                    self.agent_state.embedding_dim = 384
+
+                self.agent_state.embedding_status = "enabled"
+                self.add_system_message("✅ Embeddings enabled (online mode)")
 
             # Create tools list
             tools = []
@@ -1715,12 +1785,14 @@ You can also type regular messages to chat with the AI assistant."""
                     "uri": str(lancedb_uri),
                     "semantic_threshold": 1
                 }
+                self.agent_state.storage_backend = "dual"
             else:
                 storage_config = {
                     "path": str(memory_dir),
                     "storage": "markdown",
                     "semantic_threshold": 999  # Effectively disable semantic features
                 }
+                self.agent_state.storage_backend = "markdown"
 
             # Create memory session with error handling for offline mode
             try:
@@ -1741,6 +1813,11 @@ You can also type regular messages to chat with the AI assistant."""
                         "semantic_threshold": 999
                     }
                     memory_config.semantic_threshold = 999
+
+                    # Update agent state to reflect fallback
+                    self.agent_state.embedding_status = "error"
+                    self.agent_state.embedding_model = None
+                    self.agent_state.storage_backend = "markdown"
 
                     self.agent_session = MemorySession(
                         provider,
@@ -1791,7 +1868,6 @@ You can also type regular messages to chat with the AI assistant."""
             return True
 
         except Exception as e:
-            import traceback
             error_msg = f"Agent initialization failed: {e}"
             self.add_system_message(error_msg)
             self.add_system_message("Running in limited mode")
