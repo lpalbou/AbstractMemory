@@ -1227,6 +1227,9 @@ class EnhancedTUI:
                 else:
                     self.agent_state.max_tokens = 8192
 
+            # todo : fix logic above; we have abstractcore.architecture who normally detect that
+            self.agent_state.max_tokens = 80000
+
     def handle_command(self, command):
         """Handle slash commands."""
         parts = command.lower().split()
