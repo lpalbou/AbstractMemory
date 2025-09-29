@@ -21,6 +21,8 @@ import threading
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['HF_DATASETS_OFFLINE'] = '1'
+# Disable parallelism to avoid fork-related warnings
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 # Point to the default cache directory
 os.environ.setdefault('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
 os.environ.setdefault('SENTENCE_TRANSFORMERS_HOME', os.path.expanduser('~/.cache/huggingface'))
