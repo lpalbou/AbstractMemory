@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 import subprocess
+import threading
 
 # Force offline mode for Hugging Face models (use cached models only)
 # This MUST be set before any imports that might use transformers
@@ -138,6 +139,10 @@ class EnhancedTUI:
 
         # Status line for current operations
         self.current_status = "Ready"
+
+        # Ephemeral message for clipboard feedback (bottom of side panel)
+        self.clipboard_feedback = ""
+        self.feedback_timer = None
 
         self.setup_ui()
 
@@ -366,24 +371,33 @@ class EnhancedTUI:
                 # else: empty - do nothing
 
         @self.kb.add('c-c')
-        def copy_last_assistant_message(event):
-            """Copy the last assistant message to clipboard with Ctrl+C"""
-            if not self.actual_conversation_history:
+        def copy_conversation_for_sft(event):
+            """Copy user query and assistant response in SFT format to clipboard with Ctrl+C"""
+            if len(self.actual_conversation_history) < 2:
                 return
 
-            # Find the last assistant message
-            for msg in reversed(self.actual_conversation_history):
-                if msg["role"] == "assistant":
-                    try:
-                        subprocess.run(['pbcopy'], input=msg["content"].encode('utf-8'), check=True)
-#                        self.add_system_message("✅ Copied last assistant message to clipboard")
-                    except subprocess.CalledProcessError:
-#                        self.add_system_message("❌ Failed to copy to clipboard")
-                        pass
-                    return
-
-            # If no assistant message found
-#            self.add_system_message("⚠️ No assistant message to copy")
+            # Find the last user-assistant pair
+            user_msg = None
+            assistant_msg = None
+            
+            # Traverse backwards to find the most recent user-assistant pair
+            for i in range(len(self.actual_conversation_history) - 1, 0, -1):
+                if (self.actual_conversation_history[i]["role"] == "assistant" and 
+                    self.actual_conversation_history[i-1]["role"] == "user"):
+                    user_msg = self.actual_conversation_history[i-1]["content"]
+                    assistant_msg = self.actual_conversation_history[i]["content"]
+                    break
+            
+            if user_msg and assistant_msg:
+                # Format for supervised fine-tuning
+                sft_format = f"[INST] {user_msg} [/INST]\n{assistant_msg}"
+                try:
+                    subprocess.run(['pbcopy'], input=sft_format.encode('utf-8'), check=True)
+                    self.set_clipboard_feedback("✅ Copied user query and assistant response in SFT format")
+                except subprocess.CalledProcessError:
+                    self.set_clipboard_feedback("❌ Failed to copy to clipboard")
+            else:
+                self.set_clipboard_feedback("⚠️ No user-assistant pair found to copy")
 
         # Note: Mouse wheel scrolling is handled automatically by TextArea when mouse_support=True
 
@@ -578,6 +592,21 @@ class EnhancedTUI:
         except asyncio.CancelledError:
             pass
 
+    def set_clipboard_feedback(self, message):
+        """Set ephemeral feedback message at bottom of side panel"""
+        self.clipboard_feedback = message
+        # Schedule to clear the feedback after 3 seconds
+        if self.feedback_timer:
+            self.feedback_timer.cancel()
+        self.feedback_timer = threading.Timer(3.0, self.clear_clipboard_feedback)
+        self.feedback_timer.start()
+        self.update_side_panel_content()
+
+    def clear_clipboard_feedback(self):
+        """Clear the ephemeral feedback message"""
+        self.clipboard_feedback = ""
+        self.update_side_panel_content()
+
     def update_side_panel_content(self):
         """Update side panel with current agent state and time."""
         # Get current time
@@ -758,6 +787,12 @@ class EnhancedTUI:
                 f"Memory Path: {self.memory_path}",
                 f"Session Active: {self.agent_session is not None}",
             ])
+
+        # Add ephemeral feedback message at bottom if present
+        if self.clipboard_feedback:
+            content_lines.append("")
+            # Use HTML-like small tag for subtle styling
+            content_lines.append(f"{self.clipboard_feedback}")
 
         # Update side panel TextArea (temporarily make writable)
         was_readonly = self.side_panel_textarea.read_only
@@ -1961,7 +1996,7 @@ Final Answer: [Write naturally and experientially about what you accomplished an
 
         # Initialize agent in background
         if self.init_agent():
-            self.add_system_message("Ready for conversation!")
+            self.add_system_message("Ready for conversation!\n")
         else:
             self.add_system_message("Running in limited mode (no agent)")
 
