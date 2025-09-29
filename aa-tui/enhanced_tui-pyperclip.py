@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
-import subprocess
+import pyperclip
 
 # Force offline mode for Hugging Face models (use cached models only)
 # This MUST be set before any imports that might use transformers
@@ -374,16 +374,12 @@ class EnhancedTUI:
             # Find the last assistant message
             for msg in reversed(self.actual_conversation_history):
                 if msg["role"] == "assistant":
-                    try:
-                        subprocess.run(['pbcopy'], input=msg["content"].encode('utf-8'), check=True)
-#                        self.add_system_message("✅ Copied last assistant message to clipboard")
-                    except subprocess.CalledProcessError:
-#                        self.add_system_message("❌ Failed to copy to clipboard")
-                        pass
+                    pyperclip.copy(msg["content"])
+                    self.add_system_message("✅ Copied last assistant message to clipboard")
                     return
 
             # If no assistant message found
-#            self.add_system_message("⚠️ No assistant message to copy")
+            self.add_system_message("⚠️ No assistant message to copy")
 
         # Note: Mouse wheel scrolling is handled automatically by TextArea when mouse_support=True
 

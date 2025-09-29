@@ -573,3 +573,10 @@ Nexus
 - /system (prompt) : visualize or change the prompt
 
 
+
+
+NEXUS
+- improve UI
+- improve tooling ?
+- test streaming
+- gpu ùmemory / processing visual cues
