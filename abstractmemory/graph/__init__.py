@@ -1,1 +1,0 @@
-# Temporal knowledge graph implementation

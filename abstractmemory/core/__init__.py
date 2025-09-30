@@ -1,1 +1,0 @@
-# Core memory interfaces and temporal models

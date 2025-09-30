@@ -340,9 +340,7 @@ class StructuredResponseHandler:
         Returns:
             Note ID if saved, None otherwise
         """
-        if not self.memory_session:
-            return None
-
+        # Note: Filesystem-based, doesn't require memory_session
         try:
             # Extract context
             user_id = context.get("user_id", "unknown")

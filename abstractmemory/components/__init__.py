@@ -1,1 +1,0 @@
-# Memory components for four-tier architecture
