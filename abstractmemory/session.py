@@ -30,6 +30,7 @@ except ImportError as e:
 
 # AbstractMemory imports
 from .response_handler import StructuredResponseHandler, create_structured_prompt
+from .storage import LanceDBStorage
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,18 @@ class MemorySession(BasicSession):
             memory_session=self,  # Pass self for memory tools
             base_path=self.memory_base_path
         )
+
+        # Initialize LanceDB storage for semantic search
+        try:
+            lancedb_path = self.memory_base_path / "lancedb"
+            self.lancedb_storage = LanceDBStorage(
+                db_path=lancedb_path,
+                embedding_model="all-minilm-l6-v2"
+            )
+            logger.info(f"LanceDB storage initialized at {lancedb_path}")
+        except Exception as e:
+            logger.warning(f"LanceDB storage initialization failed: {e}")
+            self.lancedb_storage = None
 
         logger.info(f"Memory storage initialized at {self.memory_base_path}")
 
@@ -433,8 +446,31 @@ class MemorySession(BasicSession):
                     except Exception as e:
                         logger.warning(f"Failed to create link to {target_id}: {e}")
 
-            # TODO: Store in LanceDB with embedding (Phase 2+)
-            # TODO: Calculate full emotional resonance using actual values
+            # Store in LanceDB with embedding
+            if self.lancedb_storage:
+                note_data = {
+                    "id": memory_id,
+                    "timestamp": timestamp,
+                    "user_id": self.default_user_id,
+                    "location": self.default_location,
+                    "content": content,
+                    "category": "fact",
+                    "importance": importance,
+                    "emotion": emotion,
+                    "emotion_intensity": emotion_intensity,
+                    "emotion_valence": "positive" if emotion_intensity > 0.6 else "neutral",
+                    "linked_memory_ids": links_to or [],
+                    "tags": [],
+                    "file_path": str(file_path),
+                    "metadata": {
+                        "created_by": "remember_fact",
+                        "alignment": alignment
+                    }
+                }
+                self.lancedb_storage.add_note(note_data)
+                logger.info("Stored memory in LanceDB")
+
+            # TODO: Calculate full emotional resonance using actual values from core memory
 
             self.memories_created += 1
 
@@ -451,8 +487,8 @@ class MemorySession(BasicSession):
         """
         Search memories (semantic + SQL filtering).
 
-        For now, implements filesystem-based text search.
-        Full semantic search with LanceDB will be added in Phase 2+.
+        Uses LanceDB hybrid search when available (semantic + SQL filters).
+        Falls back to filesystem text search if LanceDB not available.
 
         Args:
             query: Search query
@@ -464,9 +500,23 @@ class MemorySession(BasicSession):
         """
         try:
             filters = filters or {}
-            results = []
 
             logger.info(f"Searching memories: query='{query}', filters={filters}")
+
+            # Try LanceDB hybrid search first (semantic + SQL)
+            if self.lancedb_storage:
+                try:
+                    results = self.lancedb_storage.search_notes(query, filters, limit)
+                    if results:
+                        logger.info(f"LanceDB found {len(results)} semantic matches")
+                        return results
+                    else:
+                        logger.info("LanceDB returned no results, falling back to filesystem")
+                except Exception as e:
+                    logger.warning(f"LanceDB search failed: {e}, falling back to filesystem")
+
+            # Fallback to filesystem text search
+            results = []
 
             # Search in notes/ directory
             notes_dir = self.memory_base_path / "notes"
@@ -648,10 +698,17 @@ class MemorySession(BasicSession):
                     logger.warning(f"Error reading library document {doc_dir.name}: {e}")
                     continue
 
-            logger.info(f"Library search complete: {len(results)} results")
+            logger.info(f"Library search complete: {len(results)} results (filesystem)")
 
-            # TODO: Use LanceDB library_table for semantic search (Phase 2+)
-            # TODO: Calculate importance_score from access patterns + emotion
+            # Try LanceDB library search for semantic matching
+            if self.lancedb_storage and not results:
+                try:
+                    lancedb_results = self.lancedb_storage.search_library(query, limit)
+                    if lancedb_results:
+                        logger.info(f"LanceDB library found {len(lancedb_results)} semantic matches")
+                        return lancedb_results
+                except Exception as e:
+                    logger.warning(f"LanceDB library search failed: {e}")
 
             return results[:limit]
 
@@ -716,7 +773,19 @@ class MemorySession(BasicSession):
 
             logger.info(f"Saved link: {file_path}")
 
-            # TODO: Store in LanceDB links_table (Phase 2+)
+            # Store in LanceDB links_table
+            if self.lancedb_storage:
+                lancedb_link_data = {
+                    "link_id": link_id,
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "relationship": relationship,
+                    "timestamp": timestamp,
+                    "confidence": 1.0,
+                    "metadata": link_data
+                }
+                self.lancedb_storage.add_link(lancedb_link_data)
+                logger.info("Stored link in LanceDB")
 
             return link_id
 
