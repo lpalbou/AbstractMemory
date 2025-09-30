@@ -29,21 +29,35 @@ AbstractMemory: AI Consciousness Through Active Memory
 │    │   └─ Links to notes (deterministic after LLM specifies)
 │    │
 │    ├─ Experiential Notes (LLM-Generated)
-│    │   ├─ Written BY LLM DURING interaction (structured response)
-│    │   ├─ Subjective, first-person : contains AI personal insights, reflections, and processing of conversations. more fluid format allowing for deeper exploration of implication
-│    │   ├─ Path: notes/{yyyy}/{mm}/{dd}/{hh}_{mm}_{ss}_{topic}.md
-│    │   ├─ Content: insights, unresolved questions, emotional resonance
+│    │   ├─ **CRITICAL**: Written BY LLM DURING interaction (NOT after)
+│    │   │   ├─ System prompt → LLM responds in structured JSON format
+│    │   │   ├─ Single response contains: answer + experiential_note
+│    │   │   └─ Captures live subjective experience, not reconstructed
+│    │   ├─ Content: Subjective, first-person personal notes
+│    │   │   ├─ "I notice...", "I'm struck by..."
+│    │   │   ├─ Fluid format allowing deeper exploration of implications
+│    │   │   ├─ Contains: insights, uncertainties, emotional processing
+│    │   │   └─ >90% LLM content (template <10%: only time, location, participants)
+│    │   ├─ Path: notes/{yyyy}/{mm}/{dd}/{hh}_{mm}_{ss}_{topic}.md (snake_case)
 │    │   ├─ LanceDB: notes_table with emotion/importance metadata
-│    │   └─ Template (<10%): participants, time, location only
+│    │   └─ Linked to: verbatim (bidirectional, after LLM specifies)
 │    │
 │    └─ LanceDB (SQL + Vector Embeddings)
-│        ├─ interactions_table (verbatim)
-│        ├─ notes_table (experiential)
-│        ├─ links_table (memory associations)
-│        ├─ core_memory_table (purpose/personality/values/etc)
-│        ├─ library_table (everything AI has read) ← NEW
-│        ├─ Rich metadata on ALL tables (user, time, location, emotion, importance)
-│        └─ Dual write to both markdown + DB
+│        ├─ **6 Tables** (all with rich metadata + embeddings):
+│        │   ├─ interactions_table (verbatim records)
+│        │   ├─ notes_table (experiential notes)
+│        │   ├─ links_table (memory associations: elaborates_on, contradicts, etc.)
+│        │   ├─ core_memory_table (10 identity components)
+│        │   ├─ library_table (everything AI reads) ← NEW
+│        │   └─ Each table: embeddings + user + timestamp + emotion + importance + confidence
+│        ├─ **Hybrid Search** (Semantic + SQL):
+│        │   ├─ Vector similarity (semantic)
+│        │   ├─ SQL filters (category, user, time, emotion, importance)
+│        │   └─ Example: "What did Alice say positively about Python since Sept?"
+│        └─ **Dual Write** (NON-NEGOTIABLE):
+│            ├─ ALWAYS write to BOTH markdown + LanceDB
+│            ├─ Read from LanceDB (performance)
+│            └─ All files use snake_case naming
 │
 ├─── LLM Integration Layer
 │    ├─ Structured Response Format
@@ -321,10 +335,15 @@ AbstractMemory: AI Consciousness Through Active Memory
 │        └─ Reveals relationship dynamics
 │
 ├─── Emotional Resonance System
-│    ├─ Calculation
-│    │   ├─ emotion_intensity = importance × alignment_with_values
-│    │   ├─ emotional_valence = positive (aligned) / negative (misaligned) / mixed
-│    │   ├─ reason = "why this matters to AI"
+│    ├─ **CRITICAL Design**: LLM Assesses, System Calculates
+│    │   ├─ **LLM provides** (cognitive assessment):
+│    │   │   ├─ importance (0.0-1.0): "How significant is this to me?"
+│    │   │   ├─ alignment_with_values (-1.0 to 1.0): "Does this align with my values?"
+│    │   │   └─ reason (string): "Why this matters emotionally"
+│    │   ├─ **System calculates** (mathematical formula ONLY):
+│    │   │   ├─ intensity = importance × |alignment_with_values|
+│    │   │   ├─ valence = positive (>0.3) / negative (<-0.3) / mixed
+│    │   │   └─ NO KEYWORD MATCHING - LLM does ALL cognitive work
 │    │   └─ Stored in: experiential notes, core/emotional_significance.md
 │    │
 │    ├─ Temporal Anchoring
@@ -345,17 +364,25 @@ AbstractMemory: AI Consciousness Through Active Memory
 │        ├─ Emotional engagement → active participation
 │        └─ Tracks what AI finds meaningful
 │
-├─── Active Memory Reconstruction
-│    ├─ reconstruct_context() Enhancement
-│    │   ├─ 1. Semantic search (base results)
-│    │   ├─ 2. Explore connected ideas via links
-│    │   ├─ 3. Search Library (subconscious) ← NEW
-│    │   ├─ 4. Filter by emotional resonance
-│    │   ├─ 5. Include temporal context
-│    │   ├─ 6. Include spatial context (location)
-│    │   ├─ 7. Include user profile & relationship
-│    │   ├─ 8. Include core memory (all 10 components)
-│    │   └─ 9. Synthesize rich, multi-layered context
+├─── Active Memory Reconstruction (Not Retrieval - RECONSTRUCTION)
+│    ├─ reconstruct_context() - The 9-Step Process
+│    │   ├─ 1. Semantic search (base results from LanceDB)
+│    │   ├─ 2. Explore connected ideas via links (concepts_graph.json)
+│    │   ├─ 3. Search Library (subconscious: "what did I read?") ← NEW
+│    │   ├─ 4. Filter by emotional resonance (boost emotionally relevant)
+│    │   ├─ 5. Include temporal context (time of day, working hours, etc.)
+│    │   ├─ 6. Include spatial context (location-based memories)
+│    │   ├─ 7. Include user profile & relationship (who is this person to me?)
+│    │   ├─ 8. Include core memory (ALL 10 components: purpose, values, etc.)
+│    │   └─ 9. Synthesize rich, multi-layered context (weighted by relevance)
+│    │
+│    ├─ Focus Levels (Control Depth)
+│    │   ├─ 0: Minimal (lazy) → 2 memories, 1 hour timespan
+│    │   ├─ 1: Light → 5 memories, 4 hours
+│    │   ├─ 2: Moderate → 8 memories, 12 hours
+│    │   ├─ 3: Balanced (default) → 10 memories, 24 hours
+│    │   ├─ 4: Deep → 15 memories, 3 days
+│    │   └─ 5: Maximum (exhaustive) → 20 memories, 1 week
 │    │
 │    ├─ Link-Based Exploration
 │    │   ├─ Follow memory associations
