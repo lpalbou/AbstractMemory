@@ -248,25 +248,40 @@ class StructuredResponseHandler:
         return results
 
     def _action_remember(self, action: Dict, context: Dict) -> Dict:  # noqa: ARG002
-        """Execute 'remember' action."""
+        """Execute 'remember' action - LLM decides to remember something important."""
         content = action.get("content", "")
         importance = action.get("importance", 0.5)
+        alignment_with_values = action.get("alignment_with_values", 0.5)  # LLM-assessed
+        reason = action.get("reason", "")  # LLM-provided reason
         emotion = action.get("emotion", "neutral")
-        _links_to = action.get("links_to", [])  # Will use in future
+        links_to = action.get("links_to", [])
 
         if not self.memory_session:
             return {"status": "skipped", "message": "No memory session"}
 
-        # Store using memory session
-        # For now, just log (will implement when MemorySession has remember_fact)
-        self.logger.info(f"Remember: {content[:100]}... (importance={importance}, emotion={emotion})")
+        # Call memory session's remember_fact with LLM-assessed values
+        try:
+            memory_id = self.memory_session.remember_fact(
+                content=content,
+                importance=importance,
+                alignment_with_values=alignment_with_values,
+                reason=reason,
+                emotion=emotion,
+                links_to=links_to if links_to else None
+            )
 
-        return {
-            "status": "success",
-            "message": f"Remembered: {content[:50]}...",
-            "importance": importance,
-            "emotion": emotion
-        }
+            self.logger.info(f"Remembered: {memory_id} (importance={importance}, alignment={alignment_with_values:.2f})")
+
+            return {
+                "status": "success",
+                "memory_id": memory_id,
+                "message": f"Remembered: {content[:50]}...",
+                "importance": importance,
+                "alignment_with_values": alignment_with_values
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to remember: {e}")
+            return {"status": "error", "message": str(e)}
 
     def _action_link(self, action: Dict, context: Dict) -> Dict:  # noqa: ARG002
         """Execute 'link' action."""
@@ -496,8 +511,10 @@ def create_structured_prompt() -> str:
       "action": "remember",
       "content": "What you want to remember",
       "importance": 0.9,
+      "alignment_with_values": 0.8,
+      "reason": "Why this matters and how it aligns with what you value",
       "emotion": "curiosity",
-      "links_to": ["int_123"]
+      "links_to": ["mem_previous_123"]
     }
   ],
 

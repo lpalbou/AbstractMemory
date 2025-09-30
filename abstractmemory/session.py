@@ -372,19 +372,24 @@ class MemorySession(BasicSession):
 
     def remember_fact(self,
                      content: str,
-                     importance: float = 0.5,
+                     importance: float,
+                     alignment_with_values: float = 0.5,
+                     reason: str = "",
                      emotion: str = "neutral",
                      links_to: Optional[List[str]] = None) -> str:
         """
-        Remember a fact/insight (called by LLM via memory_actions).
+        Remember a fact/insight (LLM-initiated agency).
 
-        This gives LLM AGENCY over its own memory.
-        The LLM decides what to remember and how important it is.
+        This is called when LLM decides something is worth remembering.
+        The LLM provides cognitive assessment (importance, alignment).
+        The system only calculates: intensity = importance × |alignment|.
 
         Args:
             content: What to remember
-            importance: 0.0-1.0 (how significant)
-            emotion: curiosity, excitement, concern, etc.
+            importance: 0.0-1.0 - LLM-assessed significance
+            alignment_with_values: -1.0 to 1.0 - LLM-assessed alignment with values
+            reason: LLM explanation of emotional significance
+            emotion: curiosity, excitement, concern, etc. (for backwards compat)
             links_to: Optional list of memory IDs to link to
 
         Returns:
@@ -407,16 +412,14 @@ class MemorySession(BasicSession):
             file_path = date_path / filename
 
             # Calculate emotional resonance (importance × alignment)
-            # Phase 2 CORRECTED: LLM provides importance and alignment_with_values
-            # For now, use default alignment until structured response provides it
-            alignment_with_values = 0.5  # Default - will come from LLM in structured response
-            emotion_resonance = calculate_emotional_resonance(importance, alignment_with_values, f"Memory: {emotion}")
+            # Phase 2: LLM provides importance and alignment_with_values - we only do the math
+            emotion_resonance = calculate_emotional_resonance(importance, alignment_with_values, reason or f"Memory: {emotion}")
             emotion_intensity = emotion_resonance["intensity"]
             emotion_valence = emotion_resonance["valence"]
             emotion_reason = emotion_resonance["reason"]
             alignment = alignment_with_values  # For backwards compat with variable name
 
-            logger.debug(f"Emotion calculated: intensity={emotion_intensity:.2f}, valence={emotion_valence}, alignment={alignment:.2f}")
+            logger.debug(f"Emotion calculated (LLM-assessed): intensity={emotion_intensity:.2f}, valence={emotion_valence}, alignment={alignment:.2f}")
 
             # Create markdown content
             markdown_content = f"""# Memory: {topic}
