@@ -37,6 +37,7 @@ from .temporal_anchoring import (
     create_temporal_anchor,
     get_temporal_anchors
 )
+from .memory_structure import initialize_memory_structure
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,13 @@ class MemorySession(BasicSession):
             self.lancedb_storage = None
 
         logger.info(f"Memory storage initialized at {self.memory_base_path}")
+
+        # Initialize complete memory filesystem structure (all components)
+        try:
+            init_status = initialize_memory_structure(self.memory_base_path, user_id=self.default_user_id)
+            logger.info(f"Memory structure initialized: {init_status}")
+        except Exception as e:
+            logger.warning(f"Memory structure initialization had issues: {e}")
 
         # Core memory state (10 components - emergent properties)
         self.core_memory = {
