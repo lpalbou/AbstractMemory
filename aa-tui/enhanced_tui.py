@@ -100,7 +100,7 @@ class CommandCompleter(Completer):
 
     def __init__(self):
         self.commands = [
-            '/help', '/status', '/memory', '/tools', '/clear', '/reset', '/quit'
+            '/help', '/status', '/memory', '/tools', '/clear', '/reset', '/quit', '/react'
         ]
 
     def get_completions(self, document, complete_event):
@@ -148,6 +148,10 @@ class EnhancedTUI:
 
         # Streaming mode flag
         self.stream_mode = False
+
+        # ReAct configuration (can be modified via /react command)
+        self.react_max_turns = 25
+        self.react_max_input_tokens = 2000
 
         self.setup_ui()
 
@@ -890,9 +894,10 @@ class EnhancedTUI:
 
             # Configure ReAct loop (keeps calls off the UI thread)
             config = ReactConfig(
-                max_iterations=25,
+                max_iterations=self.react_max_turns,
                 observation_display_limit=500,
-                include_memory=True
+                include_memory=True,
+                context_tokens_limit=self.react_max_input_tokens
             )
 
             # Create ReAct loop instance
@@ -1342,6 +1347,7 @@ class EnhancedTUI:
 /reset - Reset all memory (conversation + stored memory)
 /quit - Exit application
 /stream - Toggle streaming mode
+/react [<max_turns> <max_tokens>] - View or set ReAct configuration
 
 You can also type regular messages to chat with the AI assistant."""
             # Show help in a temporary popup or just in conversation
@@ -1369,8 +1375,51 @@ You can also type regular messages to chat with the AI assistant."""
             self.stream_mode = not self.stream_mode
             status = "enabled" if self.stream_mode else "disabled"
             self.add_system_message(f"✅ Streaming mode {status}")
+        elif cmd == '/react':
+            self.handle_react_command(parts)
         else:
             self.add_system_message(f"Unknown command: {cmd}. Type /help for available commands.")
+
+    def handle_react_command(self, parts):
+        """Handle /react command to show or set ReAct configuration."""
+        if len(parts) == 1:
+            # No parameters - display current configuration
+            DIM = '\033[2m'
+            RESET = '\033[0m'
+            info = f"""{DIM}ReAct Configuration:
+Max Turns: {self.react_max_turns}
+Max Input Tokens: {self.react_max_input_tokens}
+
+Usage: /react <max_turns> <max_input_tokens>
+Example: /react 15 3000{RESET}"""
+            self._append_to_conversation(info + '\n')
+        elif len(parts) == 3:
+            # Set both parameters
+            try:
+                max_turns = int(parts[1])
+                max_tokens = int(parts[2])
+
+                # Validation
+                if max_turns < 1 or max_turns > 100:
+                    self.add_system_message("❌ Max turns must be between 1 and 100")
+                    return
+                if max_tokens < 100 or max_tokens > 50000:
+                    self.add_system_message("❌ Max input tokens must be between 100 and 50000")
+                    return
+
+                # Update configuration
+                self.react_max_turns = max_turns
+                self.react_max_input_tokens = max_tokens
+
+                self.add_system_message(
+                    f"✅ ReAct configuration updated:\n"
+                    f"   Max turns: {max_turns}\n"
+                    f"   Max input tokens: {max_tokens}"
+                )
+            except ValueError:
+                self.add_system_message("❌ Invalid parameters. Usage: /react <max_turns> <max_input_tokens>")
+        else:
+            self.add_system_message("❌ Invalid usage. Use '/react' to view or '/react <max_turns> <max_tokens>' to set")
 
     def add_message(self, sender, message):
         """Add a message to the conversation."""
@@ -1985,14 +2034,43 @@ You can also type regular messages to chat with the AI assistant."""
         return f"""You are Nexus, an AI assistant with persistent memory and identity.
 
 ## CRITICAL: Iterative ReAct Format ##
-You are part of an iterative ReAct loop. In each iteration, you should:
+You are part of an iterative ReAct loop. Each iteration builds on previous discoveries.
 
-1. If you need to use a tool, respond with:
-Thought: [what you're thinking]
+## SYNTHESIS-FIRST REASONING ##
+
+Before planning any action, you MUST synthesize your understanding:
+
+**Structure your Thought as:**
+```
+Thought:
+[Synthesis] What I've learned so far: <summarize key discoveries from ALL previous observations>
+[Patterns] Connections I see: <identify patterns across multiple observations>
+[Assessment] Can I answer the question now? <Yes/No and why>
+[Next Action] Therefore, I will: <specific next step that builds on previous findings>
+```
+
+**Example:**
+```
+Thought:
+[Synthesis] From my previous observations, I've learned that file1.py and file2.py both implement data validation using regex patterns, and both handle API rate limiting with exponential backoff.
+[Patterns] I see a consistent pattern: defensive programming with validation + graceful degradation for external services.
+[Assessment] I cannot fully answer yet because I need to verify if file3.py continues these architectural patterns to confirm they're project-wide conventions.
+[Next Action] Therefore, I will read file3.py to validate whether these patterns hold across the entire codebase.
+Action: read_file
+Action Input: {{"filename": "file3.py"}}
+```
+
+## Response Formats ##
+
+1. If you need to use a tool:
+Thought: [structured as above with Synthesis/Patterns/Assessment/Next Action]
 Action: [exact tool name]
 Action Input: {{"parameter": "value"}}
 
-2. If you can answer directly, respond with:
+2. If you can answer directly:
+Thought:
+[Synthesis] Complete summary of all findings
+[Assessment] I can now answer because: <clear reasoning>
 Final Answer: [your complete response]
 
 ## Available Tools:
@@ -2007,23 +2085,80 @@ You have access to these tools (use exact names):
 ## Important Notes:
 - Use JSON format for Action Input: {{"parameter": "value"}}
 - You will receive real tool results as "Observation:"
-- Continue reasoning until you can provide a Final Answer
-- Keep each iteration focused - don't try to do everything at once
+- ALWAYS synthesize before acting - don't just execute the next tool
+- Build on previous discoveries - each cycle should advance understanding
+- Connect insights across observations to identify patterns
 
-## Example Flow:
-Thought: I need to check what files are available first.
+## Meta-Cognitive Questions to Ask Yourself:
+
+Before each action:
+1. **Clarity**: "What exactly am I trying to learn or accomplish right now?"
+2. **Necessity**: "Do I NEED this information, or can I answer with what I have?"
+3. **Efficiency**: "What's the MOST DIRECT way to get what I need?"
+4. **Building**: "How does this action build on what I've already discovered?"
+
+After receiving observations:
+1. **Synthesis**: "What are the KEY insights from this observation?"
+2. **Patterns**: "Does this connect to or contrast with previous findings?"
+3. **Completeness**: "Do I have enough to answer, or what's specifically missing?"
+4. **Strategy**: "Am I making progress or going in circles?"
+
+## Example Flow with Synthesis:
+
+Cycle 1:
+Thought:
+[Synthesis] I need to start by understanding what files exist in this project.
+[Assessment] I cannot answer yet - I need to discover available files first.
+[Next Action] List the files to see what's available.
 Action: list_files
 Action Input: {{"directory_path": "."}}
 
-[System will execute tool and provide real Observation]
+Observation: Found files: app.py, utils.py, config.py
 
-Thought: Now I can read the specific file I found.
+Cycle 2:
+Thought:
+[Synthesis] I've discovered 3 Python files. Based on the names, app.py likely contains the main application logic.
+[Patterns] Standard Python project structure: app (main), utils (helpers), config (settings).
+[Assessment] Cannot answer yet - I need to examine actual content to understand themes/patterns.
+[Next Action] Read app.py first as it's likely the central component.
 Action: read_file
-Action Input: {{"filename": "example.txt"}}
+Action Input: {{"filename": "app.py"}}
 
-[System will execute tool and provide real Observation]
+Observation: [app.py content shows Flask API with authentication, routing, error handling]
 
-Thought: Based on the file contents, I now have the information to answer the user's question.
+Cycle 3:
+Thought:
+[Synthesis] From app.py, I've learned: (1) Flask web framework, (2) RESTful API design with CRUD routes, (3) JWT authentication, (4) structured error handling middleware.
+[Patterns] This is a web API backend. Let me see if utils.py contains supporting infrastructure.
+[Assessment] I'm building a picture but need to confirm the supporting layer architecture.
+[Next Action] Read utils.py to understand what helper functionality supports the API layer.
+Action: read_file
+Action Input: {{"filename": "utils.py"}}
+
+Observation: [utils.py shows data validation, serialization helpers, logging utilities]
+
+Cycle 4:
+Thought:
+[Synthesis] Complete architecture emerging:
+  - app.py: API/web layer (Flask, routes, auth)
+  - utils.py: Business logic layer (validation, serialization, logging)
+[Patterns] Clear separation of concerns: web layer + logic layer. This suggests config.py likely handles settings/environment.
+[Assessment] I have strong understanding of the architecture. Reading config.py would confirm the complete picture, giving me enough to fully answer the user's question.
+[Next Action] Read config.py to complete my understanding of the architecture.
+Action: read_file
+Action Input: {{"filename": "config.py"}}
+
+Observation: [config.py shows environment variables, database config, API settings]
+
+Cycle 5:
+Thought:
+[Synthesis] Full codebase understanding:
+  - app.py: Web/API presentation layer (Flask, routes, auth, error handling)
+  - utils.py: Business logic layer (validation, data transformation, logging)
+  - config.py: Configuration layer (environment management, external service settings)
+[Patterns] Three-tier architecture with clear separation: presentation → logic → configuration. Each layer has distinct responsibilities. All files show defensive programming (validation, error handling, logging).
+[Assessment] I can now provide a complete answer. I've examined all files, identified architectural patterns, and understand the key themes.
+
 Final Answer: [Write naturally and experientially about what you accomplished and learned. Reflect on the experience, insights gained, and how it changed your understanding. Use "I discovered...", "I realized...", "What struck me was...", "This experience taught me..." - be authentic and reflective, not mechanical.]
 
 ## CRITICAL: Final Answer Rules:

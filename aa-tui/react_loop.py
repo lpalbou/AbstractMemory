@@ -159,6 +159,86 @@ class ReactLoop:
         """Rough token estimation (4 chars ≈ 1 token)."""
         return len(text) // 4
 
+    def _trim_context(self, context: str, limit: int) -> str:
+        """
+        Trim context to stay under token limit while preserving essential information.
+
+        Strategy:
+        - Always keep the original question
+        - Keep the most recent 2-3 thought/observation pairs
+        - Extract and preserve key findings from older observations
+        - Maintain reasoning continuity
+
+        Args:
+            context: Full accumulated context
+            limit: Maximum tokens allowed
+
+        Returns:
+            Trimmed context that fits within limit
+        """
+        estimated_tokens = self._estimate_tokens(context)
+
+        if estimated_tokens <= limit:
+            return context
+
+        lines = context.split('\n')
+
+        # Extract the question (always first line)
+        question = lines[0] if lines else "Question: [missing]"
+
+        # Find all observations and extract key insights
+        key_findings = []
+        current_block = []
+
+        for i, line in enumerate(lines[1:], 1):
+            current_block.append(line)
+
+            if line.startswith('Observation:'):
+                # Extract observation summary (first 150 chars or first sentence)
+                obs_text = line[len('Observation:'):].strip()
+                if len(obs_text) > 150:
+                    # Try to get first sentence
+                    first_period = obs_text.find('.')
+                    if first_period > 0 and first_period < 200:
+                        obs_text = obs_text[:first_period + 1]
+                    else:
+                        obs_text = obs_text[:150] + '...'
+
+                key_findings.append(obs_text)
+                current_block = []
+
+        # Keep the most recent iterations (last ~15 lines or ~500 tokens)
+        recent_lines = []
+        recent_tokens = 0
+        target_recent_tokens = min(limit // 2, 500)  # Use up to half limit for recent context
+
+        for line in reversed(lines):
+            line_tokens = self._estimate_tokens(line)
+            if recent_tokens + line_tokens > target_recent_tokens:
+                break
+            recent_lines.insert(0, line)
+            recent_tokens += line_tokens
+
+        # Build trimmed context
+        trimmed_parts = [question]
+
+        # Add key findings summary if we have them (and they're not in recent context)
+        if key_findings and len(key_findings) > 2:
+            findings_summary = "\n[Previous Discoveries - Summary]"
+            # Keep last 3 key findings
+            for finding in key_findings[-3:]:
+                findings_summary += f"\n• {finding}"
+            findings_summary += "\n[End Summary]\n"
+
+            # Only add if not already in recent context
+            if '[Previous Discoveries' not in '\n'.join(recent_lines):
+                trimmed_parts.append(findings_summary)
+
+        # Add recent context
+        trimmed_parts.append('\n'.join(recent_lines))
+
+        return '\n'.join(trimmed_parts)
+
     async def process_query(
         self,
         user_input: str,
@@ -197,8 +277,25 @@ class ReactLoop:
                 if 'on_iteration' in callbacks:
                     callbacks['on_iteration'](iteration + 1, self.config.max_iterations)
 
+                # Add synthesis checkpoint every 3 iterations (after iteration 3, 6, 9, etc.)
+                if iteration > 0 and iteration % 3 == 0:
+                    synthesis_prompt = f"""
+
+[SYNTHESIS CHECKPOINT - Iteration {iteration}]
+Before continuing, pause and reflect:
+1. What are your key discoveries from the last 3 observations?
+2. What patterns or connections have you identified?
+3. Are you making progress toward answering the question, or exploring tangents?
+4. Can you answer now, or what specific information is still missing?
+
+Structure your next Thought with clear [Synthesis], [Patterns], [Assessment], and [Next Action].
+"""
+                    context += synthesis_prompt + "\n"
+
                 # Generate response using accumulated context
-                # This is where the magic happens - we use ALL previous context
+                # Apply token limit before generating
+                trimmed_context = self._trim_context(context, self.config.context_tokens_limit)
+
                 loop = asyncio.get_event_loop()
 
                 with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -228,7 +325,7 @@ class ReactLoop:
                             pass
 
                         return self.session.generate(
-                            context,
+                            trimmed_context,
                             user_id="react_user",
                             include_memory=self.config.include_memory
                         )

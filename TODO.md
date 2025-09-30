@@ -580,3 +580,5 @@ NEXUS
 - improve tooling ?
 - test streaming
 - gpu ùmemory / processing visual cues
+
+
