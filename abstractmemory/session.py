@@ -370,30 +370,474 @@ class MemorySession(BasicSession):
         Returns:
             memory_id: ID of created memory
         """
-        # TODO: Full implementation
-        # For now, just log
-        logger.info(f"Remember: {content[:50]}... (importance={importance}, emotion={emotion})")
-        return f"mem_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            timestamp = datetime.now()
+            memory_id = f"mem_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}"
 
-    def search_memory(self,
-                     query: str,
-                     filters: Optional[Dict] = None,
-                     limit: int = 10) -> List[Dict]:
+            logger.info(f"Remember: {content[:50]}... (importance={importance}, emotion={emotion})")
+
+            # Create memory path: notes/{yyyy}/{mm}/{dd}/
+            date_path = self.memory_base_path / "notes" / str(timestamp.year) / f"{timestamp.month:02d}" / f"{timestamp.day:02d}"
+            date_path.mkdir(parents=True, exist_ok=True)
+
+            # Create filename
+            time_prefix = timestamp.strftime("%H_%M_%S")
+            topic = content[:30].replace(" ", "_").replace("/", "_").replace("?", "").replace("!", "")
+            filename = f"{time_prefix}_memory_{memory_id}.md"
+            file_path = date_path / filename
+
+            # Calculate emotional resonance (importance × alignment)
+            # For now, assume neutral alignment (0.5) until values emerge
+            alignment = 0.5
+            emotion_intensity = importance * alignment
+
+            # Create markdown content
+            markdown_content = f"""# Memory: {topic}
+
+**Memory ID**: `{memory_id}`
+**Time**: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+**Importance**: {importance:.2f}
+**Emotion**: {emotion}
+**Emotion Intensity**: {emotion_intensity:.2f}
+
+---
+
+## Content
+
+{content}
+
+---
+
+## Metadata
+
+- **Created**: {timestamp.isoformat()}
+- **Memory Type**: fact
+- **Linked To**: {', '.join(f'`{link}`' for link in links_to) if links_to else 'none'}
+
+---
+
+*This memory was created by AI agency - LLM decided to remember this*
+"""
+
+            # Write to filesystem
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+
+            logger.info(f"Saved memory: {file_path}")
+
+            # Create links if specified
+            if links_to:
+                for target_id in links_to:
+                    try:
+                        self.create_memory_link(memory_id, target_id, "relates_to")
+                    except Exception as e:
+                        logger.warning(f"Failed to create link to {target_id}: {e}")
+
+            # TODO: Store in LanceDB with embedding (Phase 2+)
+            # TODO: Calculate full emotional resonance using actual values
+
+            self.memories_created += 1
+
+            return memory_id
+
+        except Exception as e:
+            logger.error(f"Failed to remember fact: {e}")
+            return f"mem_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def search_memories(self,
+                       query: str,
+                       filters: Optional[Dict] = None,
+                       limit: int = 10) -> List[Dict]:
         """
         Search memories (semantic + SQL filtering).
 
+        For now, implements filesystem-based text search.
+        Full semantic search with LanceDB will be added in Phase 2+.
+
         Args:
-            query: Semantic search query
+            query: Search query
             filters: Optional filters (category, user_id, since, until, etc.)
             limit: Max results
 
         Returns:
-            List of matching memories
+            List of matching memories with metadata
         """
-        # TODO: Implement full search with LanceDB
-        # For now, return empty list
-        logger.warning("search_memory not yet fully implemented")
-        return []
+        try:
+            filters = filters or {}
+            results = []
+
+            logger.info(f"Searching memories: query='{query}', filters={filters}")
+
+            # Search in notes/ directory
+            notes_dir = self.memory_base_path / "notes"
+            if not notes_dir.exists():
+                logger.warning("Notes directory does not exist yet")
+                return []
+
+            # Find all markdown files
+            memory_files = list(notes_dir.rglob("*.md"))
+            logger.info(f"Found {len(memory_files)} memory files to search")
+
+            # Simple text search through files
+            for file_path in memory_files:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    # Check if query matches (case-insensitive)
+                    if query.lower() in content.lower():
+                        # Extract metadata from file
+                        memory_data = {
+                            "file_path": str(file_path),
+                            "content": content[:500],  # First 500 chars
+                            "timestamp": datetime.fromtimestamp(file_path.stat().st_mtime),
+                            "size": file_path.stat().st_size
+                        }
+
+                        # Apply filters if specified
+                        if filters.get("user_id"):
+                            if filters["user_id"] not in content:
+                                continue
+
+                        results.append(memory_data)
+
+                        if len(results) >= limit:
+                            break
+
+                except Exception as e:
+                    logger.warning(f"Error reading {file_path}: {e}")
+                    continue
+
+            # Also search verbatim directory for complete coverage
+            verbatim_dir = self.memory_base_path / "verbatim"
+            if verbatim_dir.exists() and len(results) < limit:
+                verbatim_files = list(verbatim_dir.rglob("*.md"))
+
+                for file_path in verbatim_files:
+                    if len(results) >= limit:
+                        break
+
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+
+                        if query.lower() in content.lower():
+                            # Apply user filter
+                            if filters.get("user_id"):
+                                if f"**User**: {filters['user_id']}" not in content:
+                                    continue
+
+                            memory_data = {
+                                "file_path": str(file_path),
+                                "content": content[:500],
+                                "timestamp": datetime.fromtimestamp(file_path.stat().st_mtime),
+                                "size": file_path.stat().st_size,
+                                "type": "verbatim"
+                            }
+                            results.append(memory_data)
+
+                    except Exception as e:
+                        logger.warning(f"Error reading {file_path}: {e}")
+                        continue
+
+            logger.info(f"Found {len(results)} matching memories")
+
+            # Sort by timestamp (most recent first)
+            results.sort(key=lambda x: x["timestamp"], reverse=True)
+
+            return results[:limit]
+
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return []
+
+    def search_library(self, query: str, limit: int = 5) -> List[Dict]:
+        """
+        Search Library (subconscious memory) for documents AI has read.
+
+        This searches the library/ directory for documents that have been
+        read/accessed by the AI. Useful during active memory reconstruction
+        to surface relevant information from documents.
+
+        Args:
+            query: Semantic search query
+            limit: Max results to return
+
+        Returns:
+            List of relevant documents with excerpts
+
+        Example:
+            results = session.search_library("Python debugging techniques")
+            # Returns documents about Python debugging that AI has read
+        """
+        try:
+            logger.info(f"Search library: {query} (limit={limit})")
+
+            # Check if library directory exists
+            library_dir = self.memory_base_path / "library" / "documents"
+            if not library_dir.exists():
+                logger.warning("Library directory does not exist yet")
+                # Create it for future use
+                library_dir.mkdir(parents=True, exist_ok=True)
+                return []
+
+            results = []
+
+            # Search through library documents
+            doc_dirs = [d for d in library_dir.iterdir() if d.is_dir()]
+            logger.info(f"Searching {len(doc_dirs)} library documents")
+
+            for doc_dir in doc_dirs:
+                if len(results) >= limit:
+                    break
+
+                try:
+                    # Read content.md
+                    content_file = doc_dir / "content.md"
+                    if not content_file.exists():
+                        continue
+
+                    with open(content_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    # Check if query matches (case-insensitive)
+                    if query.lower() in content.lower():
+                        # Read metadata if available
+                        metadata_file = doc_dir / "metadata.json"
+                        metadata = {}
+                        if metadata_file.exists():
+                            import json
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+
+                        # Update access tracking
+                        access_count = metadata.get('access_count', 0) + 1
+                        metadata['access_count'] = access_count
+                        metadata['last_accessed'] = datetime.now().isoformat()
+
+                        # Write back updated metadata
+                        with open(metadata_file, 'w', encoding='utf-8') as f:
+                            json.dump(metadata, f, indent=2)
+
+                        # Create result with excerpt
+                        # Find context around query match
+                        query_pos = content.lower().find(query.lower())
+                        if query_pos >= 0:
+                            start = max(0, query_pos - 100)
+                            end = min(len(content), query_pos + 300)
+                            excerpt = content[start:end]
+                        else:
+                            excerpt = content[:400]
+
+                        result = {
+                            "doc_id": doc_dir.name,
+                            "source": metadata.get('source_path', 'unknown'),
+                            "content_type": metadata.get('content_type', 'unknown'),
+                            "excerpt": excerpt,
+                            "access_count": access_count,
+                            "first_accessed": metadata.get('first_accessed'),
+                            "last_accessed": metadata['last_accessed'],
+                            "relevance": "high" if query.lower() in excerpt.lower() else "medium"
+                        }
+
+                        results.append(result)
+
+                        logger.info(f"Found in library: {doc_dir.name} (accessed {access_count} times)")
+
+                except Exception as e:
+                    logger.warning(f"Error reading library document {doc_dir.name}: {e}")
+                    continue
+
+            logger.info(f"Library search complete: {len(results)} results")
+
+            # TODO: Use LanceDB library_table for semantic search (Phase 2+)
+            # TODO: Calculate importance_score from access patterns + emotion
+
+            return results[:limit]
+
+        except Exception as e:
+            logger.error(f"Library search failed: {e}")
+            return []
+
+    def create_memory_link(self,
+                          from_id: str,
+                          to_id: str,
+                          relationship: str) -> str:
+        """
+        Create association between two memories.
+
+        This gives LLM agency to create explicit links between memories,
+        enabling link-based exploration during active reconstruction.
+
+        Args:
+            from_id: Source memory ID
+            to_id: Target memory ID
+            relationship: Type of relationship (elaborates_on, contradicts,
+                         relates_to, depends_on, caused_by, leads_to, etc.)
+
+        Returns:
+            link_id: ID of created link
+
+        Example:
+            link_id = session.create_memory_link(
+                from_id="note_20250930_123456",
+                to_id="int_20250930_123400",
+                relationship="elaborates_on"
+            )
+        """
+        try:
+            timestamp = datetime.now()
+            link_id = f"link_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}"
+
+            logger.info(f"Create link: {from_id} --[{relationship}]--> {to_id}")
+
+            # Create links directory: links/{yyyy}/{mm}/{dd}/
+            date_path = self.memory_base_path / "links" / str(timestamp.year) / f"{timestamp.month:02d}" / f"{timestamp.day:02d}"
+            date_path.mkdir(parents=True, exist_ok=True)
+
+            # Create filename with both IDs
+            filename = f"{from_id}_to_{to_id}.json"
+            file_path = date_path / filename
+
+            # Create link data structure
+            link_data = {
+                "link_id": link_id,
+                "from_id": from_id,
+                "to_id": to_id,
+                "relationship": relationship,
+                "created": timestamp.isoformat(),
+                "bidirectional": True  # Links work both ways for exploration
+            }
+
+            # Write to filesystem as JSON
+            import json
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(link_data, f, indent=2)
+
+            logger.info(f"Saved link: {file_path}")
+
+            # TODO: Store in LanceDB links_table (Phase 2+)
+
+            return link_id
+
+        except Exception as e:
+            logger.error(f"Failed to create link: {e}")
+            return f"link_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def reflect_on(self, topic: str) -> str:
+        """
+        Trigger deep reflection on a topic.
+
+        This gives LLM agency to initiate deep reflection, which:
+        - Searches related memories
+        - Reconstructs context around the topic
+        - Creates a special "reflection" note with higher importance
+        - May update core memory if significant insights emerge
+
+        Args:
+            topic: What to reflect on
+
+        Returns:
+            reflection_id: ID of created reflection note
+
+        Example:
+            reflection_id = session.reflect_on(
+                "the relationship between memory and consciousness"
+            )
+        """
+        try:
+            timestamp = datetime.now()
+            reflection_id = f"reflection_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}"
+
+            logger.info(f"Reflect on: {topic}")
+
+            # 1. Search memories related to topic
+            related_memories = self.search_memories(topic, limit=5)
+            logger.info(f"Found {len(related_memories)} related memories")
+
+            # 2. Reconstruct context around topic (basic for now)
+            context = self._basic_context_reconstruction("system", topic)
+
+            # 3. Create reflection note content
+            reflection_content = f"""## Reflection on: {topic}
+
+### Context Gathered
+- Related memories found: {len(related_memories)}
+- Current understanding based on: {len(self.messages)} interactions
+
+### Memory Summary
+"""
+            # Add summaries of related memories
+            for i, mem in enumerate(related_memories[:3], 1):
+                preview = mem.get('content', '')[:200].replace('\n', ' ')
+                reflection_content += f"\n{i}. {preview}...\n"
+
+            reflection_content += f"""
+
+### Reflection Points
+This is a deep reflection on "{topic}". Key considerations:
+- What patterns emerge from related memories?
+- How does this connect to current understanding?
+- What questions remain unresolved?
+- What implications does this have?
+
+*This reflection was triggered by LLM agency for deeper understanding*
+"""
+
+            # 4. Create reflection note with high importance
+            importance = 0.85  # Higher importance for reflections
+
+            # Create path: notes/{yyyy}/{mm}/{dd}/
+            date_path = self.memory_base_path / "notes" / str(timestamp.year) / f"{timestamp.month:02d}" / f"{timestamp.day:02d}"
+            date_path.mkdir(parents=True, exist_ok=True)
+
+            # Create filename
+            time_prefix = timestamp.strftime("%H_%M_%S")
+            topic_clean = topic[:30].replace(" ", "_").replace("/", "_").replace("?", "").replace("!", "")
+            filename = f"{time_prefix}_reflection_{topic_clean}.md"
+            file_path = date_path / filename
+
+            # Create full markdown
+            markdown_content = f"""# Reflection: {topic}
+
+**Reflection ID**: `{reflection_id}`
+**Time**: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+**Type**: Deep Reflection (LLM-initiated)
+**Importance**: {importance:.2f}
+
+---
+
+{reflection_content}
+
+---
+
+## Metadata
+
+- **Created**: {timestamp.isoformat()}
+- **Memory Type**: reflection
+- **Related Memories**: {len(related_memories)}
+- **Category**: reflection
+
+---
+
+*This is a deep reflection initiated by AI agency*
+*Reflections help consolidate understanding and may update core memory*
+"""
+
+            # Write to filesystem
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+
+            logger.info(f"Saved reflection: {file_path}")
+
+            # TODO: Store in LanceDB with embedding (Phase 2+)
+            # TODO: Update core memory if insights are significant
+
+            return reflection_id
+
+        except Exception as e:
+            logger.error(f"Failed to create reflection: {e}")
+            return f"reflection_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     def reconstruct_context(self,
                            user_id: str,
