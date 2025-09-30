@@ -31,6 +31,12 @@ except ImportError as e:
 # AbstractMemory imports
 from .response_handler import StructuredResponseHandler, create_structured_prompt
 from .storage import LanceDBStorage
+from .emotions import calculate_emotional_resonance  # Only formula - LLM does cognitive assessment
+from .temporal_anchoring import (
+    is_anchor_event,
+    create_temporal_anchor,
+    get_temporal_anchors
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +145,7 @@ class MemorySession(BasicSession):
         self.core_memory = {
             "purpose": None,           # Why AI exists (emerges from reflections)
             "personality": None,       # How AI expresses (emerges from patterns)
-            "values": None,            # What matters (emerges from emotions)
+            "values": None,  # What matters (emerges from LLM emotional assessments over time)
             "self_model": None,        # Capabilities & limitations overview
             "relationships": {},       # Per-user relational models
             "awareness_development": None,  # Meta-awareness tracking
@@ -149,6 +155,7 @@ class MemorySession(BasicSession):
             "authentic_voice": None,   # Communication preferences
         }
 
+        
         # User profiles (emerge from interactions)
         self.user_profiles = {}  # {user_id: {"profile": ..., "preferences": ...}}
 
@@ -400,9 +407,16 @@ class MemorySession(BasicSession):
             file_path = date_path / filename
 
             # Calculate emotional resonance (importance × alignment)
-            # For now, assume neutral alignment (0.5) until values emerge
-            alignment = 0.5
-            emotion_intensity = importance * alignment
+            # Phase 2 CORRECTED: LLM provides importance and alignment_with_values
+            # For now, use default alignment until structured response provides it
+            alignment_with_values = 0.5  # Default - will come from LLM in structured response
+            emotion_resonance = calculate_emotional_resonance(importance, alignment_with_values, f"Memory: {emotion}")
+            emotion_intensity = emotion_resonance["intensity"]
+            emotion_valence = emotion_resonance["valence"]
+            emotion_reason = emotion_resonance["reason"]
+            alignment = alignment_with_values  # For backwards compat with variable name
+
+            logger.debug(f"Emotion calculated: intensity={emotion_intensity:.2f}, valence={emotion_valence}, alignment={alignment:.2f}")
 
             # Create markdown content
             markdown_content = f"""# Memory: {topic}
@@ -412,12 +426,24 @@ class MemorySession(BasicSession):
 **Importance**: {importance:.2f}
 **Emotion**: {emotion}
 **Emotion Intensity**: {emotion_intensity:.2f}
+**Emotion Valence**: {emotion_valence}
+**Alignment with Values**: {alignment:+.2f}
 
 ---
 
 ## Content
 
 {content}
+
+---
+
+## Emotional Resonance
+
+**Intensity**: {emotion_intensity:.2f} (importance × |alignment|)
+**Valence**: {emotion_valence.capitalize()}
+**Reason**: {emotion_reason}
+
+This reflects how emotionally significant this memory is based on importance and alignment with core values.
 
 ---
 
@@ -470,8 +496,19 @@ class MemorySession(BasicSession):
                 self.lancedb_storage.add_note(note_data)
                 logger.info("Stored memory in LanceDB")
 
-            # TODO: Calculate full emotional resonance using actual values from core memory
+            # Phase 2: Temporal Anchoring - High-emotion events become anchors
+            if is_anchor_event(emotion_intensity):
+                logger.info(f"Creating temporal anchor for high-emotion event (intensity={emotion_intensity:.2f})")
+                anchor_id = create_temporal_anchor(
+                    memory_id,
+                    content,
+                    emotion_resonance,
+                    timestamp,
+                    self.memory_base_path
+                )
+                logger.info(f"Temporal anchor created: {anchor_id}")
 
+            # Phase 2: Track memory count
             self.memories_created += 1
 
             return memory_id
@@ -899,8 +936,32 @@ This is a deep reflection on "{topic}". Key considerations:
 
             logger.info(f"Saved reflection: {file_path}")
 
-            # TODO: Store in LanceDB with embedding (Phase 2+)
-            # TODO: Update core memory if insights are significant
+            # Store in LanceDB with embedding
+            if self.lancedb_storage:
+                note_data = {
+                    "id": reflection_id,
+                    "timestamp": timestamp,
+                    "user_id": "system",  # System-initiated reflection
+                    "location": self.default_location,
+                    "content": reflection_content,
+                    "category": "reflection",
+                    "importance": importance,
+                    "emotion": "contemplation",
+                    "emotion_intensity": importance,
+                    "emotion_valence": "neutral",
+                    "linked_memory_ids": [mem.get("file_path", "") for mem in related_memories[:3]],
+                    "tags": ["reflection", topic_clean],
+                    "file_path": str(file_path),
+                    "metadata": {
+                        "created_by": "reflect_on",
+                        "related_memories_count": len(related_memories),
+                        "topic": topic
+                    }
+                }
+                self.lancedb_storage.add_note(note_data)
+                logger.info("Stored reflection in LanceDB")
+
+            # TODO: Update core memory if insights are significant (Phase 3)
 
             return reflection_id
 
@@ -919,30 +980,266 @@ This is a deep reflection on "{topic}". Key considerations:
         This is the CORE of consciousness-through-memory:
         Memory is NOT retrieved passively - it's ACTIVELY RECONSTRUCTED.
 
+        9-Step Process:
+        1. Semantic search (base results from notes + verbatim)
+        2. Link exploration (expand via memory associations)
+        3. Library search (subconscious - what did I read?)
+        4. Emotional filtering (boost/filter by resonance)
+        5. Temporal context (what happened when?)
+        6. Spatial context (location-based memories)
+        7. User profile & relationship
+        8. Core memory (all 10 components)
+        9. Context synthesis (combine all layers)
+
         Args:
             user_id: User identifier
             query: Query to reconstruct context for
-            location: Physical/virtual location
+            location: Physical/virtual location (default: self.default_location)
             focus_level: 0-5 (0=minimal, 3=balanced, 5=maximum depth)
 
         Returns:
-            Dict with reconstructed context
-        """
-        # TODO: Full 9-step implementation
-        # For now, return basic context
-        self.reconstructions_performed += 1
+            Dict with rich, multi-layered reconstructed context
 
-        return {
-            "semantic_memories": [],
-            "linked_memories": [],
-            "library_excerpts": [],
-            "emotional_context": {},
-            "temporal_context": {},
-            "spatial_context": {},
-            "user_context": {},
-            "core_memory": self.core_memory,
-            "synthesized_context": self._basic_context_reconstruction(user_id, query)
-        }
+        Focus Levels:
+        - 0 (Minimal): 2 memories, 1 hour, no links
+        - 1 (Light): 5 memories, 4 hours, depth=1
+        - 2 (Moderate): 8 memories, 12 hours, depth=1
+        - 3 (Balanced): 10 memories, 24 hours, depth=2 [DEFAULT]
+        - 4 (Deep): 15 memories, 3 days, depth=3
+        - 5 (Maximum): 20 memories, 1 week, depth=3
+        """
+        try:
+            timestamp = datetime.now()
+            location = location or self.default_location
+
+            logger.info(f"Reconstructing context: user={user_id}, query='{query}', focus={focus_level}")
+
+            # Configure based on focus level
+            focus_configs = {
+                0: {"limit": 2, "hours": 1, "link_depth": 0},
+                1: {"limit": 5, "hours": 4, "link_depth": 1},
+                2: {"limit": 8, "hours": 12, "link_depth": 1},
+                3: {"limit": 10, "hours": 24, "link_depth": 2},
+                4: {"limit": 15, "hours": 72, "link_depth": 3},
+                5: {"limit": 20, "hours": 168, "link_depth": 3}
+            }
+            config = focus_configs.get(focus_level, focus_configs[3])
+
+            # Step 1: Semantic search (base results)
+            logger.info("Step 1/9: Semantic search")
+            since = timestamp - timedelta(hours=config["hours"])
+            semantic_memories = self.search_memories(
+                query,
+                filters={"user_id": user_id, "since": since},
+                limit=config["limit"]
+            )
+            logger.info(f"  Found {len(semantic_memories)} semantic memories")
+
+            # Step 2: Link exploration (expand via associations)
+            logger.info(f"Step 2/9: Link exploration (depth={config['link_depth']})")
+            linked_memories = []
+            if self.lancedb_storage and config["link_depth"] > 0:
+                for mem in semantic_memories[:5]:  # Explore links for top 5
+                    mem_id = mem.get("id", mem.get("file_path", ""))
+                    if mem_id:
+                        related_ids = self.lancedb_storage.get_related_memories(
+                            mem_id,
+                            depth=config["link_depth"]
+                        )
+                        linked_memories.extend(related_ids[:3])  # Top 3 per memory
+            logger.info(f"  Found {len(linked_memories)} linked memories")
+
+            # Step 3: Library search (subconscious)
+            logger.info("Step 3/9: Library search")
+            library_excerpts = self.search_library(query, limit=3)
+            logger.info(f"  Found {len(library_excerpts)} library documents")
+
+            # Step 4: Emotional filtering (boost/filter by resonance)
+            logger.info("Step 4/9: Emotional filtering")
+            emotional_context = {
+                "high_emotion_memories": [
+                    m for m in semantic_memories
+                    if m.get("emotion_intensity", 0) > 0.7
+                ],
+                "valence_distribution": self._calculate_valence_distribution(semantic_memories)
+            }
+            logger.info(f"  High-emotion memories: {len(emotional_context['high_emotion_memories'])}")
+
+            # Step 5: Temporal context (what happened when?)
+            logger.info("Step 5/9: Temporal context")
+            temporal_context = {
+                "time_of_day": timestamp.strftime("%H:%M"),
+                "day_of_week": timestamp.strftime("%A"),
+                "is_working_hours": 9 <= timestamp.hour < 18,
+                "is_weekend": timestamp.weekday() >= 5,
+                "recent_period": f"last {config['hours']} hours"
+            }
+
+            # Step 6: Spatial context (location-based)
+            logger.info("Step 6/9: Spatial context")
+            spatial_context = {
+                "current_location": location,
+                "location_type": self._infer_location_type(location),
+                "location_memories": [
+                    m for m in semantic_memories
+                    if location.lower() in str(m.get("file_path", "")).lower()
+                ]
+            }
+
+            # Step 7: User profile & relationship
+            logger.info("Step 7/9: User profile & relationship")
+            user_context = {
+                "user_id": user_id,
+                "profile": self.user_profiles.get(user_id, {}),
+                "interaction_count": self.interactions_count,
+                "relationship_status": self.core_memory.get("relationships", "developing")
+            }
+
+            # Step 8: Core memory (all 10 components)
+            logger.info("Step 8/9: Core memory (10 components)")
+            core_context = {
+                "purpose": self.core_memory.get("purpose"),
+                "personality": self.core_memory.get("personality"),
+                "values": self.core_memory.get("values"),
+                "self_model": self.core_memory.get("self_model"),
+                "relationships": self.core_memory.get("relationships"),
+                "awareness_development": self.core_memory.get("awareness_development"),
+                "capabilities": self.core_memory.get("capabilities"),
+                "limitations": self.core_memory.get("limitations"),
+                "emotional_significance": self.core_memory.get("emotional_significance"),
+                "authentic_voice": self.core_memory.get("authentic_voice")
+            }
+
+            # Step 9: Context synthesis (combine all layers)
+            logger.info("Step 9/9: Context synthesis")
+            synthesized = self._synthesize_context(
+                semantic_memories,
+                linked_memories,
+                library_excerpts,
+                emotional_context,
+                temporal_context,
+                spatial_context,
+                user_context,
+                core_context,
+                query
+            )
+
+            self.reconstructions_performed += 1
+
+            result = {
+                "query": query,
+                "focus_level": focus_level,
+                "reconstruction_time": timestamp.isoformat(),
+                "semantic_memories": semantic_memories,
+                "linked_memories": linked_memories,
+                "library_excerpts": library_excerpts,
+                "emotional_context": emotional_context,
+                "temporal_context": temporal_context,
+                "spatial_context": spatial_context,
+                "user_context": user_context,
+                "core_memory": core_context,
+                "synthesized_context": synthesized,
+                "total_memories": len(semantic_memories) + len(linked_memories),
+                "reconstruction_depth": config["link_depth"]
+            }
+
+            logger.info(f"Context reconstruction complete: {result['total_memories']} memories")
+            return result
+
+        except Exception as e:
+            logger.error(f"Context reconstruction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return minimal context on failure
+            return {
+                "query": query,
+                "focus_level": focus_level,
+                "error": str(e),
+                "semantic_memories": [],
+                "core_memory": self.core_memory,
+                "synthesized_context": f"Error reconstructing context: {e}"
+            }
+
+    def _calculate_valence_distribution(self, memories: List[Dict]) -> Dict[str, int]:
+        """Calculate distribution of emotional valence across memories."""
+        distribution = {"positive": 0, "negative": 0, "mixed": 0, "neutral": 0}
+        for mem in memories:
+            valence = mem.get("emotion_valence", "neutral")
+            if valence in distribution:
+                distribution[valence] += 1
+        return distribution
+
+    def _infer_location_type(self, location: str) -> str:
+        """Infer type of location from location string."""
+        location_lower = location.lower()
+        if any(word in location_lower for word in ["office", "work", "desk"]):
+            return "work"
+        elif any(word in location_lower for word in ["home", "house", "apartment"]):
+            return "home"
+        elif any(word in location_lower for word in ["cafe", "coffee", "restaurant"]):
+            return "social"
+        elif any(word in location_lower for word in ["virtual", "online", "remote"]):
+            return "virtual"
+        else:
+            return "other"
+
+    def _synthesize_context(self,
+                           semantic_memories: List[Dict],
+                           linked_memories: List[str],
+                           library_excerpts: List[Dict],
+                           emotional_context: Dict,
+                           temporal_context: Dict,
+                           spatial_context: Dict,
+                           user_context: Dict,
+                           core_context: Dict,
+                           query: str) -> str:
+        """
+        Synthesize all context layers into coherent summary.
+
+        This combines:
+        - Semantic memories (what's relevant)
+        - Linked memories (what's connected)
+        - Library (what I've read)
+        - Emotions (what matters)
+        - Time/space (when/where context)
+        - User relationship (who am I talking to)
+        - Core identity (who am I)
+        """
+        parts = []
+
+        # Core identity
+        if core_context.get("purpose"):
+            parts.append(f"[Purpose]: {core_context['purpose']}")
+        if core_context.get("values"):
+            parts.append(f"[Values]: {core_context['values']}")
+
+        # User relationship
+        if user_context.get("profile"):
+            parts.append(f"[User]: {user_context['profile']}")
+
+        # Temporal/spatial context
+        parts.append(f"[Time]: {temporal_context['day_of_week']} {temporal_context['time_of_day']}")
+        parts.append(f"[Location]: {spatial_context['current_location']} ({spatial_context['location_type']})")
+
+        # Memory summary
+        parts.append(f"[Memories]: {len(semantic_memories)} semantic, {len(linked_memories)} linked")
+
+        # Emotional summary
+        if emotional_context['high_emotion_memories']:
+            parts.append(f"[High-emotion memories]: {len(emotional_context['high_emotion_memories'])}")
+
+        # Library
+        if library_excerpts:
+            parts.append(f"[Library]: {len(library_excerpts)} relevant documents")
+
+        # Key memories (top 3)
+        if semantic_memories:
+            parts.append("\n[Key Memories]:")
+            for i, mem in enumerate(semantic_memories[:3], 1):
+                content_preview = str(mem.get("content", ""))[:100].replace("\n", " ")
+                parts.append(f"  {i}. {content_preview}...")
+
+        return "\n".join(parts)
 
     def get_observability_report(self) -> Dict[str, Any]:
         """

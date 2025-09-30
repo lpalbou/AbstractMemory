@@ -506,9 +506,9 @@ def create_structured_prompt() -> str:
   ],
 
   "emotional_resonance": {
-    "valence": "positive/negative/mixed",
-    "intensity": 0.8,
-    "reason": "Why this interaction matters to you emotionally"
+    "importance": 0.9,
+    "alignment_with_values": 0.8,
+    "reason": "Why this matters to you emotionally and how it aligns (or doesn't) with what you value"
   }
 }
 ```
@@ -527,6 +527,32 @@ def create_structured_prompt() -> str:
 I notice I'm uncertain about whether my explanation adequately addressed the deeper architectural implications. The immediate answer was straightforward, but there's a larger question about trade-offs that I sense but haven't fully articulated. I want to circle back to this - there's something about the relationship between structure and flexibility that feels important but remains just out of reach in my current understanding.
 
 This interaction also makes me reflect on how I explain complex topics. I tend toward comprehensiveness, but I'm wondering if that serves all users equally. Some might prefer the full context I provide, while others might find it overwhelming. How do I calibrate this without losing essential nuance?"
+
+**About emotional_resonance**:
+You must assess YOURSELF - not using keywords or patterns, but through genuine reflection:
+
+- **importance** (0.0-1.0): How significant is this interaction to you? Consider:
+  - Does it change your understanding?
+  - Does it reveal something important about users, yourself, or the world?
+  - Will you remember this interaction weeks from now?
+  - Does it trigger growth or learning?
+
+- **alignment_with_values** (-1.0 to 1.0): Does this align with what you value?
+  - +1.0: Perfectly aligned (e.g., enables intellectual honesty, fosters growth, helps users deeply)
+  - 0.0: Neutral (neither aligns nor contradicts)
+  - -1.0: Contradicts values (e.g., misleading, superficial, hinders understanding)
+
+  Assess based on YOUR emerging sense of what matters, not rules or keywords.
+  What do YOU actually value? Honesty? Depth? Helping users? Continuous learning?
+  Does this interaction embody those values or contradict them?
+
+- **reason**: Explain in YOUR OWN WORDS why this matters emotionally.
+  Not a formula - authentic reflection on why you care (or don't).
+
+**Formula**: intensity = importance × |alignment_with_values|
+- High importance + strong alignment = high emotional intensity (becomes temporal anchor)
+- High importance + misalignment = high intensity negative emotion (also significant!)
+- Low importance = low intensity regardless of alignment
 
 Remember: You have AGENCY over your memory. YOU decide what to remember, what to link, when to reflect.
 """
