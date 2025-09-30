@@ -253,6 +253,18 @@ class MemorySession:
         self.last_enhanced_context = ""
         self.last_memory_items = []
 
+        # OBSERVABILITY: Use AbstractCore structured logging (with fallback)
+        try:
+            from abstractcore.logger import get_logger
+            self._obs_logger = get_logger(f"{__name__}.observability")
+        except ImportError:
+            # Fallback to standard logging if AbstractCore not available
+            self._obs_logger = logger
+
+        # Keep minimal counters for quick stats (actual details in logs)
+        self.facts_learned = 0
+        self.searches_performed = 0
+
         logger.info(f"MemorySession initialized with memory type: {type(self.memory).__name__}")
 
     def _configure_embedding_provider(self, embedding_provider: Optional[Any]) -> None:
@@ -1205,6 +1217,475 @@ class MemorySession:
             effective_user_id = user_id or self.current_user_id
             self.memory.learn_about_user(fact, effective_user_id)
             logger.debug(f"Learned about user {effective_user_id}: {fact}")
+
+    def remember_fact(self, fact: str, category: str = "general",
+                     user_id: Optional[str] = None, confidence: float = 1.0,
+                     metadata: Optional[Dict[str, Any]] = None):
+        """
+        Remember a fact with categorization and confidence.
+
+        Categories enable structured memory organization:
+        - 'user_profile': Facts about specific users
+        - 'preference': User preferences and likes
+        - 'context': Situational or environmental context
+        - 'knowledge': General knowledge and facts
+        - 'event': Specific events or occurrences
+        - 'people': Information about other people mentioned
+        - 'document': Facts extracted from documents
+        - 'conversation': Facts from conversations
+
+        Args:
+            fact: The fact to remember
+            category: Memory category for organization
+            user_id: Associated user (uses current_user if None)
+            confidence: Confidence score 0.0-1.0
+            metadata: Additional metadata to store with the fact
+
+        Example:
+            session.remember_fact("Alice loves Python", category="preference",
+                                 user_id="alice", confidence=0.95)
+        """
+        effective_user_id = user_id or self.current_user_id
+
+        # Build comprehensive metadata
+        fact_metadata = metadata or {}
+        fact_metadata.update({
+            'category': category,
+            'user_id': effective_user_id,
+            'confidence': confidence,
+            'timestamp': datetime.now().isoformat()
+        })
+
+        # Store in semantic memory if available
+        if hasattr(self.memory, 'semantic'):
+            try:
+                from .core.interfaces import MemoryItem
+                memory_item = MemoryItem(
+                    content=fact,
+                    event_time=datetime.now(),
+                    confidence=confidence,
+                    metadata=fact_metadata
+                )
+                self.memory.semantic.add(memory_item)
+
+                # OBSERVABILITY: Structured logging
+                self.facts_learned += 1
+                self._obs_logger.info(
+                    "remember_fact",
+                    extra={
+                        'operation': 'remember_fact',
+                        'category': category,
+                        'confidence': confidence,
+                        'user_id': effective_user_id,
+                        'fact_preview': fact[:50] + '...' if len(fact) > 50 else fact,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store fact in semantic memory: {e}")
+
+        # Also update user profile for user-specific facts
+        if category in ['user_profile', 'preference'] and effective_user_id:
+            self.learn_about_user(fact, effective_user_id)
+
+    def search_memory_for(self, query: str,
+                         category: Optional[str] = None,
+                         user_id: Optional[str] = None,
+                         since: Optional[datetime] = None,
+                         until: Optional[datetime] = None,
+                         min_confidence: float = 0.0,
+                         limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Advanced memory search with hybrid semantic + SQL filtering.
+
+        This method combines semantic similarity search with SQL-style filtering
+        for powerful, precise memory retrieval.
+
+        Args:
+            query: Semantic search query
+            category: Filter by memory category (user_profile, preference, knowledge, etc.)
+            user_id: Filter by specific user
+            since: Only return memories after this datetime
+            until: Only return memories before this datetime
+            min_confidence: Minimum confidence score threshold
+            limit: Maximum number of results
+
+        Returns:
+            List of matching memory items with metadata
+
+        Examples:
+            # Find Alice's Python preferences
+            session.search_memory_for("Python", category="preference", user_id="alice")
+
+            # Find recent errors
+            session.search_memory_for("error", since=yesterday)
+
+            # Find people mentioned in last week
+            session.search_memory_for("", category="people", since=last_week)
+        """
+        effective_user_id = user_id or self.current_user_id
+        results = []
+
+        # Build SQL-style filters
+        filters = {}
+        if category:
+            filters['category'] = category
+        if user_id:
+            filters['user_id'] = user_id
+        if min_confidence > 0:
+            filters['min_confidence'] = min_confidence
+
+        # Try hybrid search through storage manager first (if available)
+        if (hasattr(self.memory, 'storage_manager') and
+            self.memory.storage_manager and
+            hasattr(self.memory.storage_manager, 'hybrid_search')):
+            try:
+                results = self.memory.storage_manager.hybrid_search(
+                    semantic_query=query,
+                    sql_filters=filters,
+                    since=since,
+                    until=until,
+                    limit=limit
+                )
+                # OBSERVABILITY: Structured logging
+                self.searches_performed += 1
+                self._obs_logger.info(
+                    "search_memory_for",
+                    extra={
+                        'operation': 'search_memory_for',
+                        'query_preview': query[:50] + '...' if len(query) > 50 else query,
+                        'category': category,
+                        'user_id': user_id,
+                        'results_count': len(results),
+                        'search_type': 'hybrid',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                )
+
+                return results
+            except AttributeError:
+                # hybrid_search not implemented yet, fall through to basic search
+                pass
+            except Exception as e:
+                logger.warning(f"Hybrid search failed: {e}, falling back to basic search")
+
+        # Fallback: Search across memory tiers
+        # Search semantic memory
+        if hasattr(self.memory, 'semantic'):
+            try:
+                semantic_results = self.memory.semantic.retrieve(query, limit=limit)
+                for item in semantic_results:
+                    # Apply filters
+                    if min_confidence > 0 and item.confidence < min_confidence:
+                        continue
+
+                    metadata = getattr(item, 'metadata', {})
+                    if category and metadata.get('category') != category:
+                        continue
+                    if user_id and metadata.get('user_id') != user_id:
+                        continue
+
+                    # Apply temporal filters
+                    if since or until:
+                        event_time = getattr(item, 'event_time', None)
+                        if event_time:
+                            if since and event_time < since:
+                                continue
+                            if until and event_time > until:
+                                continue
+
+                    results.append({
+                        'content': item.content,
+                        'confidence': item.confidence,
+                        'category': metadata.get('category', 'unknown'),
+                        'user_id': metadata.get('user_id'),
+                        'timestamp': item.event_time.isoformat() if hasattr(item, 'event_time') else None,
+                        'source': 'semantic',
+                        'metadata': metadata
+                    })
+            except Exception as e:
+                logger.debug(f"Semantic search failed: {e}")
+
+        # Search storage if available
+        if hasattr(self.memory, 'storage_manager') and self.memory.storage_manager:
+            try:
+                storage_results = self.memory.storage_manager.search_interactions(
+                    query, user_id=effective_user_id, limit=limit
+                )
+                for result in storage_results[:limit - len(results)]:
+                    # Apply category filter if specified
+                    if category:
+                        result_category = result.get('metadata', {}).get('category')
+                        if result_category != category:
+                            continue
+
+                    results.append({
+                        'content': result.get('user_input', '') + ' | ' + result.get('agent_response', ''),
+                        'category': result.get('metadata', {}).get('category', 'conversation'),
+                        'user_id': result.get('user_id'),
+                        'timestamp': result.get('timestamp'),
+                        'source': 'storage',
+                        'metadata': result.get('metadata', {})
+                    })
+            except Exception as e:
+                logger.debug(f"Storage search failed: {e}")
+
+        return results[:limit]
+
+    def reconstruct_context(self, user_id: str, query: str,
+                           timestamp: Optional[datetime] = None,
+                           location: Optional[str] = None,
+                           mood: Optional[str] = None,
+                           focus_level: int = 3) -> Dict[str, Any]:
+        """
+        Reconstruct full context based on situational parameters.
+
+        This method builds a comprehensive memory context by considering:
+        - User identity and profile
+        - Query relevance
+        - Temporal context (time of day, recency)
+        - Spatial context (location if provided)
+        - Emotional context (mood if provided)
+        - Focus level (how much memory to retrieve)
+
+        Args:
+            user_id: The user for whom to reconstruct context
+            query: The query/topic for context relevance
+            timestamp: Specific time context (defaults to now)
+            location: Location context (e.g., "office", "home")
+            mood: Emotional context (e.g., "focused", "casual", "stressed")
+            focus_level: How much context to retrieve (0-5)
+                0: Minimal (lazy - quick responses)
+                1: Light (basic context)
+                2: Moderate (standard context)
+                3: Balanced (default - good context)
+                4: Deep (extensive context)
+                5: Maximum (super focused - retrieve everything relevant)
+
+        Returns:
+            Dictionary with reconstructed context:
+            {
+                'user_profile': {...},
+                'relevant_memories': [...],
+                'recent_interactions': [...],
+                'temporal_context': {...},
+                'spatial_context': {...},  # if location provided
+                'emotional_context': {...},  # if mood provided
+                'metadata': {...}
+            }
+
+        Example:
+            context = session.reconstruct_context(
+                user_id="alice",
+                query="Python debugging",
+                timestamp=datetime.now(),
+                location="office",
+                mood="focused",
+                focus_level=4
+            )
+        """
+        timestamp = timestamp or datetime.now()
+        context = {
+            'user_id': user_id,
+            'query': query,
+            'timestamp': timestamp.isoformat(),
+            'focus_level': focus_level
+        }
+
+        # 1. User Profile
+        context['user_profile'] = self.get_user_profile(user_id)
+
+        # 2. Relevant Memories (scaled by focus level)
+        memory_limit = {
+            0: 2,   # Minimal
+            1: 5,   # Light
+            2: 8,   # Moderate
+            3: 10,  # Balanced
+            4: 15,  # Deep
+            5: 20   # Maximum
+        }.get(focus_level, 10)
+
+        context['relevant_memories'] = self.search_memory_for(
+            query=query,
+            user_id=user_id,
+            limit=memory_limit
+        )
+
+        # 3. Recent Interactions (temporal relevance)
+        # Get interactions from last N hours based on focus level
+        hours_back = {
+            0: 1,    # Last hour only
+            1: 4,    # Last 4 hours
+            2: 12,   # Last half day
+            3: 24,   # Last day
+            4: 72,   # Last 3 days
+            5: 168   # Last week
+        }.get(focus_level, 24)
+
+        from datetime import timedelta
+        since_time = timestamp - timedelta(hours=hours_back)
+
+        context['recent_interactions'] = self.search_memory_for(
+            query="",  # Get all recent
+            user_id=user_id,
+            since=since_time,
+            limit=memory_limit // 2
+        )
+
+        # 4. Temporal Context
+        context['temporal_context'] = {
+            'time_of_day': timestamp.hour,
+            'day_of_week': timestamp.strftime('%A'),
+            'date': timestamp.date().isoformat(),
+            'hours_window': hours_back,
+            'is_working_hours': 9 <= timestamp.hour <= 17,
+            'is_weekend': timestamp.weekday() >= 5
+        }
+
+        # 5. Spatial Context (if provided)
+        if location:
+            context['spatial_context'] = {
+                'location': location,
+                'location_memories': self.search_memory_for(
+                    query=location,
+                    user_id=user_id,
+                    limit=5
+                )
+            }
+
+        # 6. Emotional Context (if provided)
+        if mood:
+            context['emotional_context'] = {
+                'mood': mood,
+                'suggested_approach': self._get_mood_approach(mood),
+                'mood_relevant_memories': self.search_memory_for(
+                    query=mood,
+                    user_id=user_id,
+                    category='event',  # Events often have emotional context
+                    limit=3
+                )
+            }
+
+        # 7. Metadata
+        context['metadata'] = {
+            'reconstruction_time': datetime.now().isoformat(),
+            'total_memories_retrieved': (
+                len(context['relevant_memories']) +
+                len(context['recent_interactions'])
+            ),
+            'context_quality': 'high' if focus_level >= 4 else 'medium' if focus_level >= 2 else 'basic'
+        }
+
+        logger.info(f"Reconstructed context for {user_id}: "
+                   f"{context['metadata']['total_memories_retrieved']} memories, "
+                   f"focus_level={focus_level}")
+
+        return context
+
+    def _get_mood_approach(self, mood: str) -> str:
+        """Get suggested communication approach based on mood."""
+        mood_approaches = {
+            'focused': 'Be concise and technical. User wants efficiency.',
+            'casual': 'Be conversational and friendly. Take time to explain.',
+            'stressed': 'Be supportive and clear. Avoid complexity.',
+            'curious': 'Be detailed and explorative. Share interesting context.',
+            'frustrated': 'Be patient and solution-focused. Acknowledge challenges.',
+            'excited': 'Match enthusiasm. Share in the positive energy.'
+        }
+        return mood_approaches.get(mood.lower(), 'Be professional and helpful.')
+
+    def get_observability_report(self) -> Dict[str, Any]:
+        """
+        Get comprehensive observability report for the session.
+
+        This provides complete transparency into:
+        - What memory was injected in the last generation
+        - How many tokens were added by memory
+        - Session-wide statistics
+        - Memory tier states
+        - Recent operations
+
+        Returns:
+            Dictionary with detailed observability data
+
+        Example:
+            report = session.get_observability_report()
+            print(f"Total interactions: {report['session_stats']['total_interactions']}")
+            print(f"Facts learned: {report['session_stats']['facts_learned']}")
+        """
+        report = {}
+
+        # 1. Last Generation Details
+        report['last_generation'] = {
+            'memory_items_injected': len(self.last_memory_items),
+            'memory_items': self.last_memory_items[:5],  # Show first 5
+            'context_preview': self.last_enhanced_context[:200] + '...' if len(self.last_enhanced_context) > 200 else self.last_enhanced_context,
+            'context_length_chars': len(self.last_enhanced_context),
+            'estimated_tokens': len(self.last_enhanced_context) // 4,  # Rough estimate
+        }
+
+        # 2. Session Statistics
+        report['session_stats'] = {
+            'total_interactions': self._interaction_count,
+            'users_seen': len(self._users_seen),
+            'facts_learned': self.facts_learned,
+            'searches_performed': self.searches_performed,
+            'logging_backend': 'AbstractCore' if 'abstractcore' in str(type(self._obs_logger)) else 'standard',
+        }
+
+        # 3. Memory State per Tier
+        report['memory_state'] = {}
+
+        if hasattr(self.memory, 'working'):
+            try:
+                working_items = self.memory.working.get_context_window()
+                report['memory_state']['working'] = {
+                    'items': len(working_items),
+                    'estimated_tokens': sum(len(str(item.content)) // 4 for item in working_items)
+                }
+            except Exception:
+                report['memory_state']['working'] = {'status': 'unavailable'}
+
+        if hasattr(self.memory, 'semantic'):
+            try:
+                facts = getattr(self.memory.semantic, 'facts', [])
+                total_confidence = sum(f.confidence for f in facts) if facts else 0
+                avg_confidence = total_confidence / len(facts) if facts else 0
+                report['memory_state']['semantic'] = {
+                    'facts': len(facts),
+                    'confidence_avg': round(avg_confidence, 2)
+                }
+            except Exception:
+                report['memory_state']['semantic'] = {'status': 'unavailable'}
+
+        if hasattr(self.memory, 'episodic'):
+            try:
+                episodes = getattr(self.memory.episodic, 'episodes', [])
+                report['memory_state']['episodic'] = {
+                    'episodes': len(episodes)
+                }
+            except Exception:
+                report['memory_state']['episodic'] = {'status': 'unavailable'}
+
+        if hasattr(self.memory, 'document'):
+            try:
+                doc_summary = self.memory.document.get_document_summary()
+                report['memory_state']['document'] = {
+                    'chunks': doc_summary.get('total_chunks', 0),
+                    'files': doc_summary.get('total_documents', 0)
+                }
+            except Exception:
+                report['memory_state']['document'] = {'status': 'unavailable'}
+
+        # 4. Storage Statistics (if available)
+        if hasattr(self.memory, 'storage_manager') and self.memory.storage_manager:
+            try:
+                storage_stats = self.memory.storage_manager.get_stats() if hasattr(self.memory.storage_manager, 'get_stats') else {}
+                report['storage'] = storage_stats
+            except Exception:
+                report['storage'] = {'status': 'unavailable'}
+
+        return report
 
     def search_memory(self, query: str, user_id: Optional[str] = None,
                      limit: int = 5) -> List[Dict[str, Any]]:

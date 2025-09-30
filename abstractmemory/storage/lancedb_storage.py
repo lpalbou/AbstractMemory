@@ -64,7 +64,7 @@ class LanceDBStorage(IStorage):
     def _init_tables(self):
         """Initialize LanceDB tables with schemas"""
 
-        # Interactions table schema
+        # Interactions table schema (enhanced with category, confidence, tags)
         interactions_schema = [
             {"name": "id", "type": "string"},
             {"name": "user_id", "type": "string"},
@@ -72,8 +72,11 @@ class LanceDBStorage(IStorage):
             {"name": "user_input", "type": "string"},
             {"name": "agent_response", "type": "string"},
             {"name": "topic", "type": "string"},
-            {"name": "metadata", "type": "string"},  # JSON string
-            {"name": "embedding", "type": "vector"}  # Vector embedding
+            {"name": "category", "type": "string"},         # NEW: Memory category
+            {"name": "confidence", "type": "float"},        # NEW: Confidence score
+            {"name": "tags", "type": "string"},             # NEW: JSON array of tags
+            {"name": "metadata", "type": "string"},         # JSON string
+            {"name": "embedding", "type": "vector"}         # Vector embedding
         ]
 
         # Experiential notes table schema
@@ -124,6 +127,9 @@ class LanceDBStorage(IStorage):
                 pa.field("user_input", pa.string()),
                 pa.field("agent_response", pa.string()),
                 pa.field("topic", pa.string()),
+                pa.field("category", pa.string()),           # NEW
+                pa.field("confidence", pa.float32()),        # NEW
+                pa.field("tags", pa.string()),               # NEW (JSON array)
                 pa.field("metadata", pa.string()),
                 pa.field("embedding", pa.list_(pa.float32(), embedding_dim))
             ])
@@ -238,8 +244,20 @@ class LanceDBStorage(IStorage):
     def save_interaction(self, user_id: str, timestamp: datetime,
                         user_input: str, agent_response: str,
                         topic: str, metadata: Optional[Dict] = None) -> str:
-        """Save verbatim interaction with vector embedding"""
+        """
+        Save verbatim interaction with vector embedding.
 
+        Args:
+            user_id: User identifier
+            timestamp: When the interaction occurred
+            user_input: User's input
+            agent_response: Agent's response
+            topic: Interaction topic
+            metadata: Optional metadata (can include 'category', 'confidence', 'tags')
+
+        Returns:
+            Interaction ID
+        """
         interaction_id = f"int_{uuid.uuid4().hex[:8]}"
 
         # Generate embedding for the full interaction
@@ -250,6 +268,12 @@ class LanceDBStorage(IStorage):
         import json
         import pandas as pd
 
+        # Extract category, confidence, tags from metadata if present
+        metadata = metadata or {}
+        category = metadata.get('category', 'conversation')
+        confidence = metadata.get('confidence', 1.0)
+        tags = metadata.get('tags', [])
+
         data = {
             "id": interaction_id,
             "user_id": user_id,
@@ -257,7 +281,10 @@ class LanceDBStorage(IStorage):
             "user_input": user_input,
             "agent_response": agent_response,
             "topic": topic,
-            "metadata": json.dumps(metadata or {}),
+            "category": category,                              # NEW
+            "confidence": float(confidence),                   # NEW
+            "tags": json.dumps(tags) if isinstance(tags, list) else tags,  # NEW
+            "metadata": json.dumps(metadata),
             "embedding": [float(x) for x in embedding]  # Ensure float32 compatibility
         }
 
@@ -404,6 +431,187 @@ class LanceDBStorage(IStorage):
             logger.error(f"Search failed in LanceDB: {e}")
             return []
 
+    def hybrid_search(self, semantic_query: str, sql_filters: Optional[Dict[str, Any]] = None,
+                     since: Optional[datetime] = None, until: Optional[datetime] = None,
+                     limit: int = 10) -> List[Dict]:
+        """
+        Hybrid search combining semantic similarity with SQL filtering.
+
+        This powerful method allows queries like:
+        - "What did Alice say about Python yesterday?"
+        - "Find all preferences for user X since last week"
+        - "Get high-confidence knowledge items about debugging"
+
+        Args:
+            semantic_query: Query for semantic similarity search
+            sql_filters: Dictionary of SQL filters:
+                - category: Filter by memory category
+                - user_id: Filter by user
+                - min_confidence: Minimum confidence threshold
+                - tags: Filter by tags (any match)
+            since: Only return results after this datetime
+            until: Only return results before this datetime
+            limit: Maximum number of results
+
+        Returns:
+            List of matching interaction dictionaries
+
+        Example:
+            results = storage.hybrid_search(
+                "Python debugging",
+                sql_filters={'category': 'knowledge', 'user_id': 'alice', 'min_confidence': 0.8},
+                since=datetime.now() - timedelta(days=7),
+                limit=10
+            )
+        """
+        try:
+            sql_filters = sql_filters or {}
+            query_parts = []
+
+            # Category filter
+            if 'category' in sql_filters:
+                query_parts.append(f"category = '{sql_filters['category']}'")
+
+            # User filter
+            if 'user_id' in sql_filters:
+                query_parts.append(f"user_id = '{sql_filters['user_id']}'")
+
+            # Confidence filter
+            if 'min_confidence' in sql_filters:
+                query_parts.append(f"confidence >= {sql_filters['min_confidence']}")
+
+            # Temporal filters
+            if since:
+                query_parts.append(f"timestamp >= '{since.isoformat()}'")
+            if until:
+                query_parts.append(f"timestamp <= '{until.isoformat()}'")
+
+            # Tags filter (check if any tag matches)
+            if 'tags' in sql_filters:
+                tags = sql_filters['tags']
+                if isinstance(tags, list):
+                    # Check if any of the requested tags are in the stored tags
+                    tags_conditions = [f"tags LIKE '%\"{tag}\"%'" for tag in tags]
+                    query_parts.append(f"({' OR '.join(tags_conditions)})")
+                elif isinstance(tags, str):
+                    query_parts.append(f"tags LIKE '%\"{tags}\"%'")
+
+            # Build WHERE clause
+            where_clause = " AND ".join(query_parts) if query_parts else None
+
+            # Perform semantic search
+            if semantic_query and self.embedding_adapter:
+                query_embedding = self._generate_embedding(semantic_query)
+                results = self.interactions_table.search(query_embedding, vector_column_name="embedding").limit(limit * 2)
+
+                # Apply SQL filters
+                if where_clause:
+                    results = results.where(where_clause)
+
+                # Limit results
+                results = results.limit(limit)
+                df = results.to_pandas()
+
+                return self._convert_df_to_dicts(df)
+            else:
+                # No semantic query or no embeddings - use SQL only
+                if where_clause:
+                    df = self.interactions_table.search().where(where_clause).limit(limit).to_pandas()
+                else:
+                    df = self.interactions_table.to_pandas().head(limit)
+
+                return self._convert_df_to_dicts(df)
+
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            return []
+
+    def search_by_category(self, category: str, user_id: Optional[str] = None, limit: int = 10) -> List[Dict]:
+        """
+        Search interactions by category.
+
+        Args:
+            category: Memory category (user_profile, preference, knowledge, etc.)
+            user_id: Optional user filter
+            limit: Maximum results
+
+        Returns:
+            List of matching interactions
+
+        Example:
+            preferences = storage.search_by_category("preference", user_id="alice", limit=20)
+        """
+        sql_filters = {'category': category}
+        if user_id:
+            sql_filters['user_id'] = user_id
+
+        return self.hybrid_search("", sql_filters=sql_filters, limit=limit)
+
+    def temporal_search(self, query: str, since: datetime, until: Optional[datetime] = None,
+                       user_id: Optional[str] = None, limit: int = 10) -> List[Dict]:
+        """
+        Search interactions within a time range.
+
+        Args:
+            query: Semantic search query
+            since: Start of time range
+            until: End of time range (defaults to now)
+            user_id: Optional user filter
+            limit: Maximum results
+
+        Returns:
+            List of matching interactions
+
+        Example:
+            recent = storage.temporal_search(
+                "Python errors",
+                since=datetime.now() - timedelta(days=1),
+                user_id="alice"
+            )
+        """
+        sql_filters = {}
+        if user_id:
+            sql_filters['user_id'] = user_id
+
+        until = until or datetime.now()
+        return self.hybrid_search(query, sql_filters=sql_filters, since=since, until=until, limit=limit)
+
+    def get_user_timeline(self, user_id: str, since: Optional[datetime] = None, limit: int = 50) -> List[Dict]:
+        """
+        Get chronological timeline of interactions for a user.
+
+        Args:
+            user_id: User identifier
+            since: Optional start date (defaults to all time)
+            limit: Maximum results
+
+        Returns:
+            List of interactions sorted by timestamp (newest first)
+
+        Example:
+            timeline = storage.get_user_timeline("alice", since=datetime.now() - timedelta(days=30))
+        """
+        try:
+            query_parts = [f"user_id = '{user_id}'"]
+
+            if since:
+                query_parts.append(f"timestamp >= '{since.isoformat()}'")
+
+            where_clause = " AND ".join(query_parts)
+
+            # Get results without semantic search
+            df = self.interactions_table.search().where(where_clause).limit(limit).to_pandas()
+
+            # Sort by timestamp (newest first)
+            if not df.empty and 'timestamp' in df.columns:
+                df = df.sort_values('timestamp', ascending=False)
+
+            return self._convert_df_to_dicts(df)
+
+        except Exception as e:
+            logger.error(f"Failed to get user timeline: {e}")
+            return []
+
     def _convert_df_to_dicts(self, df) -> List[Dict]:
         """Convert pandas DataFrame to list of dictionaries"""
         import json
@@ -418,7 +626,10 @@ class LanceDBStorage(IStorage):
                     "user_input": row["user_input"],
                     "agent_response": row["agent_response"],
                     "topic": row["topic"],
-                    "metadata": json.loads(row["metadata"]) if row["metadata"] else {}
+                    "category": row.get("category", "conversation"),     # NEW
+                    "confidence": float(row.get("confidence", 1.0)),     # NEW
+                    "tags": json.loads(row.get("tags", "[]")) if isinstance(row.get("tags"), str) else row.get("tags", []),  # NEW
+                    "metadata": json.loads(row["metadata"]) if row.get("metadata") else {}
                 }
                 results.append(result)
             except Exception as e:

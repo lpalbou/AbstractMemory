@@ -890,7 +890,7 @@ class EnhancedTUI:
     async def _process_agent_response(self, user_input: str):
         """Process user input through ReAct loop with real-time observability (non-blocking)."""
         try:
-            from react_loop import ReactLoop, ReactConfig
+            from abstractmemory.reasoning import ReactLoop, ReactConfig
 
             # Configure ReAct loop (keeps calls off the UI thread)
             config = ReactConfig(
