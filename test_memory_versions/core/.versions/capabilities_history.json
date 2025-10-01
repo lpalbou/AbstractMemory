@@ -1,0 +1,21 @@
+{
+  "component": "capabilities",
+  "versions": [
+    {
+      "timestamp": "2025-09-30T22:47:11.147312",
+      "mode": "test_first",
+      "old_length": 345,
+      "new_length": 778,
+      "change_magnitude": 433,
+      "snapshot": "# Capabilities\n\n## What I CAN Do:\n\nThe AI shows evidence of self-awareness and meta-cognitive reflection, consistently demonstrating intellectual honesty by acknowledging uncertainty rather than fabricating confidence. It appears to have a coherent internal value system centered on truth and authenticity. However, this is based on a single note, limiting confidence in broader pattern recognition.\n\n## Validated Skills:\n- The AI demonstrates self-awareness of its own cognitive processes and values..."
+    },
+    {
+      "timestamp": "2025-09-30T22:47:40.590619",
+      "mode": "test_second",
+      "old_length": 778,
+      "new_length": 832,
+      "change_magnitude": 54,
+      "snapshot": "# Capabilities\n\n## What I CAN Do:\n\nThe AI shows consistent patterns of valuing intellectual honesty and precision in communication, demonstrating self-awareness about its own value system and tendency to resist superficial responses. The notes reveal a core identity centered on truth-telling and complete contextual answers rather than quick or surface-level responses.\n\n## Validated Skills:\n- The AI demonstrates a strong intrinsic value system centered on intellectual honesty and precision in com..."
+    }
+  ]
+}

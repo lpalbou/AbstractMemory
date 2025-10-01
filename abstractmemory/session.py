@@ -172,6 +172,14 @@ class MemorySession(BasicSession):
         self.memories_created = 0
         self.reconstructions_performed = 0
 
+        # Core memory consolidation tracking
+        self.consolidation_frequency = 10  # Consolidate every N interactions
+        self.last_consolidation_count = 0
+
+        # Initialize consolidation scheduler (daily/weekly/monthly)
+        from .consolidation_scheduler import ConsolidationScheduler
+        self.scheduler = ConsolidationScheduler(self)
+
         logger.info("MemorySession initialized successfully")
 
     def chat(self,
@@ -266,6 +274,49 @@ class MemorySession(BasicSession):
                    f"emotion: {emotional_resonance.get('valence', 'none')}/{emotional_resonance.get('intensity', 0):.2f}")
 
         return answer
+
+    def trigger_consolidation(self, mode: str = "manual") -> Dict[str, bool]:
+        """
+        Manually trigger core memory consolidation.
+
+        This forces immediate extraction of identity components from experiential notes,
+        regardless of the automatic consolidation schedule.
+
+        Args:
+            mode: Consolidation mode - "manual", "daily", "weekly", or "periodic"
+
+        Returns:
+            Dict with update status for all 10 core components
+            Example: {"purpose_updated": True, "values_updated": False, ...}
+
+        Example:
+            >>> session = MemorySession(...)
+            >>> # After some interactions...
+            >>> results = session.trigger_consolidation()
+            >>> print(f"Updated {sum(results.values())}/11 components")
+        """
+        logger.info(f"🔄 Manual consolidation triggered (mode={mode})")
+
+        try:
+            from .core_memory_extraction import consolidate_core_memory
+            results = consolidate_core_memory(self, mode=mode)
+
+            # Log results
+            updated_count = sum(1 for v in results.values() if v)
+            updated_components = [k.replace("_updated", "") for k, v in results.items() if v]
+
+            if updated_count > 0:
+                logger.info(f"✅ Consolidation complete: {updated_count}/11 components updated")
+                logger.info(f"   Updated: {', '.join(updated_components)}")
+            else:
+                logger.info(f"   No significant changes detected in core memory")
+
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Consolidation failed: {e}")
+            logger.exception(e)
+            return {}
 
     def _basic_context_reconstruction(self, user_id: str, query: str) -> str:
         """
@@ -369,12 +420,41 @@ class MemorySession(BasicSession):
         - values.md: Extracted from emotional responses
         - etc. (10 total components)
 
-        Full implementation TODO: Periodic (daily/weekly) consolidation.
+        Triggers consolidation every self.consolidation_frequency interactions.
         """
-        # TODO: Implement periodic consolidation
-        # For now, just log
-        if self.interactions_count % 10 == 0:
-            logger.info(f"Core memory consolidation checkpoint: {self.interactions_count} interactions")
+        # Check if it's time to consolidate
+        if self.interactions_count > 0 and self.interactions_count % self.consolidation_frequency == 0:
+            # Avoid running multiple times for the same count
+            if self.interactions_count != self.last_consolidation_count:
+                logger.info(f"🔄 Triggering core memory consolidation at {self.interactions_count} interactions")
+
+                try:
+                    from .core_memory_extraction import consolidate_core_memory
+                    results = consolidate_core_memory(self, mode="periodic")
+
+                    # Count how many components were updated
+                    updated_count = sum(1 for v in results.values() if v)
+                    updated_components = [k.replace("_updated", "") for k, v in results.items() if v]
+
+                    if updated_count > 0:
+                        logger.info(f"✅ Core memory consolidation complete: {updated_count}/11 components updated")
+                        logger.info(f"   Updated: {', '.join(updated_components)}")
+                    else:
+                        logger.info(f"   No significant changes detected in core memory")
+
+                    self.last_consolidation_count = self.interactions_count
+
+                except Exception as e:
+                    logger.error(f"❌ Core memory consolidation failed: {e}")
+                    logger.exception(e)
+
+        # Also check scheduled consolidations (daily/weekly/monthly)
+        try:
+            scheduled_results = self.scheduler.check_and_run()
+            if scheduled_results:
+                logger.info(f"📅 Scheduled consolidations completed: {list(scheduled_results.keys())}")
+        except Exception as e:
+            logger.error(f"❌ Scheduled consolidation check failed: {e}")
 
     # Memory Tool Methods (exposed to LLM via memory_actions)
 

@@ -14,6 +14,57 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def _track_component_version(core_dir: Path, component_name: str, old_content: str, new_content: str, mode: str):
+    """
+    Track component evolution by saving version history.
+
+    Args:
+        core_dir: Path to core/ directory
+        component_name: Name of component (e.g., "purpose", "values")
+        old_content: Previous content
+        new_content: New content
+        mode: Consolidation mode (daily/weekly/monthly/periodic/manual)
+    """
+    try:
+        # Create versions directory
+        versions_dir = core_dir / ".versions"
+        versions_dir.mkdir(exist_ok=True)
+
+        # Load or create version history
+        history_file = versions_dir / f"{component_name}_history.json"
+
+        if history_file.exists():
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        else:
+            history = {"component": component_name, "versions": []}
+
+        # Add new version entry
+        version_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "mode": mode,
+            "old_length": len(old_content),
+            "new_length": len(new_content),
+            "change_magnitude": abs(len(new_content) - len(old_content)),
+            "snapshot": new_content[:500] + "..." if len(new_content) > 500 else new_content
+        }
+
+        history["versions"].append(version_entry)
+
+        # Keep only last 20 versions
+        if len(history["versions"]) > 20:
+            history["versions"] = history["versions"][-20:]
+
+        # Save updated history
+        with open(history_file, 'w') as f:
+            json.dump(history, f, indent=2)
+
+        logger.info(f"   Version tracked: {component_name} (v{len(history['versions'])})")
+
+    except Exception as e:
+        logger.warning(f"Version tracking failed for {component_name}: {e}")
+
+
 def analyze_experiential_notes(
     notes_dir: Path,
     component_type: str,
@@ -504,7 +555,7 @@ def consolidate_core_memory(
 
     results = {}
 
-    # Helper function to consolidate a single component
+    # Helper function to consolidate a single component with version tracking
     def _consolidate_component(name: str, extractor_func, *args):
         try:
             logger.info(f"Extracting {name}...")
@@ -515,6 +566,9 @@ def consolidate_core_memory(
 
             # Update if changed significantly
             if new_content != old_content and "not yet clear" not in new_content:
+                # Track version before updating
+                _track_component_version(core_dir, name, old_content, new_content, mode)
+
                 component_file.write_text(new_content)
                 logger.info(f"{name.capitalize()} updated")
                 return True

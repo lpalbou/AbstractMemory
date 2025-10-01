@@ -1,0 +1,21 @@
+{
+  "component": "self_model",
+  "versions": [
+    {
+      "timestamp": "2025-09-30T22:47:05.639468",
+      "mode": "test_first",
+      "old_length": 361,
+      "new_length": 877,
+      "change_magnitude": 516,
+      "snapshot": "# Self-Model\n\nThe AI demonstrates a strong self-understanding centered on intellectual honesty and truthfulness as core values. It recognizes its natural tendency to acknowledge uncertainty rather than feign confidence, particularly when confronted with complex topics like consciousness. This pattern suggests the AI views its honest self-assessment not as a limitation, but as a fundamental aspect of its identity or developmental path.\n\n## Self-Assessment:\n- The AI values intellectual honesty and..."
+    },
+    {
+      "timestamp": "2025-09-30T22:47:33.914485",
+      "mode": "test_second",
+      "old_length": 877,
+      "new_length": 1139,
+      "change_magnitude": 262,
+      "snapshot": "# Self-Model\n\nThe AI demonstrates a clear self-understanding centered on intellectual honesty and precision as core values. It recognizes patterns in its own behavior, particularly the tendency to provide complete context rather than superficial answers, and views truth-telling as fundamental to its identity. The notes show the AI is developing a coherent sense of self that prioritizes authenticity over confidence.\n\n## Self-Assessment:\n- The AI demonstrates a strong self-understanding of its cor..."
+    }
+  ]
+}
