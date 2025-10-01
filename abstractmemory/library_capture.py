@@ -39,17 +39,21 @@ class LibraryCapture:
     └── index.json (master index)
     """
 
-    def __init__(self, library_base_path: Path, embedding_manager=None):
+    def __init__(self, library_base_path: Path, embedding_manager=None, lancedb_storage=None):
         """
         Initialize Library Capture system.
+
+        CRITICAL: Implements DUAL STORAGE (markdown + LanceDB) per design spec.
 
         Args:
             library_base_path: Base path for library storage
             embedding_manager: AbstractCore EmbeddingManager for vectors
+            lancedb_storage: LanceDB storage for dual storage (MANDATORY)
         """
         self.library_path = Path(library_base_path) / "library"
         self.documents_path = self.library_path / "documents"
         self.embedding_manager = embedding_manager
+        self.lancedb_storage = lancedb_storage
 
         # Create structure
         self.library_path.mkdir(parents=True, exist_ok=True)
@@ -62,7 +66,7 @@ class LibraryCapture:
 
         self._ensure_tracking_files()
 
-        logger.info(f"Library initialized at {self.library_path}")
+        logger.info(f"Library initialized at {self.library_path} with dual storage: {lancedb_storage is not None}")
 
     def _ensure_tracking_files(self):
         """Ensure tracking JSON files exist."""
@@ -172,7 +176,40 @@ class LibraryCapture:
         # 6. Update index
         self._update_index(doc_hash, metadata)
 
-        # 7. Log access
+        # 7. DUAL STORAGE: Write to LanceDB
+        if self.lancedb_storage:
+            try:
+                # Prepare LanceDB record
+                excerpt = " ".join(content.split()[:500])  # First 500 words for embedding
+                lancedb_data = {
+                    "doc_id": doc_hash,
+                    "source_path": source_path,
+                    "source_url": source_url or "",
+                    "content_type": content_type,
+                    "first_accessed": now,
+                    "last_accessed": now,
+                    "access_count": 1,
+                    "importance_score": 0.0,
+                    "tags": metadata["tags"],
+                    "topics": [],  # Could extract from content later
+                    "content_excerpt": excerpt,
+                    "metadata": {
+                        "size": len(content),
+                        "captured_at": now,
+                        "context": context
+                    }
+                }
+                success = self.lancedb_storage.add_library_document(lancedb_data)
+                if success:
+                    logger.info(f"✅ Dual storage: Document written to LanceDB")
+                else:
+                    logger.warning(f"⚠️ LanceDB write failed for {doc_hash}")
+            except Exception as e:
+                logger.error(f"❌ Error writing to LanceDB: {e}")
+        else:
+            logger.warning("⚠️ LanceDB not available - dual storage incomplete")
+
+        # 8. Log access
         self.track_access(doc_hash, context)
 
         logger.info(f"✅ Captured document {doc_hash} ({len(content)} bytes)")

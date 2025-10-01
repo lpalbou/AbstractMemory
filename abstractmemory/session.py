@@ -154,12 +154,14 @@ class MemorySession(BasicSession):
             logger.warning(f"Memory structure initialization had issues: {e}")
 
         # Initialize Library Capture (Phase 5: Subconscious Memory)
+        # CRITICAL: Uses DUAL STORAGE (markdown + LanceDB)
         try:
             self.library = LibraryCapture(
                 library_base_path=self.memory_base_path,
-                embedding_manager=self.embedding_manager
+                embedding_manager=self.embedding_manager,
+                lancedb_storage=self.lancedb_storage  # Dual storage requirement
             )
-            logger.info("Library capture system initialized (Phase 5)")
+            logger.info("Library capture system initialized (Phase 5) with dual storage")
         except Exception as e:
             logger.warning(f"Library capture initialization failed: {e}")
             self.library = None
