@@ -203,6 +203,16 @@ class MemorySession(BasicSession):
         self.semantic_memory = SemanticMemoryManager(self.memory_base_path)
         logger.info("Enhanced memory managers (working/episodic/semantic) initialized")
 
+        # Initialize user profile manager (Phase 6)
+        from .user_profile_extraction import UserProfileManager
+        self.user_profile_manager = UserProfileManager(
+            memory_base_path=self.memory_base_path,
+            llm_provider=self.provider  # Use same LLM for profile extraction
+        )
+        self.profile_update_threshold = 10  # Update profile every N interactions per user
+        self.user_interaction_counts = {}  # Track interactions per user
+        logger.info("User profile manager initialized (Phase 6)")
+
         logger.info("MemorySession initialized successfully")
 
     def chat(self,
@@ -297,6 +307,9 @@ class MemorySession(BasicSession):
             emotional_resonance=emotional_resonance,
             unresolved=processed.get("unresolved_questions", [])
         )
+
+        # Step 9: Check for user profile update (Phase 6)
+        self._check_user_profile_update(user_id)
 
         # Update counters
         self.interactions_count += 1
@@ -553,6 +566,113 @@ class MemorySession(BasicSession):
                 except Exception as e:
                     logger.error(f"❌ Core memory consolidation failed: {e}")
                     logger.exception(e)
+
+    def _check_user_profile_update(self, user_id: str):
+        """
+        Check if user profile should be updated (threshold-based).
+
+        User profiles emerge from verbatim interactions:
+        - profile.md: Background, expertise, thinking style, communication
+        - preferences.md: Organization, language, depth, decision-making
+
+        Triggers update every self.profile_update_threshold interactions per user.
+
+        Args:
+            user_id: User identifier
+        """
+        # Track interactions per user
+        if user_id not in self.user_interaction_counts:
+            self.user_interaction_counts[user_id] = 0
+
+        self.user_interaction_counts[user_id] += 1
+        count = self.user_interaction_counts[user_id]
+
+        # Check if threshold reached
+        if count > 0 and count % self.profile_update_threshold == 0:
+            logger.info(f"🧑 Triggering user profile update for {user_id} at {count} interactions")
+
+            try:
+                result = self.user_profile_manager.update_user_profile(
+                    user_id=user_id,
+                    min_interactions=5  # Minimum required
+                )
+
+                if result["status"] == "success":
+                    logger.info(
+                        f"✅ User profile updated for {user_id}: "
+                        f"{result['interactions_analyzed']} interactions analyzed"
+                    )
+
+                    # Load profiles into memory for reconstruct_context()
+                    profile = self.user_profile_manager.get_user_profile(user_id)
+                    preferences = self.user_profile_manager.get_user_preferences(user_id)
+
+                    self.user_profiles[user_id] = {
+                        "profile": profile,
+                        "preferences": preferences,
+                        "last_updated": result["updated_at"]
+                    }
+
+                elif result["status"] == "insufficient_data":
+                    logger.info(
+                        f"⚠️  Insufficient data for {user_id}: "
+                        f"{result['interactions_found']}/{result['min_required']} interactions"
+                    )
+
+            except Exception as e:
+                logger.error(f"❌ User profile update failed for {user_id}: {e}")
+                logger.exception(e)
+
+    def update_user_profile(self, user_id: str, min_interactions: int = 5) -> Dict[str, Any]:
+        """
+        Manually trigger user profile update.
+
+        This forces immediate profile extraction from verbatim interactions,
+        regardless of the automatic threshold-based updates.
+
+        Args:
+            user_id: User identifier
+            min_interactions: Minimum interactions required for extraction (default: 5)
+
+        Returns:
+            Dict with update status and results
+
+        Example:
+            >>> session = MemorySession(...)
+            >>> # After some interactions with alice...
+            >>> result = session.update_user_profile("alice")
+            >>> print(f"Status: {result['status']}, Analyzed: {result.get('interactions_analyzed', 0)}")
+        """
+        logger.info(f"🔄 Manual user profile update for {user_id} (min_interactions={min_interactions})")
+
+        try:
+            result = self.user_profile_manager.update_user_profile(
+                user_id=user_id,
+                min_interactions=min_interactions
+            )
+
+            if result["status"] == "success":
+                # Load profiles into memory
+                profile = self.user_profile_manager.get_user_profile(user_id)
+                preferences = self.user_profile_manager.get_user_preferences(user_id)
+
+                self.user_profiles[user_id] = {
+                    "profile": profile,
+                    "preferences": preferences,
+                    "last_updated": result["updated_at"]
+                }
+
+                logger.info(
+                    f"✅ Profile updated: {result['interactions_analyzed']} interactions, "
+                    f"saved to {result['profile_path']}"
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Profile update failed: {e}")
+            logger.exception(e)
+            return {"status": "error", "error": str(e)}
 
         # Also check scheduled consolidations (daily/weekly/monthly)
         try:
@@ -1330,6 +1450,134 @@ This is a deep reflection on "{topic}". Key considerations:
                 "synthesized_context": f"Error reconstructing context: {e}"
             }
 
+    def _extract_profile_summary(self, profile_content: str) -> str:
+        """
+        Extract concise summary from profile.md content.
+
+        Extracts key information from:
+        - Background & Expertise
+        - Thinking Style
+        - Communication Style
+
+        Args:
+            profile_content: Full profile.md content
+
+        Returns:
+            Concise summary (3-5 lines)
+        """
+        summary_parts = []
+
+        # Parse markdown sections
+        lines = profile_content.split("\n")
+        current_section = None
+        section_content = []
+
+        for line in lines:
+            # Detect section headers (## or **)
+            if line.startswith("##") or (line.startswith("**") and line.endswith("**")):
+                # Save previous section
+                if current_section and section_content:
+                    summary = self._summarize_section(current_section, section_content)
+                    if summary:
+                        summary_parts.append(summary)
+
+                # Start new section
+                section_header = line.strip("#* ")
+                if any(keyword in section_header.lower() for keyword in ["background", "expertise", "thinking", "communication"]):
+                    current_section = section_header
+                    section_content = []
+                else:
+                    current_section = None
+                    section_content = []
+            elif current_section and line.strip() and not line.startswith("---"):
+                section_content.append(line.strip())
+
+        # Save last section
+        if current_section and section_content:
+            summary = self._summarize_section(current_section, section_content)
+            if summary:
+                summary_parts.append(summary)
+
+        return "\n".join(summary_parts[:3]) if summary_parts else ""
+
+    def _extract_preferences_summary(self, preferences_content: str) -> str:
+        """
+        Extract concise summary from preferences.md content.
+
+        Extracts key information from:
+        - Communication Preferences
+        - Organization Preferences
+        - Content Preferences
+
+        Args:
+            preferences_content: Full preferences.md content
+
+        Returns:
+            Concise summary (3-5 lines)
+        """
+        summary_parts = []
+
+        # Parse markdown sections
+        lines = preferences_content.split("\n")
+        current_section = None
+        section_content = []
+
+        for line in lines:
+            if line.startswith("##") or (line.startswith("**") and line.endswith("**")):
+                if current_section and section_content:
+                    summary = self._summarize_section(current_section, section_content)
+                    if summary:
+                        summary_parts.append(summary)
+
+                section_header = line.strip("#* ")
+                if any(keyword in section_header.lower() for keyword in ["communication", "organization", "content"]):
+                    current_section = section_header
+                    section_content = []
+                else:
+                    current_section = None
+                    section_content = []
+            elif current_section and line.strip() and not line.startswith("---"):
+                section_content.append(line.strip())
+
+        # Save last section
+        if current_section and section_content:
+            summary = self._summarize_section(current_section, section_content)
+            if summary:
+                summary_parts.append(summary)
+
+        return "\n".join(summary_parts[:3]) if summary_parts else ""
+
+    def _summarize_section(self, section_name: str, content_lines: List[str]) -> str:
+        """
+        Summarize a profile/preferences section.
+
+        Args:
+            section_name: Section header
+            content_lines: Lines of content
+
+        Returns:
+            One-line summary
+        """
+        # Get first meaningful bullet or sentence
+        for line in content_lines[:5]:  # Look at first 5 lines
+            # Skip list markers, metadata, and very short lines
+            clean_line = line.lstrip("- *•").strip()
+            if len(clean_line) > 20 and not clean_line.startswith("Example:") and not clean_line.startswith("*"):
+                # Truncate if too long
+                if len(clean_line) > 120:
+                    clean_line = clean_line[:120] + "..."
+                return f"  • {section_name}: {clean_line}"
+
+        # Fallback: concatenate first few words
+        text = " ".join(content_lines[:3])
+        text = text.lstrip("- *•").strip()
+        if len(text) > 120:
+            text = text[:120] + "..."
+        if text:
+            return f"  • {section_name}: {text}"
+
+        return ""
+
     def _calculate_valence_distribution(self, memories: List[Dict]) -> Dict[str, int]:
         """Calculate distribution of emotional valence across memories."""
         distribution = {"positive": 0, "negative": 0, "mixed": 0, "neutral": 0}
@@ -1383,9 +1631,23 @@ This is a deep reflection on "{topic}". Key considerations:
         if core_context.get("values"):
             parts.append(f"[Values]: {core_context['values']}")
 
-        # User relationship
-        if user_context.get("profile"):
-            parts.append(f"[User]: {user_context['profile']}")
+        # User relationship (Phase 6 integration)
+        user_profile = user_context.get("profile", {})
+        if user_profile:
+            # Extract summary from profile.md content
+            profile_content = user_profile.get("profile", "")
+            if profile_content and len(profile_content) > 100:
+                # Extract key sections for context (first few lines of each section)
+                profile_summary = self._extract_profile_summary(profile_content)
+                if profile_summary:
+                    parts.append(f"[User Profile]:\n{profile_summary}")
+
+            # Extract preferences summary
+            preferences_content = user_profile.get("preferences", "")
+            if preferences_content and len(preferences_content) > 100:
+                preferences_summary = self._extract_preferences_summary(preferences_content)
+                if preferences_summary:
+                    parts.append(f"[User Preferences]:\n{preferences_summary}")
 
         # Temporal/spatial context
         parts.append(f"[Time]: {temporal_context['day_of_week']} {temporal_context['time_of_day']}")
