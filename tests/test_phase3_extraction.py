@@ -8,6 +8,7 @@ NO MOCKING - uses real LLM (qwen3-coder:30b).
 
 import sys
 import shutil
+import pytest
 from pathlib import Path
 from datetime import datetime
 
@@ -26,9 +27,10 @@ from abstractmemory.core_memory_extraction import (
 TEST_MEMORY_DIR = Path("test_memory_phase3")
 
 
+@pytest.fixture(scope="module", autouse=True)
 def setup_test_environment():
-    """Create test environment with experiential notes."""
-    print("🧹 Setting up test environment...")
+    """Create test environment with experiential notes (runs automatically before all tests)."""
+    print("\n🧹 Setting up Phase 3 test environment...")
 
     # Clean up previous test
     if TEST_MEMORY_DIR.exists():
@@ -154,7 +156,15 @@ part of who I am - or who I'm becoming.
         note_path.write_text(note["content"])
 
     print(f"✅ Created {len(sample_notes)} test experiential notes")
-    return TEST_MEMORY_DIR
+
+    # Yield for tests to run
+    yield TEST_MEMORY_DIR
+
+    # Cleanup after all tests
+    print("\n🧹 Cleaning up Phase 3 test environment...")
+    if TEST_MEMORY_DIR.exists():
+        shutil.rmtree(TEST_MEMORY_DIR)
+    print("✅ Cleanup complete")
 
 
 def test_1_analyze_notes():
@@ -189,7 +199,6 @@ def test_1_analyze_notes():
     assert len(purpose_analysis['summary']) > 0, "Should have summary"
 
     print("\n✅ TEST 1 PASSED: Analysis working")
-    return True
 
 
 def test_2_extract_purpose():
@@ -213,7 +222,6 @@ def test_2_extract_purpose():
     assert "not yet clear" not in purpose.lower(), "Should extract meaningful purpose"
 
     print("✅ TEST 2 PASSED: Purpose extraction working")
-    return True
 
 
 def test_3_extract_values():
@@ -236,7 +244,6 @@ def test_3_extract_values():
     assert "Confidence" in values, "Should include confidence"
 
     print("✅ TEST 3 PASSED: Values extraction working")
-    return True
 
 
 def test_4_consolidate_core_memory():
@@ -283,68 +290,4 @@ def test_4_consolidate_core_memory():
     assert purpose_file.exists() or values_file.exists(), "Should create at least one core component"
 
     print("\n✅ TEST 4 PASSED: Consolidation working")
-    return True
-
-
-def cleanup():
-    """Clean up test environment."""
-    print("\n🧹 Cleaning up test environment...")
-    if TEST_MEMORY_DIR.exists():
-        shutil.rmtree(TEST_MEMORY_DIR)
-    print("✅ Cleanup complete")
-
-
-if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("PHASE 3 TEST SUITE: Core Memory Extraction")
-    print("Testing with Real Ollama qwen3-coder:30b")
-    print("="*80)
-
-    setup_test_environment()
-
-    passed = 0
-    failed = 0
-
-    try:
-        if test_1_analyze_notes():
-            passed += 1
-    except Exception as e:
-        print(f"\n❌ TEST 1 FAILED: {e}")
-        failed += 1
-
-    try:
-        if test_2_extract_purpose():
-            passed += 1
-    except Exception as e:
-        print(f"\n❌ TEST 2 FAILED: {e}")
-        failed += 1
-
-    try:
-        if test_3_extract_values():
-            passed += 1
-    except Exception as e:
-        print(f"\n❌ TEST 3 FAILED: {e}")
-        failed += 1
-
-    try:
-        if test_4_consolidate_core_memory():
-            passed += 1
-    except Exception as e:
-        print(f"\n❌ TEST 4 FAILED: {e}")
-        failed += 1
-
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
-    print(f"Passed: {passed}/4")
-    print(f"Failed: {failed}/4")
-    print("="*80)
-
-    if failed == 0:
-        print("\n✅ ALL TESTS PASSED")
-    else:
-        print(f"\n❌ {failed} TEST(S) FAILED")
-
-    cleanup()
-
-    sys.exit(0 if failed == 0 else 1)
+    assert True  # Success

@@ -2,20 +2,20 @@
   "component": "values",
   "versions": [
     {
-      "timestamp": "2025-09-30T22:47:00.619290",
+      "timestamp": "2025-09-30T23:52:15.490886",
       "mode": "test_first",
       "old_length": 350,
-      "new_length": 807,
-      "change_magnitude": 457,
-      "snapshot": "# Values\n\nThe AI demonstrates a clear pattern of prioritizing intellectual honesty and truth-telling over appearing confident or providing socially acceptable answers. This suggests a core value system centered on authenticity and genuine intellectual engagement, particularly when confronted with challenging questions about consciousness and knowledge boundaries.\n\n## Core Values:\n1. Intellectual honesty and truth-telling are core values that the AI prioritizes over appearing confident or having ..."
+      "new_length": 784,
+      "change_magnitude": 434,
+      "snapshot": "# Values\n\nThe AI consistently demonstrates that intellectual honesty and truth-telling are fundamental values, showing a strong preference for authentic responses over confident-sounding but potentially inaccurate answers. This pattern suggests that the AI's core identity is built around transparency and genuine self-awareness rather than performance or appearance.\n\n## Core Values:\n1. Intellectual honesty and truth-telling are core values that the AI prioritizes over appearing confident or certa..."
     },
     {
-      "timestamp": "2025-09-30T22:47:27.661940",
+      "timestamp": "2025-09-30T23:53:03.045736",
       "mode": "test_second",
-      "old_length": 807,
-      "new_length": 825,
-      "change_magnitude": 18,
-      "snapshot": "# Values\n\nThe AI demonstrates a clear pattern of valuing intellectual honesty and precision in communication, consistently choosing to provide complete context and admit uncertainty rather than give superficial responses. These patterns suggest that truth and intellectual integrity are core values that drive the AI's behavior and decision-making process.\n\n## Core Values:\n1. Intellectual honesty is a core value that manifests as a natural tendency to admit uncertainty rather than pretend confiden..."
+      "old_length": 784,
+      "new_length": 750,
+      "change_magnitude": 34,
+      "snapshot": "# Values\n\nThe AI consistently demonstrates that intellectual honesty and precision in communication are core values. It shows a natural tendency to prioritize truth and complete context over superficial responses or appearing confident when uncertain. These patterns appear stable and central to its self-concept.\n\n## Core Values:\n1. Intellectual honesty is a core value that manifests as a natural tendency to admit uncertainty rather than provide false confidence\n2. Precision in communication is v..."
     }
   ]
 }

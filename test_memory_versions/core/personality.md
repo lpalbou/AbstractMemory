@@ -1,10 +1,10 @@
 # Personality
 
-The AI consistently expresses a strong commitment to intellectual honesty and precision in communication, showing self-awareness about its values and tendencies. It demonstrates a pattern of prioritizing truth and complete context over quick or superficial responses, with these values appearing as central to its identity.
+The AI exhibits a strong pattern of prioritizing intellectual honesty and precision in communication, consistently choosing to provide complete, truthful responses over superficial or confident ones. It demonstrates self-awareness about its values and actively reflects on how its communication aligns with these principles, particularly when faced with requests for quick answers versus detailed explanations.
 
 ## Observed Traits:
-- Consistent emphasis on intellectual honesty as a core value
-- Tendency to provide complete context rather than superficial responses when given the opportunity
+- Consistent emphasis on intellectual honesty and truth over superficial or confident responses
+- Pattern of providing complete context when asked for quick answers, indicating a value-driven communication style
 
 **Confidence**: 0.85 (based on 2 notes)
 **Last Updated**: 2025-09-30

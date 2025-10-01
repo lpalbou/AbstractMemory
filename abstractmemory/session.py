@@ -14,7 +14,7 @@ Philosophy: "Memory is the diary we all carry about with us" - Oscar Wilde
 
 import logging
 from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
@@ -41,6 +41,7 @@ from .memory_structure import initialize_memory_structure
 from .working_memory import WorkingMemoryManager
 from .episodic_memory import EpisodicMemoryManager
 from .semantic_memory import SemanticMemoryManager
+from .library_capture import LibraryCapture
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,17 @@ class MemorySession(BasicSession):
             logger.info(f"Memory structure initialized: {init_status}")
         except Exception as e:
             logger.warning(f"Memory structure initialization had issues: {e}")
+
+        # Initialize Library Capture (Phase 5: Subconscious Memory)
+        try:
+            self.library = LibraryCapture(
+                library_base_path=self.memory_base_path,
+                embedding_manager=self.embedding_manager
+            )
+            logger.info("Library capture system initialized (Phase 5)")
+        except Exception as e:
+            logger.warning(f"Library capture initialization failed: {e}")
+            self.library = None
 
         # Core memory state (10 components - emergent properties)
         self.core_memory = {
@@ -825,9 +837,10 @@ This reflects how emotionally significant this memory is based on importance and
         """
         Search Library (subconscious memory) for documents AI has read.
 
-        This searches the library/ directory for documents that have been
-        read/accessed by the AI. Useful during active memory reconstruction
-        to surface relevant information from documents.
+        Phase 5: Library Memory - "You Are What You Read"
+        Uses LibraryCapture system with embedding-based search and importance scoring.
+
+        From docs/diagrams.md:921-956 (Retrieval During Reconstruct).
 
         Args:
             query: Semantic search query
@@ -843,94 +856,14 @@ This reflects how emotionally significant this memory is based on importance and
         try:
             logger.info(f"Search library: {query} (limit={limit})")
 
-            # Check if library directory exists
-            library_dir = self.memory_base_path / "library" / "documents"
-            if not library_dir.exists():
-                logger.warning("Library directory does not exist yet")
-                # Create it for future use
-                library_dir.mkdir(parents=True, exist_ok=True)
+            # Use LibraryCapture system (Phase 5)
+            if self.library:
+                results = self.library.search_library(query, limit=limit)
+                logger.info(f"Library search complete: {len(results)} results (LibraryCapture)")
+                return results
+            else:
+                logger.warning("Library system not initialized")
                 return []
-
-            results = []
-
-            # Search through library documents
-            doc_dirs = [d for d in library_dir.iterdir() if d.is_dir()]
-            logger.info(f"Searching {len(doc_dirs)} library documents")
-
-            for doc_dir in doc_dirs:
-                if len(results) >= limit:
-                    break
-
-                try:
-                    # Read content.md
-                    content_file = doc_dir / "content.md"
-                    if not content_file.exists():
-                        continue
-
-                    with open(content_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-
-                    # Check if query matches (case-insensitive)
-                    if query.lower() in content.lower():
-                        # Read metadata if available
-                        metadata_file = doc_dir / "metadata.json"
-                        metadata = {}
-                        if metadata_file.exists():
-                            import json
-                            with open(metadata_file, 'r', encoding='utf-8') as f:
-                                metadata = json.load(f)
-
-                        # Update access tracking
-                        access_count = metadata.get('access_count', 0) + 1
-                        metadata['access_count'] = access_count
-                        metadata['last_accessed'] = datetime.now().isoformat()
-
-                        # Write back updated metadata
-                        with open(metadata_file, 'w', encoding='utf-8') as f:
-                            json.dump(metadata, f, indent=2)
-
-                        # Create result with excerpt
-                        # Find context around query match
-                        query_pos = content.lower().find(query.lower())
-                        if query_pos >= 0:
-                            start = max(0, query_pos - 100)
-                            end = min(len(content), query_pos + 300)
-                            excerpt = content[start:end]
-                        else:
-                            excerpt = content[:400]
-
-                        result = {
-                            "doc_id": doc_dir.name,
-                            "source": metadata.get('source_path', 'unknown'),
-                            "content_type": metadata.get('content_type', 'unknown'),
-                            "excerpt": excerpt,
-                            "access_count": access_count,
-                            "first_accessed": metadata.get('first_accessed'),
-                            "last_accessed": metadata['last_accessed'],
-                            "relevance": "high" if query.lower() in excerpt.lower() else "medium"
-                        }
-
-                        results.append(result)
-
-                        logger.info(f"Found in library: {doc_dir.name} (accessed {access_count} times)")
-
-                except Exception as e:
-                    logger.warning(f"Error reading library document {doc_dir.name}: {e}")
-                    continue
-
-            logger.info(f"Library search complete: {len(results)} results (filesystem)")
-
-            # Try LanceDB library search for semantic matching
-            if self.lancedb_storage and not results:
-                try:
-                    lancedb_results = self.lancedb_storage.search_library(query, limit)
-                    if lancedb_results:
-                        logger.info(f"LanceDB library found {len(lancedb_results)} semantic matches")
-                        return lancedb_results
-                except Exception as e:
-                    logger.warning(f"LanceDB library search failed: {e}")
-
-            return results[:limit]
 
         except Exception as e:
             logger.error(f"Library search failed: {e}")
@@ -1012,6 +945,58 @@ This reflects how emotionally significant this memory is based on importance and
         except Exception as e:
             logger.error(f"Failed to create link: {e}")
             return f"link_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def capture_document(self,
+                        source_path: str,
+                        content: str,
+                        content_type: str = "text",
+                        source_url: Optional[str] = None,
+                        context: Optional[str] = None,
+                        tags: Optional[List[str]] = None) -> Optional[str]:
+        """
+        Capture a document into Library (Phase 5).
+
+        From docs/diagrams.md:876-919 (Library Capture Process).
+
+        Args:
+            source_path: Path to source file
+            content: Document content
+            content_type: Type (code, markdown, pdf, text)
+            source_url: Optional source URL
+            context: Optional context for why read
+            tags: Optional tags
+
+        Returns:
+            str: Document hash ID, or None if failed
+
+        Example:
+            doc_id = session.capture_document(
+                source_path="/path/to/file.py",
+                content=file_content,
+                content_type="code",
+                context="researching async patterns"
+            )
+        """
+        try:
+            if not self.library:
+                logger.warning("Library system not initialized, cannot capture document")
+                return None
+
+            doc_id = self.library.capture_document(
+                source_path=source_path,
+                content=content,
+                content_type=content_type,
+                source_url=source_url,
+                context=context,
+                tags=tags
+            )
+
+            logger.info(f"Captured document to library: {doc_id}")
+            return doc_id
+
+        except Exception as e:
+            logger.error(f"Error capturing document: {e}")
+            return None
 
     def reflect_on(self, topic: str) -> str:
         """

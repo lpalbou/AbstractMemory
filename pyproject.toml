@@ -52,3 +52,9 @@ include = ["abstractmemory*"]
 
 [tool.setuptools.package-data]
 abstractmemory = ["*.md", "docs/*.md"]
+
+[tool.pytest.ini_options]
+# Suppress asyncio_mode warning from pytest-asyncio
+filterwarnings = [
+    "ignore::pytest.PytestConfigWarning"
+]
