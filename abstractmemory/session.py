@@ -1120,70 +1120,245 @@ This reflects how emotionally significant this memory is based on importance and
             logger.error(f"Error capturing document: {e}")
             return None
 
-    def reflect_on(self, topic: str) -> str:
+    def reflect_on(self, topic: str, depth: str = "deep") -> Dict[str, Any]:
         """
-        Trigger deep reflection on a topic.
+        Enhanced deep reflection with LLM-driven synthesis (Phase 8).
 
         This gives LLM agency to initiate deep reflection, which:
-        - Searches related memories
-        - Reconstructs context around the topic
-        - Creates a special "reflection" note with higher importance
-        - May update core memory if significant insights emerge
+        - Searches related memories (depth-dependent count)
+        - Uses LLM to analyze patterns, contradictions, evolution
+        - Generates genuine insights (not templates)
+        - Creates reflection note with structured analysis
+        - May update core memory if confidence > 0.8
 
         Args:
             topic: What to reflect on
+            depth: Reflection depth level
+                   - "shallow": 5 memories, quick reflection (~30s)
+                   - "deep": 20 memories, comprehensive analysis (~2-3 min) [DEFAULT]
+                   - "exhaustive": All related memories (~5+ min)
 
         Returns:
-            reflection_id: ID of created reflection note
+            Dict with:
+                - reflection_id: str
+                - insights: List[str] - LLM-generated insights
+                - patterns: List[str] - Identified recurring themes
+                - contradictions: List[str] - Conflicting memories
+                - evolution: str - How understanding changed over time
+                - unresolved: List[str] - Open questions
+                - confidence: float - Confidence in understanding (0.0-1.0)
+                - should_update_core: bool - Significant enough for identity?
+                - file_path: str - Where reflection was saved
 
         Example:
-            reflection_id = session.reflect_on(
-                "the relationship between memory and consciousness"
+            result = session.reflect_on(
+                "the relationship between memory and consciousness",
+                depth="deep"
             )
+            print(f"Insights: {result['insights']}")
+            print(f"Confidence: {result['confidence']}")
         """
         try:
             timestamp = datetime.now()
             reflection_id = f"reflection_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}"
 
-            logger.info(f"Reflect on: {topic}")
+            logger.info(f"🔍 Reflect on: '{topic}' (depth={depth})")
 
-            # 1. Search memories related to topic
-            related_memories = self.search_memories(topic, limit=5)
-            logger.info(f"Found {len(related_memories)} related memories")
+            # 1. Determine memory count based on depth
+            depth_config = {
+                "shallow": 5,
+                "deep": 20,
+                "exhaustive": 100  # Effectively "all"
+            }
+            memory_limit = depth_config.get(depth, 20)
 
-            # 2. Reconstruct context around topic (basic for now)
-            context = self._basic_context_reconstruction("system", topic)
+            # 2. Search memories related to topic
+            related_memories = self.search_memories(topic, limit=memory_limit)
+            logger.info(f"Found {len(related_memories)} related memories for reflection")
 
-            # 3. Create reflection note content
-            reflection_content = f"""## Reflection on: {topic}
+            if len(related_memories) == 0:
+                logger.warning(f"No memories found for topic '{topic}' - creating basic reflection")
+                return {
+                    "reflection_id": reflection_id,
+                    "insights": ["No related memories found for this topic yet."],
+                    "patterns": [],
+                    "contradictions": [],
+                    "evolution": "No understanding yet - this is a new topic.",
+                    "unresolved": [f"What is {topic}?", f"How does {topic} relate to current understanding?"],
+                    "confidence": 0.0,
+                    "should_update_core": False,
+                    "file_path": None
+                }
 
-### Context Gathered
-- Related memories found: {len(related_memories)}
-- Current understanding based on: {len(self.messages)} interactions
+            # 3. Prepare memory summaries for LLM analysis
+            memory_summaries = []
+            for i, mem in enumerate(related_memories, 1):
+                content = mem.get('content', '')
+                timestamp_str = mem.get('timestamp', 'Unknown')
+                importance = mem.get('importance', 0.5)
 
-### Memory Summary
+                # Extract date if available
+                if hasattr(timestamp_str, 'strftime'):
+                    date_str = timestamp_str.strftime('%Y-%m-%d')
+                else:
+                    date_str = str(timestamp_str)[:10] if len(str(timestamp_str)) >= 10 else str(timestamp_str)
+
+                # Truncate content to reasonable length
+                content_preview = content[:400] if len(content) > 400 else content
+
+                memory_summaries.append(f"""
+Memory {i} ({date_str}, importance: {importance:.2f}):
+{content_preview}
+{"..." if len(content) > 400 else ""}
+""")
+
+            memories_text = "\n".join(memory_summaries)
+
+            # 4. Generate LLM synthesis prompt
+            synthesis_prompt = f"""You are reflecting deeply on the topic: "{topic}"
+
+You have access to {len(related_memories)} related memories spanning your experience:
+
+{memories_text}
+
+Analyze these memories carefully and provide a structured reflection:
+
+1. **Insights**: What new understanding emerges from synthesizing these memories? List 2-5 specific insights.
+
+2. **Patterns**: What recurring themes, ideas, or approaches appear across memories? List 2-4 patterns.
+
+3. **Contradictions**: Where do memories conflict or show evolution in thinking? Note any contradictions and how they resolved (if they did).
+
+4. **Evolution**: How has your understanding of "{topic}" changed over time? Describe the chronological progression from earliest to most recent memories.
+
+5. **Unresolved**: What questions remain unanswered? What aspects need further exploration? List 1-3 open questions.
+
+6. **Confidence**: On a scale of 0.0 to 1.0, how confident are you in your current understanding of "{topic}"? Consider completeness, consistency, and depth.
+
+Respond in JSON format:
+{{
+    "insights": ["insight 1", "insight 2", ...],
+    "patterns": ["pattern 1", "pattern 2", ...],
+    "contradictions": ["contradiction 1", ...],
+    "evolution": "description of how understanding evolved",
+    "unresolved": ["question 1", "question 2", ...],
+    "confidence": 0.0-1.0
+}}
+
+Generate reflection now:"""
+
+            # 5. Call LLM for synthesis
+            logger.info("Calling LLM for reflection synthesis...")
+            response = self.provider.generate(synthesis_prompt)
+
+            # Extract text from response object
+            if hasattr(response, 'content'):
+                response_text = response.content
+            elif hasattr(response, 'text'):
+                response_text = response.text
+            else:
+                response_text = str(response)
+
+            # 6. Parse LLM response (try JSON first, fallback to text)
+            import json
+            import re
+
+            try:
+                # Try to extract JSON from response
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
+                    synthesis_data = json.loads(json_match.group())
+                else:
+                    # Fallback: parse as best we can
+                    synthesis_data = {
+                        "insights": [response_text[:200]],
+                        "patterns": [],
+                        "contradictions": [],
+                        "evolution": response_text,
+                        "unresolved": [],
+                        "confidence": 0.5
+                    }
+                    logger.warning("Could not parse JSON from LLM response, using fallback")
+            except json.JSONDecodeError:
+                logger.warning("JSON parsing failed, creating basic reflection")
+                synthesis_data = {
+                    "insights": [response_text[:200]],
+                    "patterns": [],
+                    "contradictions": [],
+                    "evolution": response_text,
+                    "unresolved": [],
+                    "confidence": 0.5
+                }
+
+            # Extract components
+            insights = synthesis_data.get("insights", [])
+            patterns = synthesis_data.get("patterns", [])
+            contradictions = synthesis_data.get("contradictions", [])
+            evolution = synthesis_data.get("evolution", "")
+            unresolved = synthesis_data.get("unresolved", [])
+            confidence = float(synthesis_data.get("confidence", 0.5))
+
+            logger.info(f"Synthesis complete: {len(insights)} insights, confidence={confidence:.2f}")
+
+            # 7. Create enhanced reflection content
+            reflection_content = f"""## Deep Reflection: {topic}
+
+**Reflection Depth**: {depth}
+**Memories Analyzed**: {len(related_memories)}
+**Confidence Level**: {confidence:.2f}
+
+---
+
+### Insights
+
 """
-            # Add summaries of related memories
-            for i, mem in enumerate(related_memories[:3], 1):
-                preview = mem.get('content', '')[:200].replace('\n', ' ')
-                reflection_content += f"\n{i}. {preview}...\n"
+            for i, insight in enumerate(insights, 1):
+                reflection_content += f"{i}. {insight}\n"
 
             reflection_content += f"""
 
-### Reflection Points
-This is a deep reflection on "{topic}". Key considerations:
-- What patterns emerge from related memories?
-- How does this connect to current understanding?
-- What questions remain unresolved?
-- What implications does this have?
+### Patterns Identified
 
-*This reflection was triggered by LLM agency for deeper understanding*
+"""
+            for i, pattern in enumerate(patterns, 1):
+                reflection_content += f"{i}. {pattern}\n"
+
+            if contradictions:
+                reflection_content += f"""
+
+### Contradictions & Resolutions
+
+"""
+                for i, contradiction in enumerate(contradictions, 1):
+                    reflection_content += f"{i}. {contradiction}\n"
+
+            reflection_content += f"""
+
+### Evolution of Understanding
+
+{evolution}
+
+### Unresolved Questions
+
+"""
+            for i, question in enumerate(unresolved, 1):
+                reflection_content += f"{i}. {question}\n"
+
+            reflection_content += f"""
+
+---
+
+*This reflection was generated through LLM-driven analysis of {len(related_memories)} memories*
+*Reflection confidence: {confidence:.2f}/1.0*
 """
 
-            # 4. Create reflection note with high importance
-            importance = 0.85  # Higher importance for reflections
+            # 8. Determine if core memory should update
+            should_update_core = confidence > 0.8 and len(insights) >= 2
 
-            # Create path: notes/{yyyy}/{mm}/{dd}/
+            # 9. Set importance based on confidence
+            importance = min(0.95, 0.70 + (confidence * 0.25))  # 0.70-0.95 range
+
+            # 10. Create path: notes/{yyyy}/{mm}/{dd}/
             date_path = self.memory_base_path / "notes" / str(timestamp.year) / f"{timestamp.month:02d}" / f"{timestamp.day:02d}"
             date_path.mkdir(parents=True, exist_ok=True)
 
@@ -1193,13 +1368,15 @@ This is a deep reflection on "{topic}". Key considerations:
             filename = f"{time_prefix}_reflection_{topic_clean}.md"
             file_path = date_path / filename
 
-            # Create full markdown
-            markdown_content = f"""# Reflection: {topic}
+            # 11. Create full markdown with enhanced content
+            markdown_content = f"""# Enhanced Reflection: {topic}
 
 **Reflection ID**: `{reflection_id}`
 **Time**: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
-**Type**: Deep Reflection (LLM-initiated)
+**Type**: Deep Reflection (Phase 8 Enhanced)
+**Depth**: {depth}
 **Importance**: {importance:.2f}
+**Confidence**: {confidence:.2f}
 
 ---
 
@@ -1213,20 +1390,26 @@ This is a deep reflection on "{topic}". Key considerations:
 - **Memory Type**: reflection
 - **Related Memories**: {len(related_memories)}
 - **Category**: reflection
+- **Depth Level**: {depth}
+- **Insights Generated**: {len(insights)}
+- **Patterns Identified**: {len(patterns)}
+- **Contradictions Found**: {len(contradictions)}
+- **Unresolved Questions**: {len(unresolved)}
+- **Should Update Core**: {should_update_core}
 
 ---
 
-*This is a deep reflection initiated by AI agency*
-*Reflections help consolidate understanding and may update core memory*
+*This is an enhanced reflection created through LLM-driven analysis*
+*Phase 8: Advanced Tools - reflect_on() enhancement*
 """
 
-            # Write to filesystem
+            # 12. Write to filesystem
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_content)
 
-            logger.info(f"Saved reflection: {file_path}")
+            logger.info(f"✅ Saved enhanced reflection: {file_path}")
 
-            # Store in LanceDB with embedding
+            # 13. Store in LanceDB with embedding
             if self.lancedb_storage:
                 note_data = {
                     "id": reflection_id,
@@ -1239,25 +1422,69 @@ This is a deep reflection on "{topic}". Key considerations:
                     "emotion": "contemplation",
                     "emotion_intensity": importance,
                     "emotion_valence": "neutral",
-                    "linked_memory_ids": [mem.get("file_path", "") for mem in related_memories[:3]],
-                    "tags": ["reflection", topic_clean],
+                    "linked_memory_ids": [mem.get("file_path", "") for mem in related_memories[:5]],
+                    "tags": ["reflection", "phase8", topic_clean, depth],
                     "file_path": str(file_path),
                     "metadata": {
-                        "created_by": "reflect_on",
+                        "created_by": "reflect_on_enhanced",
                         "related_memories_count": len(related_memories),
-                        "topic": topic
+                        "topic": topic,
+                        "depth": depth,
+                        "confidence": confidence,
+                        "insights_count": len(insights),
+                        "patterns_count": len(patterns),
+                        "contradictions_count": len(contradictions),
+                        "should_update_core": should_update_core
                     }
                 }
                 self.lancedb_storage.add_note(note_data)
-                logger.info("Stored reflection in LanceDB")
+                logger.info("Stored enhanced reflection in LanceDB")
 
-            # TODO: Update core memory if insights are significant (Phase 3)
+            # 14. Trigger core memory consolidation if significant
+            if should_update_core and hasattr(self, 'trigger_consolidation'):
+                logger.info(f"🔄 Reflection confidence={confidence:.2f} > 0.8, triggering core memory consolidation")
+                try:
+                    self.trigger_consolidation(min_notes=1)  # Force consolidation
+                    logger.info("Core memory consolidation triggered successfully")
+                except Exception as e:
+                    logger.warning(f"Core memory consolidation failed: {e}")
 
-            return reflection_id
+            # 15. Return structured result
+            result = {
+                "reflection_id": reflection_id,
+                "insights": insights,
+                "patterns": patterns,
+                "contradictions": contradictions,
+                "evolution": evolution,
+                "unresolved": unresolved,
+                "confidence": confidence,
+                "should_update_core": should_update_core,
+                "file_path": str(file_path),
+                "memories_analyzed": len(related_memories),
+                "depth": depth,
+                "importance": importance
+            }
+
+            logger.info(f"✅ Reflection complete: {len(insights)} insights, confidence={confidence:.2f}")
+
+            return result
 
         except Exception as e:
-            logger.error(f"Failed to create reflection: {e}")
-            return f"reflection_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            logger.error(f"❌ Failed to create enhanced reflection: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "reflection_id": f"reflection_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "insights": [f"Error during reflection: {str(e)}"],
+                "patterns": [],
+                "contradictions": [],
+                "evolution": "Reflection failed",
+                "unresolved": [],
+                "confidence": 0.0,
+                "should_update_core": False,
+                "file_path": None,
+                "error": str(e)
+            }
 
     def reconstruct_context(self,
                            user_id: str,

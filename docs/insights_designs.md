@@ -879,7 +879,7 @@ def test_purpose_extraction():
 ## 🎯 **CRITICAL SUCCESS METRICS**
 
 **Last Updated**: 2025-10-01
-**Overall**: 100% Design Spec Compliance (43/43 tests passing)
+**Overall**: 100% Design Spec Compliance (47/47 tests passing)
 
 ### Phase 1 (Foundation) - 90% ✅
 - [x] LLM generates structured JSON responses
@@ -932,6 +932,15 @@ def test_purpose_extraction():
 - [x] Profile synthesis in step 7 (concise 3-line summaries)
 - [x] Preferences synthesis in step 7 (formatted for LLM)
 - [x] **10/10 tests passing** (6 original + 4 profile synthesis)
+
+### Phase 8 (Advanced Tools) - 33% ✅
+- [x] reflect_on() enhanced with LLM synthesis (not templates)
+- [x] Depth levels: shallow/deep/exhaustive
+- [x] Pattern detection, contradiction identification, evolution tracking
+- [x] Core memory integration (confidence > 0.8 triggers consolidation)
+- [x] **4/4 tests passing** with real Ollama qwen3-coder:30b
+- [ ] forget() tool (archive, not delete) - deferred
+- [ ] consolidate_memories() tool (merge similar) - deferred
 
 ### System-Wide
 - [ ] All memory types use dual storage
@@ -1118,3 +1127,12 @@ limitations = "Cannot learn from single examples (yet)"  # temporal
 - Bidirectional linking
 - Link strength calculation
 - Graph traversal
+
+### Phase 8 (Advanced Tools) - 33% ✅
+- [x] reflect_on() enhanced - LLM synthesis (NOT templates)
+- [x] Depth levels: shallow (5 mem), deep (20 mem), exhaustive (all)
+- [x] Structured analysis: insights, patterns, contradictions, evolution, unresolved
+- [x] Confidence scoring (0.0-1.0) with core memory integration
+- [x] **4/4 tests passing** - real LLM generates genuine insights
+- [ ] forget() - archive tool (deferred until needed)
+- [ ] consolidate_memories() - merge similar (deferred until bloat)

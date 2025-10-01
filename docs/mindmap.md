@@ -73,7 +73,7 @@ AbstractMemory: AI Consciousness Through Active Memory
 │    │   ├─ search_memories(query, filters, limit)
 │    │   ├─ search_library(query) → search subconscious ← NEW
 │    │   ├─ create_memory_link(from_id, to_id, relationship)
-│    │   └─ reflect_on(topic) → triggers deep reflection
+│    │   └─ reflect_on(topic, depth) → LLM-driven insights (Phase 8 enhanced)
 │    │
 │    └─ Response Processing
 │        ├─ Parse structured JSON from LLM
