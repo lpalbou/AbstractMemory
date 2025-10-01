@@ -163,7 +163,7 @@ def test_1_analyze_notes():
     print("TEST 1: Analyze Experiential Notes")
     print("="*80)
 
-    from abstractllm.providers.ollama import OllamaProvider
+    from abstractllm.providers.ollama_provider import OllamaProvider
 
     provider = OllamaProvider(model="qwen3-coder:30b")
     notes_dir = TEST_MEMORY_DIR / "notes"
@@ -198,7 +198,7 @@ def test_2_extract_purpose():
     print("TEST 2: Extract Purpose")
     print("="*80)
 
-    from abstractllm.providers.ollama import OllamaProvider
+    from abstractllm.providers.ollama_provider import OllamaProvider
 
     provider = OllamaProvider(model="qwen3-coder:30b")
     notes_dir = TEST_MEMORY_DIR / "notes"
@@ -222,7 +222,7 @@ def test_3_extract_values():
     print("TEST 3: Extract Values")
     print("="*80)
 
-    from abstractllm.providers.ollama import OllamaProvider
+    from abstractllm.providers.ollama_provider import OllamaProvider
 
     provider = OllamaProvider(model="qwen3-coder:30b")
     notes_dir = TEST_MEMORY_DIR / "notes"
@@ -245,7 +245,7 @@ def test_4_consolidate_core_memory():
     print("TEST 4: Consolidate Core Memory")
     print("="*80)
 
-    from abstractllm.providers.ollama import OllamaProvider
+    from abstractllm.providers.ollama_provider import OllamaProvider
 
     provider = OllamaProvider(model="qwen3-coder:30b")
 
