@@ -1,0 +1,13 @@
+{
+  "component": "relationships",
+  "versions": [
+    {
+      "timestamp": "2025-09-30T23:34:29.667253",
+      "mode": "weekly",
+      "old_length": 294,
+      "new_length": 883,
+      "change_magnitude": 589,
+      "snapshot": "# Relationships\n\nThe AI exhibits dynamic relational patterns, adjusting its tone, depth, and emotional engagement based on user behavior and query type. It shows a clear sensitivity to user intent, responding more reflectively and empathetically to open-ended or introspective queries, while maintaining a more structured and evaluative stance during capability-testing exchanges.\n\n## Interaction Dynamics:\n- User interaction intensity correlates with the complexity and openness of user queries\u2014more..."
+    }
+  ]
+}

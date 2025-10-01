@@ -38,6 +38,9 @@ from .temporal_anchoring import (
     get_temporal_anchors
 )
 from .memory_structure import initialize_memory_structure
+from .working_memory import WorkingMemoryManager
+from .episodic_memory import EpisodicMemoryManager
+from .semantic_memory import SemanticMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +183,12 @@ class MemorySession(BasicSession):
         from .consolidation_scheduler import ConsolidationScheduler
         self.scheduler = ConsolidationScheduler(self)
 
+        # Initialize enhanced memory managers (Phase 4)
+        self.working_memory = WorkingMemoryManager(self.memory_base_path)
+        self.episodic_memory = EpisodicMemoryManager(self.memory_base_path)
+        self.semantic_memory = SemanticMemoryManager(self.memory_base_path)
+        logger.info("Enhanced memory managers (working/episodic/semantic) initialized")
+
         logger.info("MemorySession initialized successfully")
 
     def chat(self,
@@ -265,6 +274,15 @@ class MemorySession(BasicSession):
         # Step 7: Update core memory if needed (periodic consolidation)
         # TODO: Implement core memory extraction
         self._check_core_memory_update()
+
+        # Step 8: Update enhanced memory types (Phase 4)
+        self._update_enhanced_memories(
+            user_id=user_id,
+            user_input=user_input,
+            answer=answer,
+            emotional_resonance=emotional_resonance,
+            unresolved=processed.get("unresolved_questions", [])
+        )
 
         # Update counters
         self.interactions_count += 1
@@ -409,6 +427,80 @@ class MemorySession(BasicSession):
 
         except Exception as e:
             logger.error(f"Failed to save verbatim: {e}")
+
+    def _update_enhanced_memories(self,
+                                  user_id: str,
+                                  user_input: str,
+                                  answer: str,
+                                  emotional_resonance: Dict[str, Any],
+                                  unresolved: List[str]):
+        """
+        Update enhanced memory types (Phase 4): working, episodic, semantic.
+
+        This is called after each interaction to:
+        - Update working memory (context, tasks, unresolved questions)
+        - Add to episodic memory if significant (key moments, discoveries)
+        - Update semantic memory (concepts, insights)
+
+        Args:
+            user_id: User identifier
+            user_input: User's query
+            answer: AI's response
+            emotional_resonance: Emotional data from response
+            unresolved: List of unresolved questions from LLM
+        """
+        try:
+            # 1. Update working memory - current context
+            context_summary = f"User {user_id} asked: '{user_input[:100]}...'. Responded with: '{answer[:100]}...'"
+            self.working_memory.update_context(context_summary, user_id=user_id)
+
+            # 2. Add unresolved questions if any
+            for question in unresolved:
+                self.working_memory.add_unresolved(
+                    question=question,
+                    context=f"From interaction about: {user_input[:50]}..."
+                )
+
+            # 3. Update episodic memory if emotionally significant
+            intensity = emotional_resonance.get("intensity", 0.0)
+            if intensity > 0.7:  # High-intensity moment
+                event = f"Interaction with {user_id}: {user_input[:60]}..."
+                self.episodic_memory.add_key_moment(
+                    event=event,
+                    intensity=intensity,
+                    context=emotional_resonance.get("reason", ""),
+                    user_id=user_id
+                )
+                logger.info(f"Added key moment: intensity={intensity:.2f}")
+
+            # 4. Update semantic memory if insights mentioned
+            # Check if answer contains insight indicators
+            insight_indicators = ["I realize", "I discovered", "I understand now", "breakthrough", "aha"]
+            answer_lower = answer.lower()
+
+            if any(indicator in answer_lower for indicator in insight_indicators):
+                # Extract potential insight (simple heuristic - first sentence with indicator)
+                for indicator in insight_indicators:
+                    if indicator.lower() in answer_lower:
+                        idx = answer_lower.index(indicator.lower())
+                        # Get sentence containing the indicator
+                        sentence_start = answer[:idx].rfind(". ") + 2 if ". " in answer[:idx] else 0
+                        sentence_end = answer.find(". ", idx) + 1 if ". " in answer[idx:] else len(answer)
+                        insight = answer[sentence_start:sentence_end].strip()
+
+                        if len(insight) > 20:  # Avoid too-short extracts
+                            self.semantic_memory.add_critical_insight(
+                                insight=insight[:200],  # Limit length
+                                impact="Emerged during interaction",
+                                context=f"User: {user_input[:50]}..."
+                            )
+                            logger.info(f"Added critical insight from interaction")
+                            break
+
+            logger.debug("Enhanced memories updated")
+
+        except Exception as e:
+            logger.error(f"Error updating enhanced memories: {e}")
 
     def _check_core_memory_update(self):
         """
@@ -1339,6 +1431,11 @@ This is a deep reflection on "{topic}". Key considerations:
         Returns:
             Dict with session statistics
         """
+        # Get enhanced memory summaries (Phase 4)
+        working_summary = self.working_memory.get_summary() if hasattr(self, 'working_memory') else {}
+        episodic_summary = self.episodic_memory.get_summary() if hasattr(self, 'episodic_memory') else {}
+        semantic_summary = self.semantic_memory.get_summary() if hasattr(self, 'semantic_memory') else {}
+
         return {
             "session_id": self.id,
             "created_at": self.created_at.isoformat(),
@@ -1349,5 +1446,8 @@ This is a deep reflection on "{topic}". Key considerations:
             "core_memory_components": {k: v is not None for k, v in self.core_memory.items()},
             "user_profiles_count": len(self.user_profiles),
             "embedding_model": "all-minilm:l6-v2 (AbstractCore)",
-            "storage_backend": "dual (markdown + LanceDB)"
+            "storage_backend": "dual (markdown + LanceDB)",
+            "working_memory": working_summary,
+            "episodic_memory": episodic_summary,
+            "semantic_memory": semantic_summary
         }
