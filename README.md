@@ -84,7 +84,7 @@ pip install abstractllm
 ### Basic Usage
 
 ```python
-from abstractmemory import MemorySession
+from abstractmemory.session import MemorySession
 from abstractllm.providers.ollama_provider import OllamaProvider
 
 # 1. Initialize LLM provider (AbstractCore)
@@ -268,7 +268,7 @@ emotional_resonance = {
 ### Example 1: Basic Conversation with Memory Formation
 
 ```python
-from abstractmemory import MemorySession
+from abstractmemory.session import MemorySession
 from abstractllm.providers.ollama_provider import OllamaProvider
 
 # Setup
