@@ -1,0 +1,33 @@
+{
+  "sessions": [
+    {
+      "session_id": "session_20251001_104831_616608",
+      "start_time": "2025-10-01T10:48:31.616613",
+      "last_activity": "2025-10-01T10:48:55.598613",
+      "interactions_this_session": 1
+    },
+    {
+      "session_id": "session_20251001_105457_584914",
+      "start_time": "2025-10-01T10:54:57.584920",
+      "last_activity": "2025-10-01T10:55:15.605460",
+      "interactions_this_session": 2
+    },
+    {
+      "session_id": "session_20251001_110418_987559",
+      "start_time": "2025-10-01T11:04:18.987564",
+      "last_activity": "2025-10-01T11:04:40.590523",
+      "interactions_this_session": 3
+    },
+    {
+      "session_id": "session_20251001_182142_556153",
+      "start_time": "2025-10-01T18:21:42.556158",
+      "last_activity": "2025-10-01T18:23:00.158868",
+      "interactions_this_session": 5
+    }
+  ],
+  "total_interactions": 5,
+  "total_memories": 10,
+  "total_reconstructions": 10,
+  "last_updated": "2025-10-01T18:23:00.158863",
+  "total_interactions_at_start": 0
+}

@@ -13,6 +13,7 @@ Philosophy: "Memory is the diary we all carry about with us" - Oscar Wilde
 """
 
 import logging
+import json
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -91,6 +92,7 @@ class MemorySession(BasicSession):
                  embedding_manager: Optional[EmbeddingManager] = None,
                  default_user_id: str = "user",
                  default_location: str = "unknown",
+                 index_verbatims: bool = False,
                  **kwargs):
         """
         Initialize MemorySession.
@@ -102,6 +104,7 @@ class MemorySession(BasicSession):
             embedding_manager: AbstractCore EmbeddingManager (default: all-minilm:l6-v2)
             default_user_id: Default user ID for interactions
             default_location: Default location for interactions
+            index_verbatims: If True, index verbatims in LanceDB (default: False)
             **kwargs: Additional args passed to BasicSession
         """
         # Initialize base session with structured prompt if not provided
@@ -114,6 +117,7 @@ class MemorySession(BasicSession):
         self.memory_base_path = Path(memory_base_path) if memory_base_path else Path("memory")
         self.default_user_id = default_user_id
         self.default_location = default_location
+        self.index_verbatims = index_verbatims  # Phase 1: Configurable verbatim indexing
 
         # Initialize embedding manager (AbstractCore)
         if embedding_manager is None:
@@ -184,10 +188,15 @@ class MemorySession(BasicSession):
         # User profiles (emerge from interactions)
         self.user_profiles = {}  # {user_id: {"profile": ..., "preferences": ...}}
 
-        # Observability counters
+        # Observability counters (Phase 1: Load from persistent metadata)
+        self.session_id = datetime.now().strftime("session_%Y%m%d_%H%M%S_%f")
+        self.session_start_time = datetime.now()
         self.interactions_count = 0
         self.memories_created = 0
         self.reconstructions_performed = 0
+
+        # Load persistent session metadata (Phase 1: Session continuity)
+        self._load_session_metadata()
 
         # Core memory consolidation tracking
         self.consolidation_frequency = 10  # Consolidate every N interactions
@@ -250,8 +259,21 @@ class MemorySession(BasicSession):
         logger.info(f"Processing chat from user={user_id}, location={location}")
 
         # Step 1: Reconstruct context (active memory reconstruction)
-        # TODO: Implement reconstruct_context() - For now, use basic history
-        context_str = self._basic_context_reconstruction(user_id, user_input)
+        # Phase 1: Use full 9-step reconstruction instead of basic context
+        try:
+            context_data = self.reconstruct_context(
+                user_id=user_id,
+                query=user_input,
+                location=location,
+                focus_level=3  # Medium depth (0=minimal, 5=exhaustive)
+            )
+            context_str = context_data["synthesized_context"]
+            self.reconstructions_performed += 1
+            memories_count = len(context_data.get('memories_retrieved', []))
+            logger.info(f"Context reconstructed: {memories_count} memories retrieved")
+        except Exception as e:
+            logger.error(f"Full reconstruction failed, falling back to basic context: {e}")
+            context_str = self._basic_context_reconstruction(user_id, user_input)
 
         # Step 2: Generate LLM response with structured format
         # The system prompt already instructs LLM to respond in structured JSON
@@ -314,6 +336,9 @@ class MemorySession(BasicSession):
         # Update counters
         self.interactions_count += 1
         self.memories_created += 1
+
+        # Phase 1: Persist session metadata for continuity
+        self._persist_session_metadata()
 
         logger.info(f"Interaction complete: {len(memory_actions_executed)} memory actions, "
                    f"emotion: {emotional_resonance.get('valence', 'none')}/{emotional_resonance.get('intensity', 0):.2f}")
@@ -452,8 +477,162 @@ class MemorySession(BasicSession):
 
             logger.debug(f"Saved verbatim: {file_path}")
 
+            # Phase 1: Index verbatim in LanceDB if enabled
+            if self.index_verbatims and self.lancedb_storage:
+                self._index_verbatim_in_lancedb(
+                    interaction_id=interaction_id,
+                    timestamp=timestamp,
+                    user_id=user_id,
+                    location=location,
+                    user_input=user_input,
+                    agent_response=agent_response,
+                    topic=topic,
+                    file_path=file_path,
+                    note_id=note_id
+                )
+
         except Exception as e:
             logger.error(f"Failed to save verbatim: {e}")
+
+    def _index_verbatim_in_lancedb(self,
+                                   interaction_id: str,
+                                   timestamp: datetime,
+                                   user_id: str,
+                                   location: str,
+                                   user_input: str,
+                                   agent_response: str,
+                                   topic: str,
+                                   file_path: Path,
+                                   note_id: Optional[str] = None):
+        """
+        Index verbatim interaction in LanceDB for semantic search.
+
+        This is separate from markdown storage and only called if index_verbatims=True.
+
+        Args:
+            interaction_id: Unique interaction ID
+            timestamp: When interaction occurred
+            user_id: User identifier
+            location: Physical/virtual location
+            user_input: User's query
+            agent_response: AI's response
+            topic: Extracted topic from query
+            file_path: Path to markdown file
+            note_id: Related experiential note ID
+        """
+        try:
+            verbatim_data = {
+                "id": interaction_id,
+                "timestamp": timestamp,
+                "user_id": user_id,
+                "location": location,
+                "user_input": user_input,
+                "agent_response": agent_response,
+                "topic": topic,
+                "category": "conversation",
+                "confidence": 1.0,  # Verbatim = 100% factual
+                "tags": json.dumps([]),  # Future: LLM-generated tags
+                "file_path": str(file_path),
+                "metadata": json.dumps({
+                    "note_id": note_id,
+                    "word_count_user": len(user_input.split()),
+                    "word_count_agent": len(agent_response.split()),
+                    "session_id": self.session_id
+                })
+            }
+
+            self.lancedb_storage.add_verbatim(verbatim_data)
+            logger.info(f"Indexed verbatim in LanceDB: {interaction_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to index verbatim in LanceDB: {e}")
+
+    def _load_session_metadata(self):
+        """
+        Load persistent session metadata to restore counters across relaunches.
+
+        Phase 1: Session Continuity
+        - Loads total_interactions, total_memories, total_reconstructions
+        - Adds current session to history
+        - Ensures AI remembers previous sessions
+        """
+        metadata_path = self.memory_base_path / ".session_metadata.json"
+
+        try:
+            if metadata_path.exists():
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # Restore persistent counters
+                self.interactions_count = data.get("total_interactions", 0)
+                self.memories_created = data.get("total_memories", 0)
+                self.reconstructions_performed = data.get("total_reconstructions", 0)
+
+                logger.info(f"Loaded session metadata: {self.interactions_count} interactions, "
+                           f"{self.memories_created} memories, {self.reconstructions_performed} reconstructions")
+            else:
+                logger.info("No previous session metadata found - starting fresh")
+
+        except Exception as e:
+            logger.warning(f"Failed to load session metadata: {e}")
+
+    def _persist_session_metadata(self):
+        """
+        Persist session metadata to disk for continuity across relaunches.
+
+        Called after each interaction to ensure counters are never lost.
+        """
+        metadata_path = self.memory_base_path / ".session_metadata.json"
+
+        try:
+            # Load existing data if available
+            if metadata_path.exists():
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            else:
+                data = {"sessions": []}
+
+            # Update totals
+            data["total_interactions"] = self.interactions_count
+            data["total_memories"] = self.memories_created
+            data["total_reconstructions"] = self.reconstructions_performed
+            data["last_updated"] = datetime.now().isoformat()
+
+            # Update or add current session
+            sessions = data.get("sessions", [])
+            current_session = {
+                "session_id": self.session_id,
+                "start_time": self.session_start_time.isoformat(),
+                "last_activity": datetime.now().isoformat(),
+                "interactions_this_session": self.interactions_count - data.get("total_interactions_at_start", 0)
+            }
+
+            # Find and update current session or append new
+            session_found = False
+            for i, sess in enumerate(sessions):
+                if sess["session_id"] == self.session_id:
+                    sessions[i] = current_session
+                    session_found = True
+                    break
+
+            if not session_found:
+                sessions.append(current_session)
+                # Track interactions at session start for delta calculation
+                if "total_interactions_at_start" not in data:
+                    data["total_interactions_at_start"] = self.interactions_count - 1
+
+            data["sessions"] = sessions[-10:]  # Keep last 10 sessions
+
+            # Write atomically
+            temp_path = metadata_path.with_suffix('.json.tmp')
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            temp_path.replace(metadata_path)
+
+            logger.debug(f"Persisted session metadata: {self.interactions_count} interactions")
+
+        except Exception as e:
+            logger.error(f"Failed to persist session metadata: {e}")
 
     def _update_enhanced_memories(self,
                                   user_id: str,
@@ -477,16 +656,39 @@ class MemorySession(BasicSession):
             unresolved: List of unresolved questions from LLM
         """
         try:
-            # 1. Update working memory - current context
-            context_summary = f"User {user_id} asked: '{user_input[:100]}...'. Responded with: '{answer[:100]}...'"
-            self.working_memory.update_context(context_summary, user_id=user_id)
+            # Phase 1: Update SPECIALIZED working memory files first
+            # These are the components that current_context.md will reference
 
-            # 2. Add unresolved questions if any
+            # 1. Update unresolved questions (already working ✅)
             for question in unresolved:
                 self.working_memory.add_unresolved(
                     question=question,
                     context=f"From interaction about: {user_input[:50]}..."
                 )
+
+            # 2. Update current_references.md with accessed memories
+            # TODO Phase 2: Track which memories were retrieved during reconstruction
+            # if hasattr(self, '_last_reconstruction_memories'):
+            #     for mem_id in self._last_reconstruction_memories:
+            #         self.working_memory.add_reference(mem_id)
+
+            # 3. Extract and update current_tasks.md
+            # TODO Phase 2: LLM extracts tasks from conversation
+            # if self._has_task_indicators(user_input, answer):
+            #     tasks = self._extract_tasks(user_input, answer)
+            #     for task in tasks:
+            #         self.working_memory.add_task(task)
+
+            # 4. Update current_context.md (MASTER synthesis)
+            # TODO Phase 2: LLM synthesizes conversation into reflection
+            # For now: minimal summary until LLM synthesis implemented
+            # current_context.md should REFERENCE specialized files, not duplicate them:
+            #   - Current Task: What's happening NOW
+            #   - Recent Activities: What was done
+            #   - Key Insights: Understanding emerging
+            #   - References: "See current_tasks.md (3 tasks), unresolved.md (5 questions)"
+            context_summary = f"Discussing: {user_input[:100]}..."
+            self.working_memory.update_context(context_summary, user_id=user_id)
 
             # 3. Update episodic memory if emotionally significant
             intensity = emotional_resonance.get("intensity", 0.0)
@@ -1657,6 +1859,7 @@ Generate reflection now:"""
                 "core_memory": core_context,
                 "synthesized_context": synthesized,
                 "total_memories": len(semantic_memories) + len(linked_memories),
+                "memories_retrieved": semantic_memories + linked_memories,  # For logging in chat()
                 "reconstruction_depth": config["link_depth"]
             }
 

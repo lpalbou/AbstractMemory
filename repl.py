@@ -154,11 +154,12 @@ def create_session(memory_path: str, user_id: str, model: str) -> MemorySession:
     # Initialize LLM provider
     provider = OllamaProvider(model=model)
 
-    # Create memory session
+    # Create memory session (Phase 1: index_verbatims configurable)
     session = MemorySession(
         provider=provider,
         memory_base_path=memory_path,
-        default_user_id=user_id
+        default_user_id=user_id,
+        index_verbatims=False  # Phase 1: Disabled by default (enable when notes improve)
     )
 
     print(f"✅ Memory session initialized")

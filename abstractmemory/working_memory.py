@@ -54,13 +54,25 @@ class WorkingMemoryManager:
         from .memory_structure import _initialize_working_memory
         _initialize_working_memory(self.base_path)
 
-    def update_context(self, context: str, user_id: Optional[str] = None) -> bool:
+    def update_context(self,
+                       context: str,
+                       user_id: Optional[str] = None,
+                       session_context: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Update current conversation context.
+        Update current conversation context with structured synthesis.
+
+        This should be a REFLECTION on the ongoing conversation, NOT a verbatim copy.
+        Structure inspired by Mnemosyne's Current_Context.md:
+        - Current Task: What's happening NOW
+        - Recent Activities: Bullet points of what was done
+        - Key Insights: Emerging understanding
+        - Emotional State: How the AI feels about the conversation
+        - Open Questions: Unresolved themes
 
         Args:
-            context: Current context description
+            context: Current context synthesis (can be simple or LLM-generated)
             user_id: Optional user ID for context
+            session_context: Optional dict with additional context (goals, insights, etc.)
 
         Returns:
             bool: True if successful
@@ -69,6 +81,16 @@ class WorkingMemoryManager:
             context_file = self.working_path / "current_context.md"
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Extract session context if provided
+            session_ctx = session_context or {}
+            current_task = session_ctx.get("current_task", context)
+            recent_activities = session_ctx.get("recent_activities", [])
+            key_insights = session_ctx.get("key_insights", [])
+            emotional_state = session_ctx.get("emotional_state", "")
+            open_questions = session_ctx.get("open_questions", [])
+            active_goals = session_ctx.get("active_goals", [])
+
+            # Build content with Mnemosyne-inspired structure
             content = f"""# Current Context
 
 **Last Updated**: {timestamp}
@@ -78,19 +100,50 @@ class WorkingMemoryManager:
 
 ---
 
-## Active Topic
+## Current Task
 
-{context}
+{current_task}
 
 ---
 
-## Timestamp
-
-{timestamp}
+## Recent Activities
 """
 
+            if recent_activities:
+                for activity in recent_activities:
+                    content += f"- {activity}\n"
+            else:
+                content += "- Ongoing conversation\n"
+
+            content += "\n---\n\n## Key Insights\n\n"
+
+            if key_insights:
+                for insight in key_insights:
+                    content += f"- {insight}\n"
+            else:
+                content += "(No key insights yet)\n"
+
+            content += "\n---\n\n## Emotional State\n\n"
+            content += emotional_state if emotional_state else "(Neutral/observing)\n"
+
+            content += "\n---\n\n## Active Goals\n\n"
+            if active_goals:
+                for i, goal in enumerate(active_goals, 1):
+                    content += f"{i}. {goal}\n"
+            else:
+                content += "(No active goals)\n"
+
+            content += "\n---\n\n## Open Questions\n\n"
+            if open_questions:
+                for i, question in enumerate(open_questions, 1):
+                    content += f"{i}. {question}\n"
+            else:
+                content += "(No open questions)\n"
+
+            content += f"\n---\n\n## Last Updated\n\n{timestamp}\n"
+
             context_file.write_text(content)
-            logger.info(f"Updated current_context.md")
+            logger.info(f"Updated current_context.md with structured synthesis")
             return True
 
         except Exception as e:

@@ -268,18 +268,22 @@ class LanceDBStorage:
             if filters.get("emotion_valence"):
                 results = results.where(f"emotion_valence = '{filters['emotion_valence']}'")
 
-            # Temporal filters
+            # Temporal filters - use CAST for proper timestamp comparison
             if filters.get("since"):
                 since_ts = filters["since"]
                 if isinstance(since_ts, datetime):
-                    since_ts = since_ts.isoformat()
-                results = results.where(f"timestamp >= '{since_ts}'")
+                    since_iso = since_ts.isoformat()
+                    where_clause = f"CAST(timestamp AS TIMESTAMP) >= CAST('{since_iso}' AS TIMESTAMP)"
+                    logger.debug(f"Applying temporal filter: {where_clause}")
+                    results = results.where(where_clause)
 
             if filters.get("until"):
                 until_ts = filters["until"]
                 if isinstance(until_ts, datetime):
-                    until_ts = until_ts.isoformat()
-                results = results.where(f"timestamp <= '{until_ts}'")
+                    until_iso = until_ts.isoformat()
+                    where_clause = f"CAST(timestamp AS TIMESTAMP) <= CAST('{until_iso}' AS TIMESTAMP)"
+                    logger.debug(f"Applying temporal filter: {where_clause}")
+                    results = results.where(where_clause)
 
             # Execute and convert to list
             results = results.limit(limit).to_list()
@@ -334,6 +338,66 @@ class LanceDBStorage:
 
         except Exception as e:
             logger.error(f"Failed to add link to LanceDB: {e}")
+            return False
+
+    def add_verbatim(self, verbatim_data: Dict[str, Any]) -> bool:
+        """
+        Add verbatim interaction to verbatim table (Phase 1).
+
+        This indexes factual conversation records for semantic search.
+        Only called if session.index_verbatims=True.
+
+        Args:
+            verbatim_data: Dict with id, timestamp, user_id, location, user_input,
+                          agent_response, topic, category, confidence, tags,
+                          file_path, metadata
+
+        Returns:
+            True if successful
+        """
+        try:
+            if not self.embedding_manager:
+                logger.warning("Cannot index verbatim - embeddings disabled")
+                return False
+
+            # Generate embedding for combined user_input + agent_response
+            combined_text = f"{verbatim_data.get('user_input', '')} {verbatim_data.get('agent_response', '')}"
+            embedding = self._get_embedding(combined_text)
+
+            if embedding is None:
+                logger.warning("Failed to generate embedding for verbatim")
+                return False
+
+            # Create record matching verbatim_schema
+            record = {
+                "id": verbatim_data.get("id", ""),
+                "timestamp": verbatim_data.get("timestamp", datetime.now()),
+                "user_id": verbatim_data.get("user_id", ""),
+                "location": verbatim_data.get("location", "unknown"),
+                "user_input": verbatim_data.get("user_input", ""),
+                "agent_response": verbatim_data.get("agent_response", ""),
+                "topic": verbatim_data.get("topic", ""),
+                "category": verbatim_data.get("category", "conversation"),
+                "confidence": verbatim_data.get("confidence", 1.0),
+                "tags": verbatim_data.get("tags", "[]"),  # Already JSON string
+                "embedding": embedding,
+                "file_path": verbatim_data.get("file_path", ""),
+                "metadata": verbatim_data.get("metadata", "{}")  # Already JSON string
+            }
+
+            # Get or create table
+            if "verbatim" not in self.db.table_names():
+                self.db.create_table("verbatim", [record])
+                logger.info("Created verbatim table")
+            else:
+                table = self.db.open_table("verbatim")
+                table.add([record])
+
+            logger.debug(f"Added verbatim to LanceDB: {record['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add verbatim to LanceDB: {e}")
             return False
 
     def get_related_memories(self, memory_id: str, depth: int = 1) -> List[str]:
