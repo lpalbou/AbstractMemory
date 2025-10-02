@@ -400,6 +400,67 @@ class LanceDBStorage:
             logger.error(f"Failed to add verbatim to LanceDB: {e}")
             return False
 
+    def count_notes(self) -> int:
+        """
+        Count total number of notes in the database.
+
+        Returns:
+            Total count of notes
+        """
+        try:
+            if "notes" not in self.db.table_names():
+                return 0
+
+            table = self.db.open_table("notes")
+            # Count rows using to_pandas() and len()
+            df = table.to_pandas()
+            return len(df)
+
+        except Exception as e:
+            logger.error(f"Failed to count notes: {e}")
+            return 0
+
+    def get_notes_by_ids(self, note_ids: List[str]) -> List[Dict]:
+        """
+        Retrieve full note objects by their IDs.
+
+        Args:
+            note_ids: List of note IDs to retrieve
+
+        Returns:
+            List of note dictionaries with full content
+        """
+        try:
+            if "notes" not in self.db.table_names():
+                return []
+
+            if not note_ids:
+                return []
+
+            table = self.db.open_table("notes")
+
+            # Build WHERE clause for multiple IDs
+            ids_str = "', '".join(note_ids)
+            where_clause = f"id IN ('{ids_str}')"
+
+            results = table.search().where(where_clause).limit(len(note_ids)).to_list()
+
+            # Parse JSON fields
+            for result in results:
+                if "linked_memory_ids" in result and isinstance(result["linked_memory_ids"], str):
+                    result["linked_memory_ids"] = json.loads(result["linked_memory_ids"])
+                if "tags" in result and isinstance(result["tags"], str):
+                    result["tags"] = json.loads(result["tags"])
+                if "metadata" in result and isinstance(result["metadata"], str):
+                    result["metadata"] = json.loads(result["metadata"])
+
+            logger.debug(f"Retrieved {len(results)} notes by IDs")
+            return results
+
+        except Exception as e:
+            logger.error(f"Failed to get notes by IDs: {e}")
+            return []
+
     def get_related_memories(self, memory_id: str, depth: int = 1) -> List[str]:
         """
         Get related memory IDs via links (bidirectional).

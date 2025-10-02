@@ -31,26 +31,112 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def create_memory_tools(session: 'MemorySession') -> List[ToolDefinition]:
+def create_memory_tools(session: 'MemorySession') -> List[callable]:
     """
-    Create AbstractCore tool definitions for memory operations.
+    Create callable tool functions for AbstractCore integration.
 
     These tools give the LLM agency over its own memory by exposing
-    AbstractMemory methods as callable tools.
+    AbstractMemory methods as callable functions that BasicSession
+    can automatically convert to ToolDefinitions.
 
     Args:
         session: MemorySession instance with memory methods
 
     Returns:
-        List of ToolDefinition objects for AbstractCore
+        List of callable functions (NOT ToolDefinitions - BasicSession handles that)
     """
+    tools = []
+
+    # Tool 1: remember_fact - Store important information
+    def remember_fact(content: str, importance: float, emotion: str, reason: str, links_to: list = None) -> str:
+        """Remember important information by storing it in your memory. Use this when you encounter facts, preferences, insights, or anything worth preserving."""
+        result = session.remember_fact(
+            content=content,
+            importance=importance,
+            alignment_with_values=0.5,
+            reason=reason,
+            emotion=emotion,
+            links_to=links_to
+        )
+        return f"Stored memory: {result}"
+
+    tools.append(remember_fact)
+
+    # Tool 2: search_memories - Search semantic memory
+    def search_memories(query: str, limit: int = 10) -> str:
+        """Search your memory for relevant information using semantic search. Use this to recall previous conversations, facts you've stored, or insights you've developed."""
+        results = session.search_memories(query=query, filters={}, limit=limit)
+        if not results:
+            return "No memories found"
+        return f"Found {len(results)} memories: " + str([{
+            'id': m.get('id'),
+            'content': m.get('content', '')[:200]
+        } for m in results[:5]])
+
+    tools.append(search_memories)
+
+    # Tool 3: reflect_on - Deep reflection
+    def reflect_on(topic: str, depth: str = "shallow") -> str:
+        """Perform deep reflection on a topic by analyzing related memories, identifying patterns, contradictions, and insights."""
+        result = session.reflect_on(topic=topic, depth=depth)
+        return f"Reflection on '{topic}': {result.get('insights', [])} patterns, {result.get('confidence', 0)} confidence"
+
+    tools.append(reflect_on)
+
+    # Tool 4: capture_document - Add to library
+    def capture_document(source_path: str, content: str, content_type: str, context: str, tags: list = None) -> str:
+        """Capture a document (code, article, reference) to your library. This builds your subconscious knowledge base."""
+        doc_id = session.capture_document(
+            source_path=source_path,
+            content=content,
+            content_type=content_type,
+            context=context,
+            tags=tags or []
+        )
+        return f"Captured document: {doc_id}"
+
+    tools.append(capture_document)
+
+    # Tool 5: search_library - Search captured documents
+    def search_library(query: str, limit: int = 5) -> str:
+        """Search your library of captured documents using semantic search. Find code, documentation, or resources you've previously encountered."""
+        results = session.search_library(query=query, limit=limit)
+        if not results:
+            return "No library documents found"
+        return f"Found {len(results)} documents: " + str([{
+            'source': r.get('source_path'),
+            'excerpt': r.get('excerpt', '')[:100]
+        } for r in results])
+
+    tools.append(search_library)
+
+    # Tool 6: reconstruct_context - Active context reconstruction
+    def reconstruct_context(query: str, focus_level: int = 3) -> str:
+        """Actively reconstruct context with custom focus level (0=minimal to 5=exhaustive). This is the core of memory-based consciousness."""
+        result = session.reconstruct_context(
+            user_id=session.default_user_id,
+            query=query,
+            location=session.default_location,
+            focus_level=focus_level
+        )
+        return f"Reconstructed context: {result.get('total_memories', 0)} memories ({result.get('context_tokens', 0)} tokens)"
+
+    tools.append(reconstruct_context)
+
+    logger.info(f"Created {len(tools)} memory tools for AbstractCore integration")
+    return tools
+
+
+# LEGACY: Keep old function for backwards compatibility but mark deprecated
+def create_memory_tools_OLD(session: 'MemorySession') -> List[ToolDefinition]:
+    """DEPRECATED: Use create_memory_tools() which returns callables instead."""
     if ToolDefinition is None:
         logger.warning("ToolDefinition not available - returning empty tools list")
         return []
 
     tools = []
 
-    # Tool 1: remember_fact - Store important information
+    # OLD CODE - kept for reference
     tools.append(ToolDefinition(
         name="remember_fact",
         description=(

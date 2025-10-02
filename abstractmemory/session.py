@@ -111,6 +111,7 @@ class MemorySession(BasicSession):
         if system_prompt is None:
             system_prompt = create_structured_prompt()
 
+        # Initialize BasicSession WITHOUT tools first (we'll register them after)
         super().__init__(provider=provider, system_prompt=system_prompt, **kwargs)
 
         # Memory configuration
@@ -273,7 +274,9 @@ class MemorySession(BasicSession):
             context_str = context_data["synthesized_context"]
             self.reconstructions_performed += 1
             memories_count = len(context_data.get('memories_retrieved', []))
-            logger.info(f"Context reconstructed: {memories_count} memories retrieved")
+            memories_available = context_data.get('total_memories_available', 0)
+            context_tokens = context_data.get('context_tokens', 0)
+            logger.info(f"📝 Injecting {memories_count} memories ({context_tokens} tokens) into LLM prompt for context-aware response")
         except Exception as e:
             logger.error(f"Full reconstruction failed, falling back to basic context: {e}")
             context_str = self._basic_context_reconstruction(user_id, user_input)
@@ -282,8 +285,14 @@ class MemorySession(BasicSession):
         # The system prompt already instructs LLM to respond in structured JSON
         enhanced_prompt = f"{context_str}\n\nUser: {user_input}"
 
+        # Estimate total prompt size for user visibility
+        total_prompt_tokens = len(enhanced_prompt) // 4
+        logger.info(f"Generating LLM response (prompt: ~{total_prompt_tokens} tokens)...")
+
         # Call parent's generate method
         response = self.generate(enhanced_prompt, **kwargs)
+
+        logger.info(f"LLM response received")
 
         # Extract content from response
         llm_output = response.content if hasattr(response, 'content') else str(response)
@@ -422,15 +431,16 @@ class MemorySession(BasicSession):
         try:
             from .tools import create_memory_tools
 
-            # Create tool definitions
-            memory_tools = create_memory_tools(self)
+            # Create callable tool functions (NOT ToolDefinitions)
+            memory_tool_functions = create_memory_tools(self)
 
-            # Register with parent BasicSession
-            # Note: BasicSession expects tools in __init__, but we create them after
-            # because they need 'self'. So we update the tools list directly.
-            self.tools = memory_tools
-
-            logger.info(f"Registered {len(memory_tools)} memory tools with AbstractCore")
+            # Register them using parent's _register_tools method
+            # This will convert callables to ToolDefinitions and register globally
+            if memory_tool_functions:
+                self.tools = self._register_tools(memory_tool_functions)
+                logger.info(f"Registered {len(self.tools)} memory tools with AbstractCore")
+            else:
+                logger.warning("No memory tools created")
 
         except ImportError as e:
             logger.warning(f"Could not register memory tools: {e}")
@@ -1795,17 +1805,17 @@ Generate reflection now:"""
             config = focus_configs.get(focus_level, focus_configs[3])
 
             # Step 1: Semantic search (base results)
-            logger.info("Step 1/9: Semantic search")
+            logger.info(f"Step 1/9: Searching for memories relevant to: '{query[:50]}...'")
             since = timestamp - timedelta(hours=config["hours"])
             semantic_memories = self.search_memories(
                 query,
                 filters={"user_id": user_id, "since": since},
                 limit=config["limit"]
             )
-            logger.info(f"  Found {len(semantic_memories)} semantic memories")
+            logger.info(f"  → Found {len(semantic_memories)} directly relevant memories")
 
             # Step 2: Link exploration (expand via associations)
-            logger.info(f"Step 2/9: Link exploration (depth={config['link_depth']})")
+            logger.info(f"Step 2/9: Following memory links to find related context (depth={config['link_depth']} hops)")
             linked_memories = []
             if self.lancedb_storage and config["link_depth"] > 0:
                 for mem in semantic_memories[:5]:  # Explore links for top 5
@@ -1816,15 +1826,15 @@ Generate reflection now:"""
                             depth=config["link_depth"]
                         )
                         linked_memories.extend(related_ids[:3])  # Top 3 per memory
-            logger.info(f"  Found {len(linked_memories)} linked memories")
+            logger.info(f"  → Found {len(linked_memories)} connected memories via links")
 
             # Step 3: Library search (subconscious)
-            logger.info("Step 3/9: Library search")
+            logger.info(f"Step 3/9: Searching knowledge library for '{query[:30]}...'")
             library_excerpts = self.search_library(query, limit=3)
-            logger.info(f"  Found {len(library_excerpts)} library documents")
+            logger.info(f"  → Found {len(library_excerpts)} relevant documents/code snippets")
 
             # Step 4: Emotional filtering (boost/filter by resonance)
-            logger.info("Step 4/9: Emotional filtering")
+            logger.info("Step 4/9: Identifying emotionally significant memories")
             emotional_context = {
                 "high_emotion_memories": [
                     m for m in semantic_memories
@@ -1832,10 +1842,10 @@ Generate reflection now:"""
                 ],
                 "valence_distribution": self._calculate_valence_distribution(semantic_memories)
             }
-            logger.info(f"  High-emotion memories: {len(emotional_context['high_emotion_memories'])}")
+            logger.info(f"  → {len(emotional_context['high_emotion_memories'])} memories with strong emotional resonance")
 
             # Step 5: Temporal context (what happened when?)
-            logger.info("Step 5/9: Temporal context")
+            logger.info(f"Step 5/9: Adding temporal context (current: {timestamp.strftime('%A %H:%M')})")
             temporal_context = {
                 "time_of_day": timestamp.strftime("%H:%M"),
                 "day_of_week": timestamp.strftime("%A"),
@@ -1845,7 +1855,7 @@ Generate reflection now:"""
             }
 
             # Step 6: Spatial context (location-based)
-            logger.info("Step 6/9: Spatial context")
+            logger.info(f"Step 6/9: Adding spatial context (location: {location})")
             spatial_context = {
                 "current_location": location,
                 "location_type": self._infer_location_type(location),
@@ -1856,7 +1866,7 @@ Generate reflection now:"""
             }
 
             # Step 7: User profile & relationship
-            logger.info("Step 7/9: User profile & relationship")
+            logger.info(f"Step 7/9: Loading user profile and relationship context")
             user_context = {
                 "user_id": user_id,
                 "profile": self.user_profiles.get(user_id, {}),
@@ -1865,7 +1875,7 @@ Generate reflection now:"""
             }
 
             # Step 8: Core memory (all 10 components)
-            logger.info("Step 8/9: Core memory (10 components)")
+            logger.info("Step 8/9: Loading core identity (purpose, values, personality, etc.)")
             core_context = {
                 "purpose": self.core_memory.get("purpose"),
                 "personality": self.core_memory.get("personality"),
@@ -1879,8 +1889,25 @@ Generate reflection now:"""
                 "authentic_voice": self.core_memory.get("authentic_voice")
             }
 
+            # Deduplicate memories BEFORE synthesis
+            # We have semantic_memories (full dicts) and linked_memories (IDs only)
+
+            # First, deduplicate the IDs
+            semantic_ids = {m.get("id") for m in semantic_memories if m.get("id")}
+            linked_ids_only = set(linked_memories) - semantic_ids  # Only truly new IDs
+
+            # Retrieve full content for linked memories not already in semantic
+            linked_memory_objects = []
+            if linked_ids_only and self.lancedb_storage:
+                linked_memory_objects = self.lancedb_storage.get_notes_by_ids(list(linked_ids_only))
+
+            # Combine ALL memories (semantic + linked) and deduplicate by ID
+            all_memories = semantic_memories + linked_memory_objects
+            unique_memories = {m.get("id"): m for m in all_memories if m.get("id")}
+            total_memories_retrieved = len(unique_memories)
+
             # Step 9: Context synthesis (combine all layers)
-            logger.info("Step 9/9: Context synthesis")
+            logger.info(f"Step 9/9: Synthesizing {total_memories_retrieved} memories into coherent context for LLM")
             synthesized = self._synthesize_context(
                 semantic_memories,
                 linked_memories,
@@ -1890,10 +1917,20 @@ Generate reflection now:"""
                 spatial_context,
                 user_context,
                 core_context,
-                query
+                query,
+                unique_memories  # Pass deduplicated memories
             )
 
             self.reconstructions_performed += 1
+
+            # Get actual count from LanceDB (not just session count)
+            if self.lancedb_storage:
+                total_memories_available = self.lancedb_storage.count_notes()
+            else:
+                total_memories_available = self.memories_created
+
+            # Estimate token count (rough: ~4 chars per token)
+            context_tokens = len(synthesized) // 4
 
             result = {
                 "query": query,
@@ -1908,12 +1945,14 @@ Generate reflection now:"""
                 "user_context": user_context,
                 "core_memory": core_context,
                 "synthesized_context": synthesized,
-                "total_memories": len(semantic_memories) + len(linked_memories),
-                "memories_retrieved": semantic_memories + linked_memories,  # For logging in chat()
+                "total_memories": total_memories_retrieved,
+                "total_memories_available": total_memories_available,
+                "context_tokens": context_tokens,
+                "memories_retrieved": list(unique_memories.values()),  # Deduplicated list
                 "reconstruction_depth": config["link_depth"]
             }
 
-            logger.info(f"Context reconstruction complete: {result['total_memories']} memories")
+            logger.info(f"✅ Memory retrieval: Found {total_memories_retrieved} unique memories (out of {total_memories_available} total in database) → {context_tokens} tokens of context for LLM")
             return result
 
         except Exception as e:
@@ -2090,7 +2129,8 @@ Generate reflection now:"""
                            spatial_context: Dict,
                            user_context: Dict,
                            core_context: Dict,
-                           query: str) -> str:
+                           query: str,
+                           unique_memories: Dict[str, Dict] = None) -> str:
         """
         Synthesize all context layers into coherent summary.
 
@@ -2133,8 +2173,11 @@ Generate reflection now:"""
         parts.append(f"[Time]: {temporal_context['day_of_week']} {temporal_context['time_of_day']}")
         parts.append(f"[Location]: {spatial_context['current_location']} ({spatial_context['location_type']})")
 
-        # Memory summary
-        parts.append(f"[Memories]: {len(semantic_memories)} semantic, {len(linked_memories)} linked")
+        # Memory summary (use deduplicated count if provided)
+        if unique_memories is not None:
+            parts.append(f"[Memories]: {len(unique_memories)} memories retrieved")
+        else:
+            parts.append(f"[Memories]: {len(semantic_memories)} semantic, {len(linked_memories)} linked")
 
         # Emotional summary
         if emotional_context['high_emotion_memories']:
@@ -2144,12 +2187,25 @@ Generate reflection now:"""
         if library_excerpts:
             parts.append(f"[Library]: {len(library_excerpts)} relevant documents")
 
-        # Key memories (top 3)
-        if semantic_memories:
-            parts.append("\n[Key Memories]:")
-            for i, mem in enumerate(semantic_memories[:3], 1):
-                content_preview = str(mem.get("content", ""))[:100].replace("\n", " ")
-                parts.append(f"  {i}. {content_preview}...")
+        # FULL memory content (not just previews!)
+        # This is CRITICAL - LLM needs actual memory content to use it
+        memories_to_include = list(unique_memories.values()) if unique_memories else semantic_memories[:10]
+        if memories_to_include:
+            parts.append("\n[Retrieved Memories]:")
+            for i, mem in enumerate(memories_to_include, 1):
+                mem_id = mem.get("id", "unknown")
+                content = str(mem.get("content", "")).strip()
+                emotion = mem.get("emotion_type", "")
+                intensity = mem.get("emotion_intensity", 0.0)
+
+                # Include full content (truncate only if extremely long)
+                if len(content) > 1000:
+                    content = content[:1000] + "... [truncated]"
+
+                parts.append(f"\n{i}. [{mem_id}]")
+                if emotion:
+                    parts.append(f"   Emotion: {emotion} ({intensity:.2f})")
+                parts.append(f"   {content}")
 
         return "\n".join(parts)
 

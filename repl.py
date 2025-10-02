@@ -13,8 +13,11 @@ Examples:
 
 import sys
 import argparse
+import logging
 from pathlib import Path
 from datetime import datetime
+
+# Logging will be configured based on --verbose flag in main()
 
 try:
     from abstractmemory.session import MemorySession
@@ -143,15 +146,21 @@ def create_session(memory_path: str, user_id: str, model: str) -> MemorySession:
     print(f"   User ID: {user_id}")
     print(f"   Model: {model}")
 
-    # Initialize LLM provider
+    # Initialize LLM provider with 60-minute timeout for long operations
     provider = OllamaProvider(model=model)
+
+    # Set timeout to 60 minutes (3600 seconds)
+    # Some operations (deep reflection, context reconstruction) can take time
+    if hasattr(provider, 'set_timeout'):
+        provider.set_timeout(3600.0)  # 60 minutes
 
     # Create memory session (Phase 1: index_verbatims configurable)
     session = MemorySession(
         provider=provider,
         memory_base_path=memory_path,
         default_user_id=user_id,
-        index_verbatims=False  # Phase 1: Disabled by default (enable when notes improve)
+        index_verbatims=False,  # Phase 1: Disabled by default (enable when notes improve)
+        timeout=3600.0  # Pass timeout to session as well
     )
 
     print(f"✅ Memory session initialized")
@@ -207,14 +216,14 @@ def print_help():
     print("\n" + "="*60)
     print("🔧 REPL COMMANDS")
     print("="*60)
-    print("/help           - Show this help")
-    print("/stats          - Show memory statistics")
-    print("/reflect TOPIC  - Reflect on a topic (deep analysis)")
-    print("/search QUERY   - Search your memories")
-    print("/consolidate    - Trigger core memory consolidation")
-    print("/profile        - Update user profile")
-    print("/clear          - Clear screen")
-    print("/quit or /exit  - Exit REPL")
+    print("/help                    - Show this help")
+    print("/stats                   - Show memory statistics")
+    print("/reflect TOPIC           - Reflect on a topic (deep analysis)")
+    print("/search QUERY            - Search your memories")
+    print("/consolidate             - Trigger core memory consolidation")
+    print("/profile                 - Update user profile")
+    print("/clear                   - Clear screen")
+    print("/quit or /exit or /q     - Exit REPL")
     print("\nJust type naturally to chat - your memory is always active!")
     print("="*60)
 
@@ -227,6 +236,7 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
 
     if command in ["/quit", "/exit", "/q"]:
         print("\n👋 Goodbye! Your memories persist in", session.memory_base_path)
+        # Cleanup will happen automatically when REPL loop exits
         return False
 
     elif command == "/help":
@@ -326,7 +336,43 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
     return True
 
 
-def repl(session: MemorySession, user_id: str, location: str = "terminal"):
+def _cleanup_session(session: MemorySession):
+    """Clean up session resources before exit."""
+    try:
+        # Track what we've cleaned to avoid duplicates
+        cleaned = []
+
+        # Save embedding cache explicitly (avoids __del__ errors during shutdown)
+        # Check both session.embedding_manager and lancedb_storage.embedding_manager
+        if hasattr(session, 'embedding_manager') and session.embedding_manager:
+            if hasattr(session.embedding_manager, '_save_persistent_cache'):
+                session.embedding_manager._save_persistent_cache()
+                cleaned.append("session embeddings")
+                # Delete __del__ method to prevent it from running during shutdown
+                if hasattr(session.embedding_manager.__class__, '__del__'):
+                    session.embedding_manager.__class__.__del__ = lambda self: None
+
+        # Also check LanceDB storage's embedding manager (different instance)
+        if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+            if hasattr(session.lancedb_storage, 'embedding_manager') and session.lancedb_storage.embedding_manager:
+                # Only save if it's a different instance
+                if session.lancedb_storage.embedding_manager is not session.embedding_manager:
+                    if hasattr(session.lancedb_storage.embedding_manager, '_save_persistent_cache'):
+                        session.lancedb_storage.embedding_manager._save_persistent_cache()
+                        cleaned.append("lancedb embeddings")
+                        # Delete __del__ method
+                        if hasattr(session.lancedb_storage.embedding_manager.__class__, '__del__'):
+                            session.lancedb_storage.embedding_manager.__class__.__del__ = lambda self: None
+
+        if cleaned:
+            print(f"   💾 Saved embedding cache ({', '.join(cleaned)})")
+
+    except Exception as e:
+        # Don't fail on cleanup errors
+        print(f"   ⚠️  Cleanup warning: {e}")
+
+
+def repl(session: MemorySession, user_id: str, location: str = "terminal", verbose: bool = False):
     """Main REPL loop."""
     print("\n" + "="*60)
     print("🧠 AbstractMemory REPL")
@@ -357,14 +403,25 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal"):
                 continue
 
             # Regular chat
-            print(f"\n🤖 Thinking...")
+            import time
+            start_time = time.time()
 
-            # Chat with memory (AbstractCore LLM will receive system prompt)
+            if not verbose:
+                # In normal mode, show simple progress
+                print(f"\n🤖 Thinking...")
+                print(f"   📚 Reconstructing context...")
+
             response = session.chat(
                 user_input=user_input,
                 user_id=user_id,
                 location=location
             )
+
+            elapsed = time.time() - start_time
+
+            if not verbose:
+                # Show summary in normal mode
+                print(f"   ⏱️  Completed in {elapsed:.1f}s")
 
             print(f"\n{response}")
 
@@ -378,6 +435,9 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal"):
             print(f"\n❌ Error: {e}")
             import traceback
             traceback.print_exc()
+
+    # Cleanup: Save embedding cache before exit
+    _cleanup_session(session)
 
 
 def main():
@@ -417,7 +477,29 @@ Examples:
         help='Physical/virtual location (default: terminal)'
     )
 
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Enable verbose logging (shows all reconstruction steps)'
+    )
+
     args = parser.parse_args()
+
+    # Configure logging based on verbose flag
+    if args.verbose:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='   %(levelname)s: %(message)s',
+            stream=sys.stdout
+        )
+        print("🔍 Verbose mode enabled - showing all reconstruction steps")
+    else:
+        # In normal mode, only show WARNING and above
+        logging.basicConfig(
+            level=logging.WARNING,
+            format='   %(levelname)s: %(message)s',
+            stream=sys.stdout
+        )
 
     try:
         # Create session
@@ -431,7 +513,8 @@ Examples:
         repl(
             session=session,
             user_id=args.user_id,
-            location=args.location
+            location=args.location,
+            verbose=args.verbose
         )
 
     except KeyboardInterrupt:

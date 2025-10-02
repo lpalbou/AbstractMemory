@@ -1,0 +1,8 @@
+{
+  "link_id": "link_20251001_194215_652283",
+  "from_id": "mem_20251001_194215_636712",
+  "to_id": "mem_002",
+  "relationship": "relates_to",
+  "created": "2025-10-01T19:42:15.652283",
+  "bidirectional": true
+}
