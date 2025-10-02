@@ -21,13 +21,19 @@
     {
       "session_id": "session_20251001_182142_556153",
       "start_time": "2025-10-01T18:21:42.556158",
-      "last_activity": "2025-10-01T18:23:00.158868",
-      "interactions_this_session": 5
+      "last_activity": "2025-10-01T18:54:21.730618",
+      "interactions_this_session": 8
+    },
+    {
+      "session_id": "session_20251001_190026_410351",
+      "start_time": "2025-10-01T19:00:26.410356",
+      "last_activity": "2025-10-01T19:00:39.971468",
+      "interactions_this_session": 9
     }
   ],
-  "total_interactions": 5,
-  "total_memories": 10,
-  "total_reconstructions": 10,
-  "last_updated": "2025-10-01T18:23:00.158863",
+  "total_interactions": 9,
+  "total_memories": 17,
+  "total_reconstructions": 18,
+  "last_updated": "2025-10-01T19:00:39.971460",
   "total_interactions_at_start": 0
 }

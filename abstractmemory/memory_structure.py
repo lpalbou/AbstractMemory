@@ -666,9 +666,13 @@ def _initialize_user_profile(base_path: Path, user_id: str):
     conversations_link = user_path / "conversations"
     verbatim_target = base_path / "verbatim" / user_id
 
-    if not conversations_link.exists() and verbatim_target.exists():
+    # Check if symlink already exists (use is_symlink, not exists - exists() fails for broken symlinks)
+    if not conversations_link.is_symlink() and verbatim_target.exists():
         try:
             conversations_link.symlink_to(verbatim_target, target_is_directory=True)
             logger.info(f"Created symlink: people/{user_id}/conversations -> verbatim/{user_id}")
+        except FileExistsError:
+            # Symlink already exists, no action needed
+            logger.debug(f"Symlink already exists: people/{user_id}/conversations")
         except Exception as e:
             logger.warning(f"Could not create symlink: {e}")

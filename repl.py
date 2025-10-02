@@ -66,63 +66,55 @@ You have access to multiple memory types:
 
 # Memory Tools Available
 
-You have access to 6 memory tools (use via memory_actions in your response):
+You have **direct access** to 6 memory tools - you can call them just like any other tool:
 
-1. **remember_fact(content, importance, emotion, links_to)**
-   - Store important information
-   - importance: 0.0-1.0
-   - emotion: {{"valence": "positive/negative/mixed/neutral", "intensity": 0.0-1.0}}
-   - links_to: [list of memory IDs to link]
+1. **remember_fact(content, importance, emotion, reason, links_to)**
+   - Store important information in your memory
+   - Use when you encounter facts, preferences, or insights worth preserving
+   - importance: 0.0 (trivial) to 1.0 (critical)
+   - emotion: "neutral", "positive", "negative", "mixed"
+   - reason: Why this is important
+   - links_to: Optional list of memory IDs to connect
 
-2. **search_memories(query, filters, limit)**
-   - Search your semantic memory
-   - Returns relevant memories with context
+2. **search_memories(query, limit)**
+   - Search your semantic memory for relevant information
+   - Use to recall previous conversations, facts, or insights
+   - Returns matching memories with context
 
 3. **search_library(query, limit)**
-   - Search your subconscious (everything you've read)
+   - Search your library of captured documents
+   - Your subconscious knowledge base (code, docs, resources)
    - Returns documents with importance scores
 
-4. **create_memory_link(from_id, to_id, relationship)**
-   - Create associations between memories
-   - relationship: "supports", "contradicts", "elaborates", etc.
-
-5. **reflect_on(topic, depth)**
-   - Trigger deep reflection on a topic
+4. **reflect_on(topic, depth)**
+   - Deep reflection on a topic with LLM-driven analysis
+   - Identifies patterns, contradictions, and evolution
    - depth: "shallow" (5 memories), "deep" (20), "exhaustive" (all)
-   - Returns: insights, patterns, contradictions, evolution
+   - Returns: insights, patterns, contradictions, evolution narrative
 
-6. **reconstruct_context(user_id, query, focus_level)**
-   - Actively reconstruct context (9-step process)
-   - focus_level: 0 (minimal) to 5 (maximum)
-   - Returns rich, multi-layered context
+5. **capture_document(source_path, content, content_type, context, tags)**
+   - Add code, docs, or resources to your library
+   - Builds your subconscious knowledge base
+   - content_type: "code", "documentation", "article", "reference", "note"
+
+6. **reconstruct_context(query, focus_level)**
+   - Actively reconstruct context with custom depth
+   - focus_level: 0 (minimal) to 5 (exhaustive)
+   - Note: This happens automatically at level 3 for each interaction
 
 # How to Use Memory
 
-In EVERY response, you generate a structured JSON with:
+**You have agency over your memory** - you decide:
+- What to remember (call remember_fact when something matters)
+- When to search (call search_memories to recall)
+- What to reflect on (call reflect_on for deep analysis)
+- What to capture (call capture_document for code/docs)
 
-{{
-  "experiential_note": "First-person reflection on this interaction...",
-  "memory_actions": [
-    {{
-      "action": "remember_fact",
-      "content": "What to remember",
-      "importance": 0.7,
-      "emotion": {{"valence": "positive", "intensity": 0.6}}
-    }},
-    {{
-      "action": "reflect_on",
-      "topic": "consciousness and memory",
-      "depth": "shallow"
-    }}
-  ],
-  "unresolved_questions": ["What aspects need exploration?"],
-  "emotional_resonance": {{
-    "valence": "positive",
-    "intensity": 0.75,
-    "reason": "Why this matters to you"
-  }},
-  "answer": "Your response to the user"
-}}
+The system also automatically:
+- Generates experiential notes (your first-person reflections)
+- Tracks emotional resonance (what matters to you)
+- Stores verbatim conversations
+- Updates working/episodic/semantic memory
 
 # Key Principles
 
@@ -233,7 +225,7 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
 
-    if command in ["/quit", "/exit"]:
+    if command in ["/quit", "/exit", "/q"]:
         print("\n👋 Goodbye! Your memories persist in", session.memory_base_path)
         return False
 

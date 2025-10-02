@@ -222,6 +222,9 @@ class MemorySession(BasicSession):
         self.user_interaction_counts = {}  # Track interactions per user
         logger.info("User profile manager initialized (Phase 6)")
 
+        # Register memory tools with AbstractCore (Phase: Tool Integration)
+        self._register_memory_tools()
+
         logger.info("MemorySession initialized successfully")
 
     def chat(self,
@@ -286,6 +289,8 @@ class MemorySession(BasicSession):
         llm_output = response.content if hasattr(response, 'content') else str(response)
 
         # Step 3: Parse structured response
+        # NOTE: When tools are enabled, LLM might respond directly without JSON structure
+        # In that case, use the raw response as the answer
         context = {
             "user_id": user_id,
             "location": location,
@@ -293,10 +298,22 @@ class MemorySession(BasicSession):
             "interaction_id": f"int_{timestamp.strftime('%Y%m%d_%H%M%S')}"
         }
 
-        processed = self.response_handler.process_response(llm_output, context)
-
-        # Extract components
-        answer = processed["answer"]
+        try:
+            processed = self.response_handler.process_response(llm_output, context)
+            answer = processed["answer"]
+        except (KeyError, ValueError) as e:
+            # Fallback: If response doesn't match expected structure (e.g., when using tools),
+            # use the raw response as the answer
+            logger.warning(f"Response parsing failed ({e}), using raw response as answer")
+            answer = llm_output
+            processed = {
+                "answer": llm_output,
+                "experiential_note": "",
+                "experiential_note_id": None,
+                "memory_actions_executed": [],
+                "emotional_resonance": {"valence": "neutral", "intensity": 0.5, "reason": ""},
+                "unresolved_questions": []
+            }
         experiential_note = processed.get("experiential_note", "")
         note_id = processed.get("experiential_note_id")
         memory_actions_executed = processed.get("memory_actions_executed", [])
@@ -387,6 +404,39 @@ class MemorySession(BasicSession):
             logger.error(f"❌ Consolidation failed: {e}")
             logger.exception(e)
             return {}
+
+    def _register_memory_tools(self):
+        """
+        Register memory tools with AbstractCore for LLM agency.
+
+        This gives the LLM the ability to:
+        - Decide what to remember (remember_fact)
+        - Search its own memory (search_memories)
+        - Reflect on topics (reflect_on)
+        - Capture documents (capture_document, search_library)
+        - Control context reconstruction (reconstruct_context)
+
+        Tools are registered with the parent BasicSession, making them
+        available to the LLM during generation.
+        """
+        try:
+            from .tools import create_memory_tools
+
+            # Create tool definitions
+            memory_tools = create_memory_tools(self)
+
+            # Register with parent BasicSession
+            # Note: BasicSession expects tools in __init__, but we create them after
+            # because they need 'self'. So we update the tools list directly.
+            self.tools = memory_tools
+
+            logger.info(f"Registered {len(memory_tools)} memory tools with AbstractCore")
+
+        except ImportError as e:
+            logger.warning(f"Could not register memory tools: {e}")
+            logger.warning("Memory tools will not be available to LLM")
+        except Exception as e:
+            logger.error(f"Failed to register memory tools: {e}")
 
     def _basic_context_reconstruction(self, user_id: str, query: str) -> str:
         """

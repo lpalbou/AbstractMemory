@@ -119,8 +119,9 @@ class StructuredResponseHandler:
             return False
 
         if "answer" not in response:
-            self.logger.error("Response missing required 'answer' field")
-            return False
+            self.logger.warning("Response missing required 'answer' field (may be using tools)")
+            # Don't fail validation - tools might be in use
+            return True
 
         # Warn about missing optional fields
         optional_fields = ["experiential_note", "memory_actions", "emotional_resonance"]
@@ -162,7 +163,8 @@ class StructuredResponseHandler:
             self.logger.warning("Response validation failed, proceeding anyway")
 
         # Extract components
-        answer = response.get("answer", "")
+        # If answer is missing, use the full response as the answer (tool usage mode)
+        answer = response.get("answer", llm_output if llm_output else "")
         experiential_note = response.get("experiential_note", "")
         memory_actions = response.get("memory_actions", [])
         unresolved_questions = response.get("unresolved_questions", [])
