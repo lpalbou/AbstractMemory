@@ -1,6 +1,6 @@
 # Concepts
 
-**Last Updated**: 2025-10-01
+**Last Updated**: 2025-10-02
 
 **Key concepts understood.**
 

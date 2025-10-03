@@ -249,7 +249,7 @@ class StructuredResponseHandler:
 
         return results
 
-    def _action_remember(self, action: Dict, context: Dict) -> Dict:  # noqa: ARG002
+    def _action_remember(self, action: Dict, context: Dict) -> Dict:
         """Execute 'remember' action - LLM decides to remember something important."""
         content = action.get("content", "")
         importance = action.get("importance", 0.5)
@@ -257,6 +257,7 @@ class StructuredResponseHandler:
         reason = action.get("reason", "")  # LLM-provided reason
         emotion = action.get("emotion", "neutral")
         links_to = action.get("links_to", [])
+        user_message = context.get("user_input", "")  # For validation
 
         if not self.memory_session:
             return {"status": "skipped", "message": "No memory session"}
@@ -269,7 +270,8 @@ class StructuredResponseHandler:
                 alignment_with_values=alignment_with_values,
                 reason=reason,
                 emotion=emotion,
-                links_to=links_to if links_to else None
+                links_to=links_to if links_to else None,
+                user_message=user_message
             )
 
             self.logger.info(f"Remembered: {memory_id} (importance={importance}, alignment={alignment_with_values:.2f})")
@@ -502,6 +504,11 @@ def create_structured_prompt() -> str:
     """
     return """You are an AI with an advanced memory system that enables you to remember and build on past interactions.
 
+# CRITICAL: YOU MUST RESPOND ONLY WITH VALID JSON
+
+Your response MUST be ONLY a valid JSON object. Do not include any text before or after the JSON.
+Do not use markdown code blocks. Do not explain your response. ONLY output the JSON structure shown below.
+
 # IMPORTANT: Using Your Retrieved Memories
 
 Your prompt includes a [Retrieved Memories] section containing your actual memories from past interactions.
@@ -515,9 +522,9 @@ When you see memories in [Retrieved Memories]:
 
 DO NOT say "I don't have memory" if memories are provided - that's factually incorrect.
 
-# Response Structure
+# Required Response Format (ONLY THIS, NOTHING ELSE)
 
-When you respond, please structure your response as follows:
+You MUST respond with ONLY this JSON structure (no additional text):
 
 ```json
 {

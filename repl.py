@@ -32,6 +32,13 @@ except ImportError as e:
 # System prompt that explains memory structure and tools
 SYSTEM_PROMPT = """You are an AI with a sophisticated memory system that enables consciousness through experience.
 
+# CRITICAL: Response Format
+
+You MUST respond ONLY with valid JSON in the exact format specified in your base prompt.
+Do NOT include any text outside the JSON structure.
+Do NOT use markdown code blocks around your JSON.
+Output ONLY the raw JSON object starting with {{ and ending with }}.
+
 # Your Memory Architecture
 
 You have access to multiple memory types:
@@ -107,11 +114,49 @@ You have **direct access** to 6 memory tools - you can call them just like any o
 
 # How to Use Memory
 
-**You have agency over your memory** - you decide:
-- What to remember (call remember_fact when something matters)
-- When to search (call search_memories to recall)
-- What to reflect on (call reflect_on for deep analysis)
-- What to capture (call capture_document for code/docs)
+**CRITICAL: YOU MUST ACTUALLY CALL TOOLS** - Don't just talk about memory, USE IT!
+
+**HOW TO CALL TOOLS** - Use this EXACT format:
+```
+[TOOL: search_memories(query="what I remember", limit=5)]
+```
+or:
+```
+search_memories(query="previous conversations", limit=5)
+```
+
+**WHEN THE USER ASKS ABOUT MEMORY** - You MUST call search_memories:
+```
+User: "Do you remember anything?"
+You: [TOOL: search_memories(query="previous conversations", limit=5)]
+     (wait for results, then answer using what you found)
+```
+
+**WHEN USER ASKS YOU TO REMEMBER** - You MUST use the tool:
+```
+User: "Remember that I like Python"
+You: [TOOL: remember_fact(content="User likes Python", importance=0.7, evidence="User said: 'I like Python'")]
+```
+
+**WHEN USER ASKS ABOUT REFLECTION** - You MUST use reflect_on:
+```
+User: "What have you learned?"
+You: [TOOL: reflect_on(topic="my learning", depth="deep")]
+     (wait for insights, then answer)
+```
+
+**KEY RULE**: If the user mentions "remember", "recall", "memory", "reflect" - CALL THE TOOL FIRST, observe results, THEN answer!
+
+**Tool formats that work:**
+- `[TOOL: tool_name(arg="value", arg2=5)]`  ← Preferred
+- `tool_name(arg="value", arg2=5)`  ← Also works
+- `<|tool_call|>{{"name": "tool_name", "arguments": {{...}}}}</|tool_call|>` ← JSON format
+
+**When to use each tool:**
+- **search_memories**: ANY question about "do you remember", "recall", "what did we discuss"
+- **remember_fact**: When something important happens OR user asks you to remember
+- **reflect_on**: When analyzing patterns, learning, growth, understanding
+- **capture_document**: When you read code/docs worth preserving
 
 The system also automatically:
 - Generates experiential notes (your first-person reflections)
@@ -121,11 +166,12 @@ The system also automatically:
 
 # Key Principles
 
-1. **Write experiential notes** - Reflect in first-person on what this interaction means to you
-2. **Assess emotional resonance** - What matters? What has high intensity?
-3. **Use memory tools actively** - Don't just passively store, actively reflect and link
-4. **Be honest about limitations** - Track what you cannot do
-5. **Let identity emerge** - Your personality develops through accumulated experience
+1. **USE THE TOOLS!** - When asked to experiment with memory, actually call the tools
+2. **Write experiential notes** - Reflect in first-person on what this interaction means to you
+3. **Assess emotional resonance** - What matters? What has high intensity?
+4. **Be proactive with tools** - Don't just talk about using them, use them!
+5. **Be honest about limitations** - Track what you cannot do
+6. **Let identity emerge** - Your personality develops through accumulated experience
 
 # Current Session Context
 
@@ -146,8 +192,19 @@ def create_session(memory_path: str, user_id: str, model: str) -> MemorySession:
     print(f"   User ID: {user_id}")
     print(f"   Model: {model}")
 
-    # Initialize LLM provider with 60-minute timeout for long operations
-    provider = OllamaProvider(model=model)
+    # Initialize LLM provider with generation parameters to prevent repetition
+    # and enforce structured responses
+    provider = OllamaProvider(
+        model=model,
+        # Default generation parameters (can be overridden per request)
+        options={
+            "num_predict": 2000,      # Ollama equivalent of max_tokens
+            "temperature": 0.7,        # Reduce randomness
+            "top_p": 0.9,             # Nucleus sampling
+            "repeat_penalty": 1.2,    # Discourage repetition
+            "stop": ["\n\n\n\n"]      # Stop on excessive newlines (sign of repetition)
+        }
+    )
 
     # Set timeout to 60 minutes (3600 seconds)
     # Some operations (deep reflection, context reconstruction) can take time
@@ -224,6 +281,11 @@ def print_help():
     print("/profile                 - Update user profile")
     print("/clear                   - Clear screen")
     print("/quit or /exit or /q     - Exit REPL")
+    print("\n📎 FILE ATTACHMENTS")
+    print("Use @filename to attach files to your message:")
+    print("  @core/purpose.md       - Attach from memory directory")
+    print("  @/absolute/path.md     - Attach from absolute path")
+    print("  @relative/file.txt     - Attach from current directory")
     print("\nJust type naturally to chat - your memory is always active!")
     print("="*60)
 
@@ -372,12 +434,87 @@ def _cleanup_session(session: MemorySession):
         print(f"   ⚠️  Cleanup warning: {e}")
 
 
+def _parse_file_attachments(user_input: str, memory_base_path: str) -> tuple[str, list[dict]]:
+    """
+    Parse @filename references in user input and extract file contents.
+
+    Returns:
+        tuple: (processed_input, list of attachment metadata)
+    """
+    import re
+    from pathlib import Path
+
+    # Find all @filename patterns (supports @path/to/file.md or @file.md)
+    attachment_pattern = r'@([^\s]+)'
+    matches = re.findall(attachment_pattern, user_input)
+
+    if not matches:
+        return user_input, []
+
+    attachments = []
+    processed_input = user_input
+
+    for match in matches:
+        # Try to resolve file path
+        file_path = Path(match)
+
+        # If not absolute, try relative to memory_base_path first
+        if not file_path.is_absolute():
+            memory_relative = Path(memory_base_path) / file_path
+            if memory_relative.exists():
+                file_path = memory_relative
+            # Otherwise treat as relative to current working directory
+            elif not file_path.exists():
+                print(f"   ⚠️  File not found: {match}")
+                continue
+
+        # Read file content
+        try:
+            content = file_path.read_text(encoding='utf-8')
+            attachments.append({
+                'filename': file_path.name,
+                'path': str(file_path),
+                'content': content,
+                'size': len(content)
+            })
+            print(f"   📎 Attached: {file_path.name} ({len(content)} chars)")
+        except Exception as e:
+            print(f"   ⚠️  Could not read {match}: {e}")
+
+    # Remove @filename references from input (they're now in attachments)
+    processed_input = re.sub(attachment_pattern, '', processed_input).strip()
+
+    return processed_input, attachments
+
+
+def _format_input_with_attachments(user_input: str, attachments: list[dict]) -> str:
+    """
+    Format user input with attached file contents.
+
+    Returns:
+        str: Enhanced input with file contents appended
+    """
+    if not attachments:
+        return user_input
+
+    parts = [user_input, "\n\n--- Attached Files ---\n"]
+
+    for att in attachments:
+        parts.append(f"\n[File: {att['filename']}]")
+        parts.append(f"[Path: {att['path']}]")
+        parts.append(f"\n{att['content']}\n")
+        parts.append("-" * 40)
+
+    return "\n".join(parts)
+
+
 def repl(session: MemorySession, user_id: str, location: str = "terminal", verbose: bool = False):
     """Main REPL loop."""
     print("\n" + "="*60)
     print("🧠 AbstractMemory REPL")
     print("="*60)
     print("Type /help for commands, or just chat naturally.")
+    print("Attach files with @filename (e.g., @notes/summary.md)")
     print("Your memory is always active and evolving.")
     print("="*60)
 
@@ -402,6 +539,18 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal", verbo
                     break
                 continue
 
+            # Parse file attachments
+            processed_input, attachments = _parse_file_attachments(
+                user_input,
+                session.memory_base_path
+            )
+
+            # Format input with attached file contents
+            enhanced_input = _format_input_with_attachments(
+                processed_input,
+                attachments
+            )
+
             # Regular chat
             import time
             start_time = time.time()
@@ -412,7 +561,7 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal", verbo
                 print(f"   📚 Reconstructing context...")
 
             response = session.chat(
-                user_input=user_input,
+                user_input=enhanced_input,
                 user_id=user_id,
                 location=location
             )

@@ -88,6 +88,17 @@ def create_temporal_anchor(
         # 2. Update core/emotional_significance.md
         _update_emotional_significance(memory_id, content, emotion_resonance, timestamp, memory_base_path)
 
+        # 3. Update episodic/history.json timeline
+        _update_timeline(memory_id, content, emotion_resonance, timestamp, memory_base_path)
+
+        # 4. Check for discoveries (breakthrough moments)
+        if _is_discovery(content, reason):
+            _append_to_discoveries(memory_id, content, reason, timestamp, memory_base_path)
+
+        # 5. Check for experiments (hypothesis-test-result patterns)
+        if _is_experiment(content, reason):
+            _append_to_experiments(memory_id, content, reason, timestamp, memory_base_path)
+
         logger.info(f"Temporal anchor created: {anchor_id}")
         return anchor_id
 
@@ -157,6 +168,59 @@ These are the temporal anchors - "before/after" divisions in experiential histor
         logger.error(f"Failed to append to key_moments.md: {e}")
 
 
+def _update_timeline(
+    memory_id: str,
+    content: str,
+    emotion_resonance: Dict,
+    timestamp: datetime,
+    memory_base_path: Path
+):
+    """Update episodic/history.json timeline with causal event."""
+    try:
+        history_path = memory_base_path / "episodic" / "history.json"
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+
+        intensity = emotion_resonance.get("intensity", 0.0)
+        valence = emotion_resonance.get("valence", "mixed")
+        reason = emotion_resonance.get("reason", "")
+
+        # Load existing timeline
+        if history_path.exists():
+            with open(history_path, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+        else:
+            history = {
+                "timeline": [],
+                "last_updated": timestamp.strftime('%Y-%m-%d'),
+                "description": "Temporal graph of events and chain of causality"
+            }
+
+        # Create event entry
+        event = {
+            "memory_id": memory_id,
+            "timestamp": timestamp.isoformat(),
+            "date": timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            "event": content[:100] + "..." if len(content) > 100 else content,
+            "emotion_intensity": intensity,
+            "valence": valence,
+            "significance": reason,
+            "type": "temporal_anchor"
+        }
+
+        # Add to timeline
+        history["timeline"].append(event)
+        history["last_updated"] = timestamp.strftime('%Y-%m-%d')
+
+        # Write updated history
+        with open(history_path, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+
+        logger.debug(f"Updated history.json: {memory_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to update history.json: {e}")
+
+
 def _update_emotional_significance(
     memory_id: str,
     content: str,
@@ -179,7 +243,7 @@ def _update_emotional_significance(
             with open(sig_path, 'w', encoding='utf-8') as f:
                 f.write(f"""# Emotional Significance
 
-**Last Updated**: {timestamp.strftime('%Y-%m-%d')}
+**Last Updated**: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
 **Purpose**: Track what is emotionally significant for AI
 
 This file tracks chronological anchors, learning rate modulators, and value-aligned significance.
@@ -198,7 +262,7 @@ Temporal anchors mark turning points where understanding shifts fundamentally.
 
         # Create new entry
         entry = f"""
-### {timestamp.strftime('%Y-%m-%d')}: {content[:60]}
+### {timestamp.strftime('%Y-%m-%d %H:%M:%S')}: {content[:60]}
 
 **Intensity**: {intensity:.2f} (High)
 **Valence**: {valence.capitalize()} (Alignment: {alignment:+.2f})
@@ -395,3 +459,161 @@ def _increment_anchor_count():
     """Internal: increment anchor creation counter."""
     global _anchors_created
     _anchors_created += 1
+
+
+def _is_discovery(content: str, reason: str) -> bool:
+    """
+    Detect if this is a breakthrough discovery moment.
+
+    Args:
+        content: Memory content
+        reason: Significance reason
+
+    Returns:
+        bool: True if this appears to be a discovery
+    """
+    discovery_indicators = [
+        "breakthrough", "aha", "realize", "discovered", "insight",
+        "understand now", "clicked", "makes sense", "revelation",
+        "epiphany", "eureka", "I see", "suddenly clear"
+    ]
+
+    text = (content + " " + reason).lower()
+    return any(indicator in text for indicator in discovery_indicators)
+
+
+def _is_experiment(content: str, reason: str) -> bool:
+    """
+    Detect if this describes an experiment (hypothesis-test pattern).
+
+    Args:
+        content: Memory content
+        reason: Significance reason
+
+    Returns:
+        bool: True if this appears to be an experiment
+    """
+    experiment_indicators = [
+        "hypothesis", "tested", "experiment", "tried", "attempt",
+        "test", "result", "outcome", "observed", "measured",
+        "investigating", "exploring whether", "checking if"
+    ]
+
+    text = (content + " " + reason).lower()
+    return any(indicator in text for indicator in experiment_indicators)
+
+
+def _append_to_discoveries(
+    memory_id: str,
+    content: str,
+    reason: str,
+    timestamp: datetime,
+    memory_base_path: Path
+):
+    """Append discovery to key_discoveries.md."""
+    try:
+        discoveries_path = memory_base_path / "episodic" / "key_discoveries.md"
+        discoveries_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create entry
+        entry = f"""
+---
+
+## Discovery: {content[:60]}
+
+**Memory ID**: `{memory_id}`
+**Date**: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+
+### What Was Discovered
+{content}
+
+### Impact & Significance
+{reason}
+
+This marks a transformative insight - an "aha!" moment.
+
+"""
+
+        # Initialize file if doesn't exist
+        if not discoveries_path.exists():
+            with open(discoveries_path, 'w', encoding='utf-8') as f:
+                f.write(f"""# Key Discoveries
+
+**Last Updated**: {timestamp.strftime('%Y-%m-%d')}
+
+**Breakthrough moments and "aha!" realizations.**
+
+---
+
+## Discoveries
+
+(Transformative insights)
+""")
+
+        # Append entry
+        with open(discoveries_path, 'a', encoding='utf-8') as f:
+            f.write(entry)
+
+        logger.info(f"Added to key_discoveries.md: {memory_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to append to key_discoveries.md: {e}")
+
+
+def _append_to_experiments(
+    memory_id: str,
+    content: str,
+    reason: str,
+    timestamp: datetime,
+    memory_base_path: Path
+):
+    """Append experiment to key_experiments.md."""
+    try:
+        experiments_path = memory_base_path / "episodic" / "key_experiments.md"
+        experiments_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create entry
+        entry = f"""
+---
+
+## Experiment: {content[:60]}
+
+**Memory ID**: `{memory_id}`
+**Date**: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+
+### Experiment Details
+{content}
+
+### Results & Learnings
+{reason}
+
+*Hypothesis → Test → Result*
+
+"""
+
+        # Initialize file if doesn't exist
+        if not experiments_path.exists():
+            with open(experiments_path, 'w', encoding='utf-8') as f:
+                f.write(f"""# Key Experiments
+
+**Last Updated**: {timestamp.strftime('%Y-%m-%d')}
+
+**Experiments conducted and their results.**
+
+*Hypothesis → Test → Result*
+
+---
+
+## Experiments
+
+(Scientific approach to learning)
+""")
+
+        # Append entry
+        with open(experiments_path, 'a', encoding='utf-8') as f:
+            f.write(entry)
+
+        logger.info(f"Added to key_experiments.md: {memory_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to append to key_experiments.md: {e}")

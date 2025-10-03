@@ -200,7 +200,7 @@ class MemorySession(BasicSession):
         self._load_session_metadata()
 
         # Core memory consolidation tracking
-        self.consolidation_frequency = 10  # Consolidate every N interactions
+        self.consolidation_frequency = 5  # Consolidate every N interactions (lowered for testing)
         self.last_consolidation_count = 0
 
         # Initialize consolidation scheduler (daily/weekly/monthly)
@@ -219,7 +219,7 @@ class MemorySession(BasicSession):
             memory_base_path=self.memory_base_path,
             llm_provider=self.provider  # Use same LLM for profile extraction
         )
-        self.profile_update_threshold = 10  # Update profile every N interactions per user
+        self.profile_update_threshold = 5  # Update profile every N interactions per user (lowered for testing)
         self.user_interaction_counts = {}  # Track interactions per user
         logger.info("User profile manager initialized (Phase 6)")
 
@@ -289,13 +289,77 @@ class MemorySession(BasicSession):
         total_prompt_tokens = len(enhanced_prompt) // 4
         logger.info(f"Generating LLM response (prompt: ~{total_prompt_tokens} tokens)...")
 
-        # Call parent's generate method
-        response = self.generate(enhanced_prompt, **kwargs)
+        # Add generation parameters to prevent repetition and enforce limits
+        generation_params = {
+            "max_tokens": 2000,  # Prevent runaway generation
+            "temperature": 0.7,  # Reduce randomness for more focused responses
+            "top_p": 0.9,        # Limit token selection to top 90%
+            "repeat_penalty": 1.2,  # Discourage repetition
+            **kwargs  # Allow override via kwargs
+        }
+
+        # Call parent's generate method with controlled parameters
+        response = self.generate(enhanced_prompt, **generation_params)
 
         logger.info(f"LLM response received")
 
         # Extract content from response
         llm_output = response.content if hasattr(response, 'content') else str(response)
+
+        # ReAct Loop: Handle tool calls
+        max_iterations = 3  # Prevent infinite loops
+        iteration = 0
+
+        logger.debug(f"ReAct loop starting, checking for tool calls in LLM output...")
+
+        while iteration < max_iterations:
+            # Check if LLM output contains tool call
+            tool_call_detected, tool_results = self._execute_tool_if_present(llm_output)
+
+            if not tool_call_detected:
+                # No tool call - this is the final answer
+                if iteration == 0:
+                    logger.info(f"✅ No direct tool call detected in LLM output (may be using JSON format)")
+                else:
+                    logger.info(f"✅ No more tool calls after {iteration} iterations, proceeding with final answer")
+                break
+
+            iteration += 1
+            logger.info(f"🔄 ReAct iteration {iteration}: Tool executed, feeding results back to LLM")
+
+            # Feed tool results back to LLM for continuation
+            continuation_prompt = f"""{enhanced_prompt}
+
+Assistant (previous): {llm_output}
+
+Tool Results: {tool_results}
+
+Now, using these tool results, please provide your final answer to the user's question."""
+
+            # Generate next response
+            response = self.generate(continuation_prompt, **generation_params)
+            llm_output = response.content if hasattr(response, 'content') else str(response)
+            logger.info(f"LLM continued after observing tool results")
+
+        # Validate response before processing
+        is_valid, validation_error = self._validate_llm_response(llm_output)
+        if not is_valid:
+            logger.warning(f"LLM response validation failed: {validation_error}")
+            logger.warning(f"Response preview: {llm_output[:200]}...")
+
+            # Retry once with even stricter parameters if response is clearly malformed
+            if "repetitive" in validation_error.lower() or len(llm_output) > 10000:
+                logger.info("Retrying with stricter generation parameters to prevent repetition...")
+                stricter_params = {
+                    "max_tokens": 1000,  # Much shorter limit
+                    "temperature": 0.5,  # More deterministic
+                    "top_p": 0.8,
+                    "repeat_penalty": 1.5,  # Higher penalty
+                    **kwargs
+                }
+                response = self.generate(enhanced_prompt, **stricter_params)
+                llm_output = response.content if hasattr(response, 'content') else str(response)
+                logger.info(f"Retry response length: {len(llm_output)} chars")
 
         # Step 3: Parse structured response
         # NOTE: When tools are enabled, LLM might respond directly without JSON structure
@@ -304,7 +368,8 @@ class MemorySession(BasicSession):
             "user_id": user_id,
             "location": location,
             "timestamp": timestamp,
-            "interaction_id": f"int_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+            "interaction_id": f"int_{timestamp.strftime('%Y%m%d_%H%M%S')}",
+            "user_input": user_input  # For memory validation
         }
 
         try:
@@ -327,6 +392,18 @@ class MemorySession(BasicSession):
         note_id = processed.get("experiential_note_id")
         memory_actions_executed = processed.get("memory_actions_executed", [])
         emotional_resonance = processed.get("emotional_resonance", {})
+
+        # Ensure emotional_resonance has minimum values if missing or zero
+        if not emotional_resonance or emotional_resonance.get("intensity", 0) == 0:
+            # Default: modest emotional intensity for interactions with questions
+            has_question = "?" in user_input
+            default_intensity = 0.6 if has_question else 0.4
+            emotional_resonance = {
+                "valence": "curiosity" if has_question else "neutral",
+                "intensity": default_intensity,
+                "reason": "Default emotional assessment (LLM didn't provide)"
+            }
+            logger.debug(f"Applied default emotional resonance: {emotional_resonance}")
 
         # Step 4: Memory actions already executed by response_handler
 
@@ -741,26 +818,28 @@ class MemorySession(BasicSession):
 
             # 4. Update current_context.md (MASTER synthesis)
             # TODO Phase 2: LLM synthesizes conversation into reflection
-            # For now: minimal summary until LLM synthesis implemented
+            # For now: improved summary with emotional state
             # current_context.md should REFERENCE specialized files, not duplicate them:
             #   - Current Task: What's happening NOW
             #   - Recent Activities: What was done
             #   - Key Insights: Understanding emerging
             #   - References: "See current_tasks.md (3 tasks), unresolved.md (5 questions)"
-            context_summary = f"Discussing: {user_input[:100]}..."
-            self.working_memory.update_context(context_summary, user_id=user_id)
+
+            # Build richer context summary
+            emotion_desc = f"{emotional_resonance.get('valence', 'neutral')} (intensity: {emotional_resonance.get('intensity', 0):.2f})"
+            context_summary = f"Interaction: {user_input[:60]}..."
+
+            session_ctx = {
+                "current_task": context_summary,
+                "emotional_state": emotion_desc,
+                "open_questions": unresolved[:3] if unresolved else []
+            }
+
+            self.working_memory.update_context(context_summary, user_id=user_id, session_context=session_ctx)
 
             # 3. Update episodic memory if emotionally significant
-            intensity = emotional_resonance.get("intensity", 0.0)
-            if intensity > 0.7:  # High-intensity moment
-                event = f"Interaction with {user_id}: {user_input[:60]}..."
-                self.episodic_memory.add_key_moment(
-                    event=event,
-                    intensity=intensity,
-                    context=emotional_resonance.get("reason", ""),
-                    user_id=user_id
-                )
-                logger.info(f"Added key moment: intensity={intensity:.2f}")
+            # NOTE: Key moments are now handled by temporal_anchoring.py in remember() method
+            # to maintain single source of truth and consistent format
 
             # 4. Update semantic memory if insights mentioned
             # Check if answer contains insight indicators
@@ -944,7 +1023,237 @@ class MemorySession(BasicSession):
         except Exception as e:
             logger.error(f"❌ Scheduled consolidation check failed: {e}")
 
+    def _execute_tool_if_present(self, llm_output: str) -> tuple[bool, str]:
+        """
+        Detect and execute tool calls in LLM output.
+
+        Supports multiple formats:
+        - <|tool_call|>{"name": "tool_name", "arguments": {...}}</|tool_call|>
+        - [TOOL: tool_name(arg1=value1, arg2=value2)]
+        - search_memories(query="...", limit=5)
+        - {"tool": "tool_name", "params": {...}}
+
+        Returns:
+            (tool_detected, results_string): Whether tool was found and executed, and the results
+        """
+        import re
+        import json
+
+        # Pattern 1: XML-style tool call
+        xml_pattern = r'<\|tool_call\|>\s*(\{.*?\})\s*</\|tool_call\|>'
+        xml_match = re.search(xml_pattern, llm_output, re.DOTALL)
+
+        if xml_match:
+            try:
+                tool_json = json.loads(xml_match.group(1))
+                tool_name = tool_json.get("name")
+                tool_args = tool_json.get("arguments", {})
+
+                logger.info(f"🛠️  [XML format] Detected tool call: {tool_name}({tool_args})")
+
+                # Execute the tool
+                result = self._execute_single_tool(tool_name, tool_args)
+                return True, f"{tool_name} results: {result}"
+
+            except Exception as e:
+                logger.error(f"Failed to parse/execute XML tool call: {e}")
+                return False, ""
+
+        # Pattern 2: Bracket format [TOOL: tool_name(...)]
+        bracket_pattern = r'\[TOOL:\s*(\w+)\((.*?)\)\]'
+        bracket_match = re.search(bracket_pattern, llm_output, re.DOTALL)
+
+        if bracket_match:
+            try:
+                tool_name = bracket_match.group(1)
+                args_str = bracket_match.group(2)
+                tool_args = self._parse_function_args(args_str)
+
+                logger.info(f"🛠️  [Bracket format] Detected tool call: {tool_name}({tool_args})")
+
+                result = self._execute_single_tool(tool_name, tool_args)
+                return True, f"{tool_name} results: {result}"
+
+            except Exception as e:
+                logger.error(f"Failed to parse/execute bracket tool call: {e}")
+                return False, ""
+
+        # Pattern 3: Function call format (without [TOOL:] wrapper)
+        # Look for known tool names followed by parentheses
+        tool_names = ["search_memories", "reflect_on", "remember_fact",
+                     "capture_document", "search_library", "reconstruct_context"]
+
+        for tool_name in tool_names:
+            # Match: tool_name(...)
+            func_pattern = rf'{tool_name}\s*\((.*?)\)'
+            func_match = re.search(func_pattern, llm_output, re.DOTALL)
+
+            if func_match:
+                try:
+                    args_str = func_match.group(1)
+                    tool_args = self._parse_function_args(args_str)
+
+                    logger.info(f"🛠️  [Function format] Detected tool call: {tool_name}({tool_args})")
+
+                    result = self._execute_single_tool(tool_name, tool_args)
+                    return True, f"{tool_name} results: {result}"
+
+                except Exception as e:
+                    logger.error(f"Failed to parse/execute function tool call: {e}")
+                    continue  # Try next tool name
+
+        # No tool call found
+        return False, ""
+
+    def _parse_function_args(self, args_str: str) -> Dict[str, Any]:
+        """
+        Parse function arguments from string like: query="...", limit=5
+
+        Returns:
+            Dict of argument name -> value
+        """
+        import re
+        import json
+
+        args_dict = {}
+
+        # Pattern: arg_name="value" or arg_name=value
+        arg_pattern = r'(\w+)\s*=\s*(["\'])(.*?)\2|(\w+)\s*=\s*(\d+|true|false|null)'
+
+        for match in re.finditer(arg_pattern, args_str):
+            if match.group(1):  # String value
+                arg_name = match.group(1)
+                arg_value = match.group(3)
+            else:  # Number/boolean/null value
+                arg_name = match.group(4)
+                arg_value_str = match.group(5)
+                # Convert to proper type
+                if arg_value_str.isdigit():
+                    arg_value = int(arg_value_str)
+                elif arg_value_str == "true":
+                    arg_value = True
+                elif arg_value_str == "false":
+                    arg_value = False
+                elif arg_value_str == "null":
+                    arg_value = None
+                else:
+                    arg_value = arg_value_str
+
+            args_dict[arg_name] = arg_value
+
+        return args_dict
+
+    def _execute_single_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
+        """Execute a single tool by name with given arguments."""
+        # Map tool names to methods
+        tool_map = {
+            "search_memories": self.search_memories,
+            "remember_fact": self.remember_fact,
+            "reflect_on": self.reflect_on,
+            "capture_document": self.capture_document,
+            "search_library": self.search_library,
+            "reconstruct_context": self.reconstruct_context
+        }
+
+        if tool_name not in tool_map:
+            logger.warning(f"Unknown tool: {tool_name}")
+            return f"Error: Unknown tool '{tool_name}'"
+
+        try:
+            method = tool_map[tool_name]
+            result = method(**args)
+
+            # Format result for LLM
+            if isinstance(result, dict):
+                return json.dumps(result, indent=2)
+            elif isinstance(result, list):
+                return json.dumps(result, indent=2)
+            else:
+                return str(result)
+
+        except Exception as e:
+            logger.error(f"Tool execution failed for {tool_name}: {e}")
+            return f"Error executing {tool_name}: {str(e)}"
+
     # Memory Tool Methods (exposed to LLM via memory_actions)
+
+    def _validate_memory_content(self, content: str, source: str, evidence: str, user_message: str = "") -> tuple[bool, str]:
+        """
+        Validate memory content to prevent hallucination of user facts.
+
+        Args:
+            content: What AI wants to remember
+            source: Where this memory comes from
+            evidence: What supports this memory
+            user_message: The user's actual message (for validating observations)
+
+        Returns:
+            (is_valid, error_message): Validation result
+        """
+        content_lower = content.lower()
+
+        # Check if this is a claim about the user
+        user_indicators = ['user', 'they', 'their', 'them', 'he', 'she', 'person']
+        is_user_claim = any(indicator in content_lower for indicator in user_indicators)
+
+        # Detect if this is a direct observation of what user said
+        direct_observation_markers = ['user said', 'user asked', 'user mentioned', 'user stated',
+                                     'user questioned', 'user responded', 'user explained']
+        is_direct_observation = any(marker in content_lower for marker in direct_observation_markers)
+
+        # If it's a direct observation and we have the user's message, that's the evidence
+        if is_direct_observation and user_message and source == "ai_observed":
+            # Direct observations of user's words are valid when user_message is provided
+            return True, ""
+
+        # User claims require evidence
+        if is_user_claim and source in ["user_stated", "ai_observed", "ai_inferred"]:
+            if not evidence or len(evidence.strip()) < 10:
+                # Exception: If this is just recording what user said and we have user_message
+                if user_message and source == "ai_observed":
+                    return True, ""
+                return False, f"User-related claim requires evidence (source={source})"
+
+        # Block assumptions about user preferences/interests without evidence
+        assumption_keywords = ['interest', 'prefer', 'enjoy', 'like', 'want', 'looking for']
+        is_assumption = any(keyword in content_lower for keyword in assumption_keywords)
+
+        if is_user_claim and is_assumption:
+            # Require strong evidence for user preference claims
+            if source == "ai_observed" and not evidence:
+                return False, "Cannot assume user preferences without observation evidence"
+            elif source == "ai_inferred" and not evidence:
+                return False, "Cannot infer user preferences without supporting evidence"
+            elif source not in ["user_stated", "ai_observed", "ai_inferred", "ai_reflection"]:
+                return False, f"Invalid source for user preference: {source}"
+
+        return True, ""
+
+    def _calculate_reliability(self, source: str, evidence: str) -> float:
+        """
+        Calculate reliability score for a memory based on source and evidence.
+
+        Args:
+            source: Origin of the memory
+            evidence: Supporting evidence
+
+        Returns:
+            float: Reliability score 0.0-1.0
+        """
+        base_scores = {
+            "user_stated": 0.95,      # User explicitly said this - most reliable
+            "ai_observed": 0.80,      # AI observed from actual behavior
+            "ai_inferred": 0.60,      # AI inferred from evidence - less certain
+            "ai_reflection": 0.70,    # AI's own insights - subjective but valid
+        }
+
+        base = base_scores.get(source, 0.50)
+
+        # Boost reliability if strong evidence exists
+        if evidence and len(evidence.strip()) > 20:
+            base = min(1.0, base + 0.10)
+
+        return base
 
     def remember_fact(self,
                      content: str,
@@ -952,7 +1261,10 @@ class MemorySession(BasicSession):
                      alignment_with_values: float = 0.5,
                      reason: str = "",
                      emotion: str = "neutral",
-                     links_to: Optional[List[str]] = None) -> str:
+                     links_to: Optional[List[str]] = None,
+                     source: str = "ai_observed",
+                     evidence: str = "",
+                     user_message: str = "") -> Optional[str]:
         """
         Remember a fact/insight (LLM-initiated agency).
 
@@ -967,15 +1279,30 @@ class MemorySession(BasicSession):
             reason: LLM explanation of emotional significance
             emotion: curiosity, excitement, concern, etc. (for backwards compat)
             links_to: Optional list of memory IDs to link to
+            source: Origin of this memory:
+                - "user_stated": User explicitly said this
+                - "ai_observed": AI observed this from user behavior
+                - "ai_inferred": AI inferred from evidence
+                - "ai_reflection": AI's own reflection/insight
+            evidence: What supports this memory (required for user-related facts)
+            user_message: User's actual message (for validating direct observations)
 
         Returns:
-            memory_id: ID of created memory
+            memory_id: ID of created memory, or None if rejected
         """
         try:
             timestamp = datetime.now()
             memory_id = f"mem_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}"
 
-            logger.info(f"Remember: {content[:50]}... (importance={importance}, emotion={emotion})")
+            # Validate memory content - prevent hallucination of user facts
+            is_valid, validation_error = self._validate_memory_content(content, source, evidence, user_message)
+            if not is_valid:
+                logger.warning(f"Memory rejected: {validation_error}")
+                logger.warning(f"Attempted content: {content[:100]}")
+                logger.warning(f"Source: {source}, Evidence: {evidence[:100] if evidence else 'none'}")
+                return None
+
+            logger.info(f"Remember: {content[:50]}... (importance={importance}, source={source}, emotion={emotion})")
 
             # Create memory path: notes/{yyyy}/{mm}/{dd}/
             date_path = self.memory_base_path / "notes" / str(timestamp.year) / f"{timestamp.month:02d}" / f"{timestamp.day:02d}"
@@ -1013,6 +1340,18 @@ class MemorySession(BasicSession):
 ## Content
 
 {content}
+
+---
+
+## Source & Evidence
+
+**Source**: {source}
+**Evidence**: {evidence if evidence else "N/A"}
+
+- `user_stated`: User explicitly said this
+- `ai_observed`: AI observed from user behavior
+- `ai_inferred`: AI inferred from evidence
+- `ai_reflection`: AI's own reflection/insight
 
 ---
 
@@ -1069,7 +1408,10 @@ This reflects how emotionally significant this memory is based on importance and
                     "file_path": str(file_path),
                     "metadata": {
                         "created_by": "remember_fact",
-                        "alignment": alignment
+                        "alignment": alignment,
+                        "source": source,  # Track where memory came from
+                        "evidence": evidence,  # What supports this memory
+                        "reliability": self._calculate_reliability(source, evidence)
                     }
                 }
                 self.lancedb_storage.add_note(note_data)
@@ -1952,7 +2294,14 @@ Generate reflection now:"""
                 "reconstruction_depth": config["link_depth"]
             }
 
+            # Format memory IDs for logging (show up to 20)
+            memory_ids = list(unique_memories.keys())
+            memory_list = ", ".join(memory_ids[:20])
+            if len(memory_ids) > 20:
+                memory_list += f", ... (+{len(memory_ids) - 20} more)"
+
             logger.info(f"✅ Memory retrieval: Found {total_memories_retrieved} unique memories (out of {total_memories_available} total in database) → {context_tokens} tokens of context for LLM")
+            logger.info(f"   📋 Retrieved: {memory_list}")
             return result
 
         except Exception as e:
@@ -2208,6 +2557,56 @@ Generate reflection now:"""
                 parts.append(f"   {content}")
 
         return "\n".join(parts)
+
+    def _validate_llm_response(self, llm_output: str) -> tuple[bool, str]:
+        """
+        Validate LLM response for common issues.
+
+        Args:
+            llm_output: Raw LLM response
+
+        Returns:
+            (is_valid, error_message): Validation result
+        """
+        # Check for actual repetition patterns (not just length)
+        lines = llm_output.split('\n')
+
+        # Detect line-level repetition
+        if len(lines) > 50:
+            unique_lines = set(lines)
+            duplicate_ratio = 1 - (len(unique_lines) / len(lines))
+            if duplicate_ratio > 0.7:  # More than 70% duplicate lines
+                most_common = max(set(lines), key=lines.count)
+                repeat_count = lines.count(most_common)
+                logger.warning(f"🔄 Repetition detected: '{most_common[:50]}...' repeated {repeat_count} times")
+                return False, f"Highly repetitive response (70%+ duplicate lines) - '{most_common[:50]}...' repeated {repeat_count}x"
+
+        # Detect phrase-level repetition (same 10+ word phrase repeated)
+        words = llm_output.split()
+        if len(words) > 100:
+            # Check for repeated 10-word sequences
+            phrase_length = 10
+            phrases = []
+            for i in range(len(words) - phrase_length):
+                phrase = " ".join(words[i:i+phrase_length])
+                phrases.append(phrase)
+
+            if phrases:
+                from collections import Counter
+                phrase_counts = Counter(phrases)
+                most_common_phrase, count = phrase_counts.most_common(1)[0]
+                if count > 5:  # Same 10-word phrase appears 5+ times
+                    logger.warning(f"🔄 Phrase repetition: '{most_common_phrase[:60]}...' repeated {count} times")
+                    return False, f"Repetitive phrase detected: '{most_common_phrase[:60]}...' appears {count} times"
+
+        # Log response statistics for visibility
+        logger.info(f"📊 Response stats: {len(llm_output)} chars, {len(lines)} lines, {len(words)} words")
+
+        # Long responses are OK if not repetitive
+        if len(llm_output) > 50000:
+            logger.warning(f"⚠️  Very long response: {len(llm_output)} chars - but no repetition detected, proceeding")
+
+        return True, ""
 
     def get_observability_report(self) -> Dict[str, Any]:
         """
