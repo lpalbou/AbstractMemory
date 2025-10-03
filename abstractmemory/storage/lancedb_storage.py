@@ -148,6 +148,52 @@ class LanceDBStorage:
             "metadata": "string"
         }
 
+        # Working memory table schema
+        self.working_memory_schema = {
+            "id": "string",
+            "type": "string",  # current_context, active_tasks, unresolved, resolved
+            "content": "string",
+            "timestamp": "timestamp",
+            "active": "bool",
+            "embedding": "vector",
+            "metadata": "string"
+        }
+
+        # Episodic memory table schema
+        self.episodic_memory_schema = {
+            "id": "string",
+            "type": "string",  # key_moment, experiment, discovery
+            "title": "string",
+            "content": "string",
+            "timestamp": "timestamp",
+            "emotion": "string",
+            "emotion_intensity": "float",
+            "embedding": "vector",
+            "metadata": "string"
+        }
+
+        # Semantic memory table schema
+        self.semantic_memory_schema = {
+            "id": "string",
+            "type": "string",  # insight, concept
+            "content": "string",
+            "timestamp": "timestamp",
+            "connections": "string",  # JSON array of related concept IDs
+            "embedding": "vector",
+            "metadata": "string"
+        }
+
+        # People table schema
+        self.people_schema = {
+            "id": "string",
+            "user_id": "string",
+            "type": "string",  # profile, preferences
+            "content": "string",
+            "timestamp": "timestamp",
+            "embedding": "vector",
+            "metadata": "string"
+        }
+
         logger.info("LanceDB schemas initialized")
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
@@ -600,3 +646,283 @@ class LanceDBStorage:
         except Exception as e:
             logger.error(f"Failed to search library: {e}")
             return []
+
+    def add_core_memory(self, memory_data: Dict[str, Any]) -> bool:
+        """
+        Add core memory component to core_memory table.
+
+        Args:
+            memory_data: Core memory data
+
+        Returns:
+            True if successful
+        """
+        try:
+            record = {
+                "component": memory_data.get("component", ""),
+                "version": memory_data.get("version", 1),
+                "timestamp": memory_data.get("timestamp", datetime.now()),
+                "content": memory_data.get("content", ""),
+                "change_summary": memory_data.get("change_summary", ""),
+                "metadata": json.dumps(memory_data.get("metadata", {}))
+            }
+
+            # Get or create table
+            if "core_memory" not in self.db.table_names():
+                self.db.create_table("core_memory", [record])
+                logger.info("Created core_memory table")
+            else:
+                table = self.db.open_table("core_memory")
+                table.add([record])
+
+            logger.info(f"Added core memory component: {record['component']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add core memory: {e}")
+            return False
+
+    def add_working_memory(self, memory_data: Dict[str, Any]) -> bool:
+        """
+        Add working memory to working_memory table.
+
+        Args:
+            memory_data: Working memory data
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Generate embedding
+            content = memory_data.get("content", "")
+            embedding = self._get_embedding(content)
+            if embedding is None:
+                logger.warning("Skipping working memory - no embedding available")
+                return False
+
+            record = {
+                "id": memory_data.get("id", f"working_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+                "type": memory_data.get("type", "context"),
+                "content": content,
+                "timestamp": memory_data.get("timestamp", datetime.now()),
+                "active": memory_data.get("active", True),
+                "embedding": embedding,
+                "metadata": json.dumps(memory_data.get("metadata", {}))
+            }
+
+            # Get or create table
+            if "working_memory" not in self.db.table_names():
+                self.db.create_table("working_memory", [record])
+                logger.info("Created working_memory table")
+            else:
+                table = self.db.open_table("working_memory")
+                table.add([record])
+
+            logger.info(f"Added working memory: {record['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add working memory: {e}")
+            return False
+
+    def add_episodic_memory(self, memory_data: Dict[str, Any]) -> bool:
+        """
+        Add episodic memory to episodic_memory table.
+
+        Args:
+            memory_data: Episodic memory data
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Generate embedding
+            content = memory_data.get("content", "")
+            embedding = self._get_embedding(content)
+            if embedding is None:
+                logger.warning("Skipping episodic memory - no embedding available")
+                return False
+
+            record = {
+                "id": memory_data.get("id", f"episodic_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+                "type": memory_data.get("type", "key_moment"),
+                "title": memory_data.get("title", ""),
+                "content": content,
+                "timestamp": memory_data.get("timestamp", datetime.now()),
+                "emotion": memory_data.get("emotion", "neutral"),
+                "emotion_intensity": memory_data.get("emotion_intensity", 0.5),
+                "embedding": embedding,
+                "metadata": json.dumps(memory_data.get("metadata", {}))
+            }
+
+            # Get or create table
+            if "episodic_memory" not in self.db.table_names():
+                self.db.create_table("episodic_memory", [record])
+                logger.info("Created episodic_memory table")
+            else:
+                table = self.db.open_table("episodic_memory")
+                table.add([record])
+
+            logger.info(f"Added episodic memory: {record['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add episodic memory: {e}")
+            return False
+
+    def add_semantic_memory(self, memory_data: Dict[str, Any]) -> bool:
+        """
+        Add semantic memory to semantic_memory table.
+
+        Args:
+            memory_data: Semantic memory data
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Generate embedding
+            content = memory_data.get("content", "")
+            embedding = self._get_embedding(content)
+            if embedding is None:
+                logger.warning("Skipping semantic memory - no embedding available")
+                return False
+
+            record = {
+                "id": memory_data.get("id", f"semantic_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+                "type": memory_data.get("type", "insight"),
+                "content": content,
+                "timestamp": memory_data.get("timestamp", datetime.now()),
+                "connections": json.dumps(memory_data.get("connections", [])),
+                "embedding": embedding,
+                "metadata": json.dumps(memory_data.get("metadata", {}))
+            }
+
+            # Get or create table
+            if "semantic_memory" not in self.db.table_names():
+                self.db.create_table("semantic_memory", [record])
+                logger.info("Created semantic_memory table")
+            else:
+                table = self.db.open_table("semantic_memory")
+                table.add([record])
+
+            logger.info(f"Added semantic memory: {record['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add semantic memory: {e}")
+            return False
+
+    def add_people(self, people_data: Dict[str, Any]) -> bool:
+        """
+        Add user profile/preferences to people table.
+
+        Args:
+            people_data: People data
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Generate embedding
+            content = people_data.get("content", "")
+            embedding = self._get_embedding(content)
+            if embedding is None:
+                logger.warning("Skipping people data - no embedding available")
+                return False
+
+            record = {
+                "id": people_data.get("id", f"people_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+                "user_id": people_data.get("user_id", ""),
+                "type": people_data.get("type", "profile"),
+                "content": content,
+                "timestamp": people_data.get("timestamp", datetime.now()),
+                "embedding": embedding,
+                "metadata": json.dumps(people_data.get("metadata", {}))
+            }
+
+            # Get or create table
+            if "people" not in self.db.table_names():
+                self.db.create_table("people", [record])
+                logger.info("Created people table")
+            else:
+                table = self.db.open_table("people")
+                table.add([record])
+
+            logger.info(f"Added people data: {record['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add people data: {e}")
+            return False
+
+    def search_all_tables(self, query: str, tables: Optional[List[str]] = None, limit: int = 10) -> Dict[str, List[Dict]]:
+        """
+        Search across multiple tables with semantic search.
+
+        Args:
+            query: Search query
+            tables: List of tables to search (None = all indexed tables)
+            limit: Max results per table
+
+        Returns:
+            Dictionary with table names as keys and results as values
+        """
+        results = {}
+
+        # Default to all searchable tables if none specified
+        if tables is None:
+            tables = ["notes", "verbatim", "library", "working_memory",
+                     "episodic_memory", "semantic_memory", "people"]
+
+        query_embedding = self._get_embedding(query)
+        if query_embedding is None:
+            logger.warning("Cannot perform semantic search - no embedding available")
+            return results
+
+        for table_name in tables:
+            try:
+                if table_name not in self.db.table_names():
+                    continue
+
+                table = self.db.open_table(table_name)
+                table_results = table.search(query_embedding).limit(limit).to_list()
+
+                # Parse JSON fields based on table type
+                for result in table_results:
+                    # Common JSON fields
+                    for json_field in ["metadata", "tags", "topics", "connections", "linked_memory_ids"]:
+                        if json_field in result and isinstance(result[json_field], str):
+                            result[json_field] = json.loads(result[json_field])
+
+                results[table_name] = table_results
+                logger.debug(f"Found {len(table_results)} results in {table_name}")
+
+            except Exception as e:
+                logger.error(f"Failed to search {table_name}: {e}")
+                results[table_name] = []
+
+        return results
+
+    def drop_table(self, table_name: str) -> bool:
+        """
+        Drop a specific table from the database.
+
+        Args:
+            table_name: Name of the table to drop
+
+        Returns:
+            True if successful
+        """
+        try:
+            if table_name in self.db.table_names():
+                self.db.drop_table(table_name)
+                logger.info(f"Dropped table: {table_name}")
+                return True
+            else:
+                logger.warning(f"Table {table_name} does not exist")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to drop table {table_name}: {e}")
+            return False

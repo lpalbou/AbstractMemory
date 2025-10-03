@@ -281,6 +281,14 @@ def print_help():
     print("/profile                 - Update user profile")
     print("/clear                   - Clear screen")
     print("/quit or /exit or /q     - Exit REPL")
+    print("\n📊 INDEX MANAGEMENT")
+    print("/index                   - Show index status")
+    print("/index enable MODULE     - Enable indexing for a module")
+    print("/index disable MODULE    - Disable indexing for a module")
+    print("/index rebuild MODULE    - Rebuild index for a module")
+    print("/index stats             - Show detailed statistics")
+    print("  Modules: notes, verbatim, library, links, core,")
+    print("           working, episodic, semantic, people")
     print("\n📎 FILE ATTACHMENTS")
     print("Use @filename to attach files to your message:")
     print("  @core/purpose.md       - Attach from memory directory")
@@ -390,6 +398,104 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
     elif command == "/clear":
         import os
         os.system('clear' if os.name == 'posix' else 'cls')
+
+    elif command == "/index":
+        # Handle index management commands
+        if not args:
+            # Show index status
+            if session.memory_indexer and session.index_config:
+                print("\n📊 Memory Index Status")
+                print("="*40)
+                status = session.index_config.get_status()
+
+                print("Enabled Modules:")
+                for module in session.index_config.get_enabled_modules():
+                    config = session.index_config.get_module_config(module)
+                    print(f"  ✅ {module:12} - {config.index_count:4d} items indexed")
+
+                print("\nDisabled Modules:")
+                all_modules = ['notes', 'verbatim', 'library', 'links', 'core',
+                              'working', 'episodic', 'semantic', 'people']
+                disabled = [m for m in all_modules if m not in session.index_config.get_enabled_modules()]
+                for module in disabled:
+                    print(f"  ❌ {module}")
+
+                print("\nSettings:")
+                print(f"  Dynamic Injection: {'✅ Enabled' if session.index_config.dynamic_injection_enabled else '❌ Disabled'}")
+                print(f"  Auto-index on create: {'✅' if session.index_config.auto_index_on_create else '❌'}")
+                print(f"  Max tokens per module: {session.index_config.max_tokens_per_module}")
+            else:
+                print("❌ Memory indexer not available")
+
+        else:
+            # Parse subcommand
+            sub_parts = args.split()
+            sub_cmd = sub_parts[0] if sub_parts else ""
+            sub_args = sub_parts[1] if len(sub_parts) > 1 else ""
+
+            if sub_cmd == "enable" and sub_args:
+                # Enable a module
+                if session.memory_indexer and session.index_config:
+                    if session.index_config.enable_module(sub_args):
+                        session.index_config.save(session.memory_base_path / ".memory_index_config.json")
+                        print(f"✅ Enabled indexing for: {sub_args}")
+
+                        # Trigger initial indexing
+                        print(f"   Indexing {sub_args}...")
+                        count = session.memory_indexer.index_module(sub_args)
+                        print(f"   Indexed {count} items")
+                    else:
+                        print(f"❌ Failed to enable: {sub_args}")
+                else:
+                    print("❌ Memory indexer not available")
+
+            elif sub_cmd == "disable" and sub_args:
+                # Disable a module
+                if session.memory_indexer and session.index_config:
+                    if session.index_config.disable_module(sub_args):
+                        session.index_config.save(session.memory_base_path / ".memory_index_config.json")
+                        print(f"✅ Disabled indexing for: {sub_args}")
+                    else:
+                        print(f"❌ Failed to disable: {sub_args}")
+                else:
+                    print("❌ Memory indexer not available")
+
+            elif sub_cmd == "rebuild" and sub_args:
+                # Rebuild index for a module
+                if session.memory_indexer:
+                    print(f"🔄 Rebuilding index for: {sub_args}")
+                    count = session.memory_indexer.rebuild_index(sub_args)
+                    print(f"✅ Rebuilt index with {count} items")
+                else:
+                    print("❌ Memory indexer not available")
+
+            elif sub_cmd == "stats":
+                # Show detailed stats
+                if session.memory_indexer:
+                    stats = session.memory_indexer.get_index_stats()
+                    print("\n📊 Detailed Index Statistics")
+                    print("="*40)
+
+                    if 'summary' in stats:
+                        print("Summary:")
+                        for key, value in stats['summary'].items():
+                            print(f"  {key}: {value}")
+
+                    if 'modules' in stats:
+                        print("\nModule Details:")
+                        for module, details in stats['modules'].items():
+                            print(f"\n  {module}:")
+                            print(f"    Enabled: {'✅' if details['enabled'] else '❌'}")
+                            print(f"    Items: {details['index_count']}")
+                            if details['last_indexed']:
+                                print(f"    Last indexed: {details['last_indexed'][:19]}")
+                else:
+                    print("❌ Memory indexer not available")
+
+            else:
+                print("Usage: /index [enable|disable|rebuild|stats] [module]")
+                print("       /index (shows current status)")
+                print("\nModules: notes, verbatim, library, links, core, working, episodic, semantic, people")
 
     else:
         print(f"Unknown command: {command}")
@@ -544,6 +650,40 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal", verbo
                 user_input,
                 session.memory_base_path
             )
+
+            # Capture attached files to library for future memory
+            for att in attachments:
+                try:
+                    # Determine content type from file extension
+                    filename = att['filename'].lower()
+                    if filename.endswith('.py'):
+                        content_type = 'code'
+                    elif filename.endswith('.md'):
+                        content_type = 'markdown'
+                    elif filename.endswith('.txt'):
+                        content_type = 'text'
+                    elif filename.endswith('.json'):
+                        content_type = 'json'
+                    elif filename.endswith('.yaml') or filename.endswith('.yml'):
+                        content_type = 'yaml'
+                    else:
+                        content_type = 'text'
+
+                    # Capture document to library
+                    doc_id = session.capture_document(
+                        source_path=att['path'],
+                        content=att['content'],
+                        content_type=content_type,
+                        context=f"User attached file via @ in conversation",
+                        tags=[content_type, f"attached_by_{user_id}"]
+                    )
+
+                    if verbose:
+                        print(f"   📚 Captured to library: {att['filename']} (ID: {doc_id})")
+
+                except Exception as e:
+                    if verbose:
+                        print(f"   ⚠️  Failed to capture {att['filename']} to library: {e}")
 
             # Format input with attached file contents
             enhanced_input = _format_input_with_attachments(

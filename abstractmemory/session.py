@@ -149,6 +149,27 @@ class MemorySession(BasicSession):
             logger.warning(f"LanceDB storage initialization failed: {e}")
             self.lancedb_storage = None
 
+        # Initialize Memory Indexer with configuration
+        try:
+            from .indexing import MemoryIndexer, MemoryIndexConfig
+            self.index_config = MemoryIndexConfig.load(self.memory_base_path / ".memory_index_config.json")
+            self.memory_indexer = MemoryIndexer(
+                memory_base_path=self.memory_base_path,
+                lancedb_storage=self.lancedb_storage,
+                config=self.index_config
+            )
+            logger.info(f"Memory indexer initialized with {len(self.index_config.get_enabled_modules())} enabled modules")
+
+            # Perform initial indexing if needed (only for empty tables)
+            if self.lancedb_storage:
+                initial_results = self.memory_indexer.index_all_enabled(force_reindex=False)
+                if initial_results:
+                    logger.info(f"Initial indexing complete: {initial_results}")
+        except Exception as e:
+            logger.warning(f"Memory indexer initialization failed: {e}")
+            self.memory_indexer = None
+            self.index_config = None
+
         logger.info(f"Memory storage initialized at {self.memory_base_path}")
 
         # Initialize complete memory filesystem structure (all components)
@@ -2134,6 +2155,59 @@ Generate reflection now:"""
             location = location or self.default_location
 
             logger.info(f"Reconstructing context: user={user_id}, query='{query}', focus={focus_level}")
+
+            # Use dynamic context injection if available and enabled
+            if (self.index_config and
+                self.index_config.dynamic_injection_enabled and
+                self.memory_indexer):
+                try:
+                    from .context import DynamicContextInjector
+
+                    injector = DynamicContextInjector(
+                        memory_base_path=self.memory_base_path,
+                        lancedb_storage=self.lancedb_storage,
+                        index_config=self.index_config,
+                        memory_indexer=self.memory_indexer
+                    )
+
+                    dynamic_context = injector.inject_context(
+                        query=query,
+                        user_id=user_id,
+                        location=location,
+                        focus_level=focus_level,
+                        timestamp=timestamp
+                    )
+
+                    # Return dynamic context if successful
+                    if dynamic_context and dynamic_context.get('total_memories', 0) > 0:
+                        logger.info(f"Dynamic context injection successful: {dynamic_context['total_memories']} memories from {len(dynamic_context['modules'])} modules")
+
+                        # Format for compatibility with existing structure
+                        return {
+                            "timestamp": timestamp,
+                            "user_id": user_id,
+                            "location": location,
+                            "query": query,
+                            "focus_level": focus_level,
+                            "semantic_memories": dynamic_context.get('modules', {}).get('notes', {}).get('memories', []),
+                            "linked_memories": [],  # Handled within modules
+                            "library_excerpts": dynamic_context.get('modules', {}).get('library', {}).get('memories', []),
+                            "emotional_context": {},
+                            "temporal_context": {
+                                "time_of_day": timestamp.strftime("%H:%M"),
+                                "day_of_week": timestamp.strftime("%A"),
+                            },
+                            "spatial_context": {"current_location": location},
+                            "user_context": dynamic_context.get('modules', {}).get('people', {}).get('memories', []),
+                            "core_context": dynamic_context.get('modules', {}).get('core', {}).get('memories', []),
+                            "total_memories_available": dynamic_context['total_memories'],
+                            "total_memories_retrieved": dynamic_context['total_memories'],
+                            "unique_memories": dynamic_context.get('modules', {}).get('notes', {}).get('memories', []),
+                            "synthesized_context": dynamic_context['synthesis'],
+                            "token_estimate": dynamic_context['token_estimate']
+                        }
+                except Exception as e:
+                    logger.warning(f"Dynamic context injection failed, falling back to standard: {e}")
 
             # Configure based on focus level
             focus_configs = {
