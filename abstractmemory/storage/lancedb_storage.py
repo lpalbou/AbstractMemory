@@ -261,7 +261,7 @@ class LanceDBStorage:
                 table = self.db.open_table("notes")
                 table.add([record])
 
-            logger.info(f"Added note to LanceDB: {record['id']}")
+            logger.debug(f"Added note to LanceDB: {record['id']}")
             return True
 
         except Exception as e:
@@ -379,7 +379,7 @@ class LanceDBStorage:
                 table = self.db.open_table("links")
                 table.add([record])
 
-            logger.info(f"Added link: {record['from_id']} -> {record['to_id']} ({record['relationship']})")
+            logger.debug(f"Added link: {record['from_id']} -> {record['to_id']} ({record['relationship']})")
             return True
 
         except Exception as e:
@@ -601,7 +601,7 @@ class LanceDBStorage:
                 table = self.db.open_table("library")
                 table.add([record])
 
-            logger.info(f"Added library document: {record['doc_id']}")
+            logger.debug(f"Added library document: {record['doc_id']}")
             return True
 
         except Exception as e:
@@ -675,7 +675,7 @@ class LanceDBStorage:
                 table = self.db.open_table("core_memory")
                 table.add([record])
 
-            logger.info(f"Added core memory component: {record['component']}")
+            logger.debug(f"Added core memory component: {record['component']}")
             return True
 
         except Exception as e:
@@ -718,7 +718,7 @@ class LanceDBStorage:
                 table = self.db.open_table("working_memory")
                 table.add([record])
 
-            logger.info(f"Added working memory: {record['id']}")
+            logger.debug(f"Added working memory: {record['id']}")
             return True
 
         except Exception as e:
@@ -763,7 +763,7 @@ class LanceDBStorage:
                 table = self.db.open_table("episodic_memory")
                 table.add([record])
 
-            logger.info(f"Added episodic memory: {record['id']}")
+            logger.debug(f"Added episodic memory: {record['id']}")
             return True
 
         except Exception as e:
@@ -806,7 +806,7 @@ class LanceDBStorage:
                 table = self.db.open_table("semantic_memory")
                 table.add([record])
 
-            logger.info(f"Added semantic memory: {record['id']}")
+            logger.debug(f"Added semantic memory: {record['id']}")
             return True
 
         except Exception as e:
@@ -849,7 +849,7 @@ class LanceDBStorage:
                 table = self.db.open_table("people")
                 table.add([record])
 
-            logger.info(f"Added people data: {record['id']}")
+            logger.debug(f"Added people data: {record['id']}")
             return True
 
         except Exception as e:

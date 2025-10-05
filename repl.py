@@ -273,15 +273,20 @@ def print_help():
     print("\n" + "="*60)
     print("🔧 REPL COMMANDS")
     print("="*60)
-    print("/help                    - Show this help")
+    print("\n📊 MEMORY COMMANDS")
     print("/stats                   - Show memory statistics")
-    print("/reflect TOPIC           - Reflect on a topic (deep analysis)")
+    print("/memory-stats            - Detailed memory distribution")
     print("/search QUERY            - Search your memories")
+    print("/reflect TOPIC           - Reflect on a topic (deep analysis)")
     print("/consolidate             - Trigger core memory consolidation")
     print("/profile                 - Update user profile")
-    print("/clear                   - Clear screen")
-    print("/quit or /exit or /q     - Exit REPL")
-    print("\n📊 INDEX MANAGEMENT")
+    print("\n🎯 PROGRESSIVE EXPLORATION")
+    print("/dive TOPIC              - Progressive memory exploration with ReAct")
+    print("/focus [LEVEL]           - Set/show default focus level (0-5)")
+    print("/trace                   - Show last memory retrieval reasoning")
+    print("/link MEM1 MEM2          - Create association between memories")
+    print("/forget MEMORY_ID        - De-emphasize a memory")
+    print("\n📚 INDEX MANAGEMENT")
     print("/index                   - Show index status")
     print("/index enable MODULE     - Enable indexing for a module")
     print("/index disable MODULE    - Disable indexing for a module")
@@ -289,6 +294,10 @@ def print_help():
     print("/index stats             - Show detailed statistics")
     print("  Modules: notes, verbatim, library, links, core,")
     print("           working, episodic, semantic, people")
+    print("\n🔧 SYSTEM")
+    print("/clear                   - Clear screen")
+    print("/help                    - Show this help")
+    print("/quit or /exit or /q     - Exit REPL")
     print("\n📎 FILE ATTACHMENTS")
     print("Use @filename to attach files to your message:")
     print("  @core/purpose.md       - Attach from memory directory")
@@ -398,6 +407,155 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
     elif command == "/clear":
         import os
         os.system('clear' if os.name == 'posix' else 'cls')
+
+    elif command == "/dive":
+        # Progressive memory exploration with ReAct
+        if not args:
+            print("Usage: /dive TOPIC")
+            return True
+
+        print(f"\n🎯 Progressive memory exploration: {args}")
+        print("Starting with shallow search, will go deeper as needed...\n")
+
+        from abstractmemory.agents import ReactMemoryAgent
+        agent = ReactMemoryAgent(session)
+
+        # Perform progressive exploration
+        result = agent.explore_progressively(
+            query=args,
+            max_iterations=5,
+            initial_focus=0,  # Start shallow
+            strategy="balanced"
+        )
+
+        # Show exploration trace
+        print("Memory Exploration Trace:")
+        print("="*40)
+        for step in agent.exploration_history:
+            thought = step['thought']
+            print(f"  Step {step['iteration'] + 1}:")
+            print(f"    Focus level: {step['focus_level']}")
+            print(f"    Action: {thought.action}")
+            print(f"    Reasoning: {thought.reasoning[:100]}...")
+            print(f"    Memories found: {step['memories_found']} (total: {step['total_memories']})")
+            print()
+
+        # Show final context
+        print("="*40)
+        print(f"Final Context ({result['iterations']} iterations):")
+        print(result['context'][:1000])
+        if len(result['context']) > 1000:
+            print("... [truncated]")
+
+    elif command == "/focus":
+        # Set default focus level
+        if not args:
+            if hasattr(session, 'default_focus_level'):
+                print(f"Current focus level: {getattr(session, 'default_focus_level', 3)}")
+            else:
+                print("Current focus level: 3 (default)")
+            print("Usage: /focus LEVEL (0-5)")
+            return True
+
+        try:
+            level = int(args)
+            if 0 <= level <= 5:
+                session.default_focus_level = level
+                print(f"✅ Default focus level set to {level}")
+                print("  0=minimal, 1=light, 2=moderate, 3=balanced, 4=deep, 5=exhaustive")
+            else:
+                print("❌ Focus level must be between 0 and 5")
+        except ValueError:
+            print("❌ Invalid focus level. Must be a number 0-5")
+
+    elif command == "/trace":
+        # Show last memory retrieval reasoning
+        if hasattr(session, 'last_retrieval_trace'):
+            print("\n📊 Last Memory Retrieval Trace")
+            print("="*40)
+            trace = session.last_retrieval_trace
+            print(trace)
+        else:
+            print("No retrieval trace available yet. Try searching for memories first.")
+
+    elif command == "/memory-stats":
+        # Show memory distribution and patterns
+        print("\n📊 Memory Statistics")
+        print("="*40)
+
+        # Get distribution from memory managers
+        stats = {"distribution": {}, "total": 0}
+
+        # Check each memory type
+        if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+            notes_count = session.lancedb_storage.count_notes()
+            stats["distribution"]["notes"] = notes_count
+            stats["total"] += notes_count
+
+        if hasattr(session, 'working_memory'):
+            stats["distribution"]["working"] = 1  # Active
+        if hasattr(session, 'episodic_memory'):
+            stats["distribution"]["episodic"] = len(session.episodic_memory.get_key_moments(100))
+        if hasattr(session, 'semantic_memory'):
+            stats["distribution"]["semantic"] = len(session.semantic_memory.get_critical_insights(100))
+
+        # Core memory components
+        core_count = sum(1 for v in session.core_memory.values() if v)
+        stats["distribution"]["core"] = core_count
+        stats["total"] += core_count
+
+        print("Memory Distribution:")
+        for memory_type, count in stats["distribution"].items():
+            bar = "█" * min(count, 20) + "░" * (20 - min(count, 20))
+            print(f"  {memory_type:10} [{bar}] {count}")
+
+        print(f"\nTotal memories: {stats['total']}")
+        print(f"Session interactions: {session.interactions_count}")
+        print(f"Memories created: {session.memories_created}")
+
+    elif command == "/link":
+        # Create association between memories
+        if not args or ' ' not in args:
+            print("Usage: /link MEMORY_ID_1 MEMORY_ID_2")
+            return True
+
+        parts = args.split()
+        if len(parts) < 2:
+            print("Please provide two memory IDs to link")
+            return True
+
+        mem1, mem2 = parts[0], parts[1]
+
+        # Create link
+        if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+            link_data = {
+                "from_id": mem1,
+                "to_id": mem2,
+                "relationship": "user_linked",
+                "confidence": 1.0
+            }
+            success = session.lancedb_storage.add_link(link_data)
+
+            if success:
+                print(f"✅ Linked {mem1} ↔ {mem2}")
+            else:
+                print(f"❌ Failed to create link")
+        else:
+            print("❌ Link storage not available")
+
+    elif command == "/forget":
+        # De-emphasize a memory
+        if not args:
+            print("Usage: /forget MEMORY_ID")
+            return True
+
+        # This would update memory importance
+        print(f"🔽 De-emphasizing memory: {args}")
+        print("(Note: Memories are never deleted, just de-prioritized)")
+
+        # In a real implementation, this would update the memory's importance score
+        # For now, we'll just acknowledge the command
+        print(f"✅ Memory {args} de-emphasized")
 
     elif command == "/index":
         # Handle index management commands

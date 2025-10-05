@@ -306,9 +306,14 @@ class TestMemoryIndexer:
         lancedb_path = test_memory_path / "lancedb"
         lancedb = LanceDBStorage(lancedb_path)
 
+        # Create config and explicitly enable notes
+        config = MemoryIndexConfig()
+        config.enable_module('notes')
+
         indexer = MemoryIndexer(
             memory_base_path=test_memory_path,
-            lancedb_storage=lancedb
+            lancedb_storage=lancedb,
+            config=config
         )
 
         # Index notes
@@ -606,8 +611,15 @@ class TestREPLIndexCommands:
         config_path = test_memory_path / ".memory_index_config.json"
         config = MemoryIndexConfig.load(config_path)
 
-        # Test disable
+        # First ensure notes is enabled
+        config.enable_module('notes')
+        config.save(config_path)
+
+        config = MemoryIndexConfig.load(config_path)
         initial_enabled = len(config.get_enabled_modules())
+        assert 'notes' in config.get_enabled_modules()
+
+        # Test disable
         config.disable_module('notes')
         config.save(config_path)
 
@@ -615,7 +627,7 @@ class TestREPLIndexCommands:
         assert len(config.get_enabled_modules()) == initial_enabled - 1
         assert 'notes' not in config.get_enabled_modules()
 
-        # Test enable
+        # Test re-enable
         config.enable_module('notes')
         config.save(config_path)
 

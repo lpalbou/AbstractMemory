@@ -112,6 +112,12 @@ class MemoryIndexer:
         self.config.update_index_stats(module_name, count)
         self.index_manager.save_config()
 
+        # Log summary instead of individual items
+        if count > 0:
+            logger.info(f"Indexed {count} items from {module_name}")
+        else:
+            logger.debug(f"No new items to index from {module_name}")
+
         return count
 
     def _index_notes(self, force_reindex: bool = False) -> int:
@@ -121,37 +127,34 @@ class MemoryIndexer:
             return 0
 
         count = 0
-        for date_dir in notes_path.iterdir():
-            if not date_dir.is_dir():
-                continue
+        # Recursively find all .md files under notes/
+        for note_file in notes_path.rglob("*.md"):
+            try:
+                # Check if already indexed
+                note_id = f"note_{note_file.stem}"
+                if not force_reindex and self._is_indexed('notes', note_id):
+                    continue
 
-            for note_file in date_dir.glob("*.md"):
-                try:
-                    # Check if already indexed
-                    note_id = f"note_{note_file.stem}"
-                    if not force_reindex and self._is_indexed('notes', note_id):
-                        continue
+                content = note_file.read_text(encoding='utf-8')
+                timestamp = datetime.fromtimestamp(note_file.stat().st_mtime)
 
-                    content = note_file.read_text(encoding='utf-8')
-                    timestamp = datetime.fromtimestamp(note_file.stat().st_mtime)
+                # Extract emotion and intensity from content
+                emotion, intensity = self._extract_emotion_from_note(content)
 
-                    # Extract emotion and intensity from content
-                    emotion, intensity = self._extract_emotion_from_note(content)
+                # Add to LanceDB
+                self.lancedb.add_note({
+                    'id': note_id,
+                    'content': content,
+                    'timestamp': timestamp.isoformat(),
+                    'emotion': emotion,
+                    'emotion_intensity': intensity,
+                    'type': 'experiential',
+                    'source': str(note_file.relative_to(self.memory_base_path))
+                })
+                count += 1
 
-                    # Add to LanceDB
-                    self.lancedb.add_note({
-                        'id': note_id,
-                        'content': content,
-                        'timestamp': timestamp.isoformat(),
-                        'emotion': emotion,
-                        'emotion_intensity': intensity,
-                        'type': 'experiential',
-                        'source': str(note_file.relative_to(self.memory_base_path))
-                    })
-                    count += 1
-
-                except Exception as e:
-                    logger.error(f"Failed to index note {note_file}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to index note {note_file}: {e}")
 
         return count
 
@@ -493,10 +496,17 @@ class MemoryIndexer:
     def _is_indexed(self, table_name: str, item_id: str) -> bool:
         """Check if an item is already indexed in LanceDB."""
         try:
-            # This would check if the item exists in the table
-            # Implementation depends on LanceDB storage methods
-            return False  # For now, always reindex
-        except:
+            # Check if table exists
+            if table_name not in self.lancedb.db.table_names():
+                return False
+
+            # Query table for this item ID
+            table = self.lancedb.db.open_table(table_name)
+            results = table.search().where(f"id = '{item_id}'").limit(1).to_list()
+
+            return len(results) > 0
+        except Exception as e:
+            logger.debug(f"Error checking if {item_id} is indexed in {table_name}: {e}")
             return False
 
     def _extract_emotion_from_note(self, content: str) -> Tuple[str, float]:

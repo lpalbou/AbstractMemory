@@ -160,11 +160,17 @@ class MemorySession(BasicSession):
             )
             logger.info(f"Memory indexer initialized with {len(self.index_config.get_enabled_modules())} enabled modules")
 
-            # Perform initial indexing if needed (only for empty tables)
+            # Check if this is a first-time setup or migration scenario
+            # (tables don't exist but memory files do)
             if self.lancedb_storage:
-                initial_results = self.memory_indexer.index_all_enabled(force_reindex=False)
-                if initial_results:
-                    logger.info(f"Initial indexing complete: {initial_results}")
+                needs_migration = self._check_needs_migration()
+                if needs_migration:
+                    logger.info("Detected unindexed memories - running one-time migration...")
+                    initial_results = self.memory_indexer.index_all_enabled(force_reindex=False)
+                    total_indexed = sum(initial_results.values())
+                    logger.info(f"Migration complete: Indexed {total_indexed} existing memories")
+                else:
+                    logger.debug("Memory index ready - new memories will be indexed when created")
         except Exception as e:
             logger.warning(f"Memory indexer initialization failed: {e}")
             self.memory_indexer = None
@@ -1198,6 +1204,61 @@ Now, using these tool results, please provide your final answer to the user's qu
 
     # Memory Tool Methods (exposed to LLM via memory_actions)
 
+    def _check_needs_migration(self) -> bool:
+        """
+        Check if we need to run a one-time migration to index existing memories.
+
+        Returns True if:
+        - Memory files exist in the filesystem
+        - BUT the corresponding LanceDB tables are empty or don't exist
+
+        This handles the case where memories existed before the indexing system was added,
+        or if someone manually added files to the memory directories.
+        """
+        try:
+            # Check if notes table exists and has data
+            if not self.lancedb_storage:
+                return False
+
+            tables = self.lancedb_storage.db.table_names()
+
+            # If no tables exist but memory directories do, we need migration
+            has_tables = len(tables) > 0
+
+            # Check if notes directory has files
+            notes_dir = self.memory_base_path / "notes"
+            has_notes = notes_dir.exists() and any(notes_dir.rglob("*.md"))
+
+            # Check if core directory has files
+            core_dir = self.memory_base_path / "core"
+            has_core = core_dir.exists() and any(core_dir.glob("*.md"))
+
+            # Check if episodic directory has files
+            episodic_dir = self.memory_base_path / "episodic"
+            has_episodic = episodic_dir.exists() and any(episodic_dir.glob("*.md"))
+
+            # Need migration if we have files but no tables
+            if not has_tables and (has_notes or has_core or has_episodic):
+                logger.info("Migration needed: Found memory files but no index tables")
+                return True
+
+            # If we have tables, check if they're empty while files exist
+            if "notes" in tables and has_notes:
+                table = self.lancedb_storage.db.open_table("notes")
+                table_count = len(table.to_pandas())
+                file_count = len(list(notes_dir.rglob("*.md")))
+
+                if file_count > table_count * 1.5:  # Significantly more files than indexed
+                    logger.info(f"Migration needed: {file_count} files but only {table_count} indexed")
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"Error checking migration status: {e}")
+            # When in doubt, don't migrate (safer to not waste time)
+            return False
+
     def _validate_memory_content(self, content: str, source: str, evidence: str, user_message: str = "") -> tuple[bool, str]:
         """
         Validate memory content to prevent hallucination of user facts.
@@ -2156,26 +2217,29 @@ Generate reflection now:"""
 
             logger.info(f"Reconstructing context: user={user_id}, query='{query}', focus={focus_level}")
 
-            # Use dynamic context injection if available and enabled
+            # Use cognitive context builder if available (LLM-driven, not mechanical)
             if (self.index_config and
                 self.index_config.dynamic_injection_enabled and
                 self.memory_indexer):
                 try:
-                    from .context import DynamicContextInjector
+                    from .context.cognitive_context_builder import CognitiveContextBuilder
 
-                    injector = DynamicContextInjector(
+                    # Use LLM to understand and retrieve memories
+                    cognitive_builder = CognitiveContextBuilder(
                         memory_base_path=self.memory_base_path,
                         lancedb_storage=self.lancedb_storage,
-                        index_config=self.index_config,
+                        llm_provider=self.provider,  # Use same LLM for cognitive processing
                         memory_indexer=self.memory_indexer
                     )
 
-                    dynamic_context = injector.inject_context(
+                    # Let the AI exercise agency over what memories to retrieve
+                    dynamic_context = cognitive_builder.build_context(
                         query=query,
                         user_id=user_id,
                         location=location,
                         focus_level=focus_level,
-                        timestamp=timestamp
+                        include_emotions=True,  # Apply emotional lens
+                        include_relationships=True  # Consider relationship context
                     )
 
                     # Return dynamic context if successful

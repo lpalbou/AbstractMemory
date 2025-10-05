@@ -129,7 +129,20 @@ class MemoryIndexConfig:
 
     def get_status(self) -> Dict:
         """Get detailed status of all modules."""
+        # Calculate summary stats
+        enabled_modules = self.get_enabled_modules()
+        total_indexed = sum(
+            getattr(self, m).index_count
+            for m in enabled_modules
+        )
+
         status = {
+            "summary": {
+                "enabled_modules": len(enabled_modules),
+                "total_modules": 9,
+                "total_indexed_items": total_indexed,
+                "config_version": self.version
+            },
             "global": {
                 "auto_index_on_create": self.auto_index_on_create,
                 "auto_index_on_update": self.auto_index_on_update,
