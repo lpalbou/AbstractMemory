@@ -285,7 +285,7 @@ class LanceDBStorage:
         """
         try:
             if "notes" not in self.db.table_names():
-                logger.warning("Notes table does not exist yet")
+                logger.debug("Notes table does not exist yet (empty memory on first run)")
                 return []
 
             # Generate query embedding

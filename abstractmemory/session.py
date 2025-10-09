@@ -314,7 +314,7 @@ class MemorySession(BasicSession):
 
         # Estimate total prompt size for user visibility
         total_prompt_tokens = len(enhanced_prompt) // 4
-        logger.info(f"Generating LLM response (prompt: ~{total_prompt_tokens} tokens)...")
+        logger.info(f"🤖 Calling LLM (prompt: ~{total_prompt_tokens} tokens)...")
 
         # Add generation parameters to prevent repetition and enforce limits
         generation_params = {
@@ -1107,8 +1107,9 @@ Now, using these tool results, please provide your final answer to the user's qu
 
         # Pattern 3: Function call format (without [TOOL:] wrapper)
         # Look for known tool names followed by parentheses
-        tool_names = ["search_memories", "reflect_on", "remember_fact",
-                     "capture_document", "search_library", "reconstruct_context"]
+        tool_names = ["search_memories", "search_memories_structured", "reflect_on",
+                     "remember_fact", "capture_document", "search_library",
+                     "reconstruct_context"]
 
         for tool_name in tool_names:
             # Match: tool_name(...)
@@ -1541,7 +1542,21 @@ This reflects how emotionally significant this memory is based on importance and
         try:
             filters = filters or {}
 
-            logger.info(f"Searching memories: query='{query}', filters={filters}")
+            # Extract clean query for logging (avoid showing full file content)
+            query_parts = query.split("--- Attached Files ---")
+            query_for_log = query_parts[0].strip()
+            query_preview = query_for_log[:100] + "..." if len(query_for_log) > 100 else query_for_log
+
+            # Log the search query
+            logger.info(f"Searching memories: query='{query_preview}', filters={filters}")
+
+            # If files attached, log them separately (filenames only, not content)
+            if len(query_parts) > 1:
+                import re
+                attachment_section = query_parts[1]
+                filenames = re.findall(r'\[File: ([^\]]+)\]', attachment_section)
+                if filenames:
+                    logger.info(f"  → With attached files: {', '.join(filenames)}")
 
             # Try LanceDB hybrid search first (semantic + SQL)
             if self.lancedb_storage:
@@ -2217,62 +2232,8 @@ Generate reflection now:"""
 
             logger.info(f"Reconstructing context: user={user_id}, query='{query}', focus={focus_level}")
 
-            # Use cognitive context builder if available (LLM-driven, not mechanical)
-            if (self.index_config and
-                self.index_config.dynamic_injection_enabled and
-                self.memory_indexer):
-                try:
-                    from .context.cognitive_context_builder import CognitiveContextBuilder
-
-                    # Use LLM to understand and retrieve memories
-                    cognitive_builder = CognitiveContextBuilder(
-                        memory_base_path=self.memory_base_path,
-                        lancedb_storage=self.lancedb_storage,
-                        llm_provider=self.provider,  # Use same LLM for cognitive processing
-                        memory_indexer=self.memory_indexer
-                    )
-
-                    # Let the AI exercise agency over what memories to retrieve
-                    dynamic_context = cognitive_builder.build_context(
-                        query=query,
-                        user_id=user_id,
-                        location=location,
-                        focus_level=focus_level,
-                        include_emotions=True,  # Apply emotional lens
-                        include_relationships=True  # Consider relationship context
-                    )
-
-                    # Return dynamic context if successful
-                    if dynamic_context and dynamic_context.get('total_memories', 0) > 0:
-                        logger.info(f"Dynamic context injection successful: {dynamic_context['total_memories']} memories from {len(dynamic_context['modules'])} modules")
-
-                        # Format for compatibility with existing structure
-                        return {
-                            "timestamp": timestamp,
-                            "user_id": user_id,
-                            "location": location,
-                            "query": query,
-                            "focus_level": focus_level,
-                            "semantic_memories": dynamic_context.get('modules', {}).get('notes', {}).get('memories', []),
-                            "linked_memories": [],  # Handled within modules
-                            "library_excerpts": dynamic_context.get('modules', {}).get('library', {}).get('memories', []),
-                            "emotional_context": {},
-                            "temporal_context": {
-                                "time_of_day": timestamp.strftime("%H:%M"),
-                                "day_of_week": timestamp.strftime("%A"),
-                            },
-                            "spatial_context": {"current_location": location},
-                            "user_context": dynamic_context.get('modules', {}).get('people', {}).get('memories', []),
-                            "core_context": dynamic_context.get('modules', {}).get('core', {}).get('memories', []),
-                            "total_memories_available": dynamic_context['total_memories'],
-                            "total_memories_retrieved": dynamic_context['total_memories'],
-                            "unique_memories": dynamic_context.get('modules', {}).get('notes', {}).get('memories', []),
-                            "synthesized_context": dynamic_context['synthesis'],
-                            "token_estimate": dynamic_context['token_estimate']
-                        }
-                except Exception as e:
-                    logger.warning(f"Dynamic context injection failed, falling back to standard: {e}")
-
+            # Use fast, deterministic 9-step reconstruction (default behavior)
+            # For deep exploration, LLM can use tools: search_memories(), reflect_on(), etc.
             # Configure based on focus level
             focus_configs = {
                 0: {"limit": 2, "hours": 1, "link_depth": 0},
@@ -2285,7 +2246,22 @@ Generate reflection now:"""
             config = focus_configs.get(focus_level, focus_configs[3])
 
             # Step 1: Semantic search (base results)
-            logger.info(f"Step 1/9: Searching for memories relevant to: '{query[:50]}...'")
+            # Extract user query (before file attachments) for clean logging
+            query_parts = query.split("--- Attached Files ---")
+            query_for_log = query_parts[0].strip()
+            query_preview = query_for_log[:100] + "..." if len(query_for_log) > 100 else query_for_log
+
+            # Log the query
+            logger.info(f"Step 1/9: Searching for memories relevant to: '{query_preview}'")
+
+            # If files attached, log them separately (filenames only, not content)
+            if len(query_parts) > 1:
+                import re
+                # Extract filenames from attachment section
+                attachment_section = query_parts[1]
+                filenames = re.findall(r'\[File: ([^\]]+)\]', attachment_section)
+                if filenames:
+                    logger.info(f"  → With attached files: {', '.join(filenames)}")
             since = timestamp - timedelta(hours=config["hours"])
             semantic_memories = self.search_memories(
                 query,

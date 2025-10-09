@@ -741,7 +741,7 @@ def _parse_file_attachments(user_input: str, memory_base_path: str) -> tuple[str
                 'content': content,
                 'size': len(content)
             })
-            print(f"   📎 Attached: {file_path.name} ({len(content)} chars)")
+            # Don't print here - will display summary later
         except Exception as e:
             print(f"   ⚠️  Could not read {match}: {e}")
 
@@ -751,9 +751,24 @@ def _parse_file_attachments(user_input: str, memory_base_path: str) -> tuple[str
     return processed_input, attachments
 
 
+def _display_attachments_summary(attachments: list[dict]) -> None:
+    """
+    Display attachment metadata in CLI (without content).
+
+    Args:
+        attachments: List of attachment dictionaries
+    """
+    if not attachments:
+        return
+
+    print("\n📎 Attached Files:")
+    for att in attachments:
+        print(f"   • {att['filename']} ({att['size']:,} chars)")
+
+
 def _format_input_with_attachments(user_input: str, attachments: list[dict]) -> str:
     """
-    Format user input with attached file contents.
+    Format user input with attached file contents (for LLM context).
 
     Returns:
         str: Enhanced input with file contents appended
@@ -808,6 +823,9 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal", verbo
                 user_input,
                 session.memory_base_path
             )
+
+            # Display attachment summary (metadata only, not content)
+            _display_attachments_summary(attachments)
 
             # Capture attached files to library for future memory
             for att in attachments:

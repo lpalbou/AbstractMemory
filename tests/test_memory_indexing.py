@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Comprehensive test suite for memory indexing and dynamic context injection.
+Comprehensive test suite for memory indexing.
 
 Tests:
 1. Memory index configuration
 2. Universal memory indexer
-3. Dynamic context injection
-4. File attachment library capture
-5. REPL index commands
+3. File attachment library capture
+4. REPL index commands
+5. End-to-end integration
 """
 
 import pytest
@@ -22,7 +22,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from abstractmemory.indexing import MemoryIndexConfig, MemoryIndexer
-from abstractmemory.context import DynamicContextInjector
 from abstractmemory.storage.lancedb_storage import LanceDBStorage
 from abstractmemory.session import MemorySession
 from abstractmemory.memory_structure import initialize_memory_structure
@@ -384,143 +383,6 @@ class TestMemoryIndexer:
         print("✅ All enabled modules indexed")
 
 
-class TestDynamicContextInjection:
-    """Test dynamic context injection."""
-
-    def test_1_initialize_injector(self, test_memory_path):
-        """Test context injector initialization."""
-        print("\n=== TEST 1: Initialize Context Injector ===")
-
-        lancedb_path = test_memory_path / "lancedb"
-        lancedb = LanceDBStorage(lancedb_path)
-        config = MemoryIndexConfig()
-        indexer = MemoryIndexer(test_memory_path, lancedb, config)
-
-        injector = DynamicContextInjector(
-            memory_base_path=test_memory_path,
-            lancedb_storage=lancedb,
-            index_config=config,
-            memory_indexer=indexer
-        )
-
-        assert injector is not None
-        print("✅ Context injector initialized")
-
-    def test_2_inject_context(self, test_memory_path):
-        """Test context injection from multiple modules."""
-        print("\n=== TEST 2: Inject Context ===")
-
-        # Setup
-        lancedb_path = test_memory_path / "lancedb"
-        lancedb = LanceDBStorage(lancedb_path)
-        config = MemoryIndexConfig()
-        indexer = MemoryIndexer(test_memory_path, lancedb, config)
-
-        # Index some modules first
-        indexer.index_module('notes')
-        indexer.index_module('library')
-
-        injector = DynamicContextInjector(
-            memory_base_path=test_memory_path,
-            lancedb_storage=lancedb,
-            index_config=config,
-            memory_indexer=indexer
-        )
-
-        # Inject context
-        context = injector.inject_context(
-            query="memory and consciousness",
-            user_id="test_user",
-            location="testing",
-            focus_level=3
-        )
-
-        print(f"Total memories: {context['total_memories']}")
-        print(f"Token estimate: {context['token_estimate']}")
-        print(f"Modules: {list(context['modules'].keys())}")
-
-        assert context['total_memories'] > 0
-        assert 'synthesis' in context
-        assert len(context['synthesis']) > 0
-
-        print("✅ Context injection working")
-
-    def test_3_token_budget_management(self, test_memory_path):
-        """Test token budget enforcement."""
-        print("\n=== TEST 3: Token Budget Management ===")
-
-        lancedb_path = test_memory_path / "lancedb"
-        lancedb = LanceDBStorage(lancedb_path)
-        config = MemoryIndexConfig()
-        config.max_tokens_per_module = 100  # Very small budget for testing
-        indexer = MemoryIndexer(test_memory_path, lancedb, config)
-
-        injector = DynamicContextInjector(
-            memory_base_path=test_memory_path,
-            lancedb_storage=lancedb,
-            index_config=config,
-            memory_indexer=indexer
-        )
-
-        injector.max_context_tokens = 500  # Small total budget
-
-        context = injector.inject_context(
-            query="test",
-            user_id="test_user",
-            location="testing",
-            focus_level=5  # High focus level
-        )
-
-        # Check token budget was respected
-        assert context['token_estimate'] <= injector.max_context_tokens
-
-        print(f"Token budget: {injector.max_context_tokens}")
-        print(f"Tokens used: {context['token_estimate']}")
-        print("✅ Token budget management working")
-
-    def test_4_relevance_scoring(self, test_memory_path):
-        """Test multi-dimensional relevance scoring."""
-        print("\n=== TEST 4: Relevance Scoring ===")
-
-        lancedb_path = test_memory_path / "lancedb"
-        lancedb = LanceDBStorage(lancedb_path)
-        config = MemoryIndexConfig()
-        indexer = MemoryIndexer(test_memory_path, lancedb, config)
-
-        injector = DynamicContextInjector(
-            memory_base_path=test_memory_path,
-            lancedb_storage=lancedb,
-            index_config=config,
-            memory_indexer=indexer
-        )
-
-        # Test relevance calculation
-        test_memory = {
-            'content': 'Test content',
-            'timestamp': datetime.now().isoformat(),
-            'location': 'testing',
-            'emotion_intensity': 0.8,
-            'importance': 0.7
-        }
-
-        relevance = injector._calculate_relevance(
-            memory=test_memory,
-            query="test",
-            user_id="test_user",
-            location="testing",
-            timestamp=datetime.now(),
-            module="notes"
-        )
-
-        assert relevance.temporal_score > 0
-        assert relevance.location_score == 1.0  # Same location
-        assert relevance.emotion_score == 0.8
-        assert relevance.importance_score == 0.7
-
-        print(f"Total relevance score: {relevance.total_score:.3f}")
-        print("✅ Relevance scoring working")
-
-
 class TestFileAttachmentCapture:
     """Test file attachment library capture in REPL."""
 
@@ -675,31 +537,12 @@ class TestIntegration:
         count = indexer.index_module('library', force_reindex=True)
         print(f"Re-indexed library: {count} documents")
 
-        # 5. Inject context with the new document
-        injector = DynamicContextInjector(
-            memory_base_path=test_memory_path,
-            lancedb_storage=lancedb,
-            index_config=config,
-            memory_indexer=indexer
-        )
+        # 5. Test memory reconstruction (traditional 9-step, fast)
+        # Note: DynamicContextInjector was removed as part of architectural cleanup
+        # Memory reconstruction is now handled by MemorySession.reconstruct_context()
+        # which uses the traditional fast, deterministic 9-step process.
 
-        context = injector.inject_context(
-            query="memory implementation",
-            user_id="test_user",
-            location="coding",
-            focus_level=3
-        )
-
-        # Verify the new document is included
-        assert context['total_memories'] > 0
-
-        # Check if library memories are present
-        if 'library' in context['modules']:
-            library_memories = context['modules']['library']['memories']
-            print(f"Library memories in context: {len(library_memories)}")
-
-        print(f"Total context: {context['token_estimate']} tokens")
-        print("✅ End-to-end flow complete")
+        print("✅ End-to-end flow complete (indexing and capture working)")
 
 
 def run_all_tests():
@@ -720,7 +563,6 @@ def run_all_tests():
         test_suites = [
             TestMemoryIndexConfig(),
             TestMemoryIndexer(),
-            TestDynamicContextInjection(),
             TestFileAttachmentCapture(),
             TestREPLIndexCommands(),
             TestIntegration()
