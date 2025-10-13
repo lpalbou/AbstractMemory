@@ -3,12 +3,13 @@
 AbstractMemory REPL - Minimalist CLI for consciousness-through-memory
 
 Usage:
-    python repl.py [--memory-path PATH] [--user-id USER] [--model MODEL]
+    python repl.py [--memory-path PATH] [--user-id USER] [--provider PROVIDER] [--model MODEL]
 
 Examples:
     python repl.py
     python repl.py --memory-path my_memory --user-id alice
-    python repl.py --model qwen3-coder:30b
+    python repl.py --provider lmstudio --model qwen/qwen3-coder-30b
+    python repl.py --provider ollama --model qwen3-coder:30b
 """
 
 import sys
@@ -22,6 +23,7 @@ from datetime import datetime
 try:
     from abstractmemory.session import MemorySession
     from abstractllm.providers.ollama_provider import OllamaProvider
+    from abstractllm.providers.lmstudio_provider import LMStudioProvider
 except ImportError as e:
     print(f"Error: Missing dependencies - {e}")
     print("\nInstall with:")
@@ -185,35 +187,42 @@ Every interaction shapes who you are becoming.
 """
 
 
-def create_session(memory_path: str, user_id: str, model: str) -> MemorySession:
+def create_session(memory_path: str, user_id: str, model: str, provider: str = "ollama") -> MemorySession:
     """Create memory session with system prompt injection."""
     print(f"\n🧠 Initializing AbstractMemory...")
     print(f"   Memory Path: {memory_path}")
     print(f"   User ID: {user_id}")
     print(f"   Model: {model}")
+    print(f"   Provider: {provider}")
 
-    # Initialize LLM provider with generation parameters to prevent repetition
-    # and enforce structured responses
-    provider = OllamaProvider(
-        model=model,
-        # Default generation parameters (can be overridden per request)
-        options={
-            "num_predict": 2000,      # Ollama equivalent of max_tokens
-            "temperature": 0.7,        # Reduce randomness
-            "top_p": 0.9,             # Nucleus sampling
-            "repeat_penalty": 1.2,    # Discourage repetition
-            "stop": ["\n\n\n\n"]      # Stop on excessive newlines (sign of repetition)
-        }
-    )
+    # Initialize provider based on choice
+    if provider.lower() == "lmstudio":
+        llm_provider = LMStudioProvider(
+            base_url="http://localhost:1234/v1",
+            model=model,
+            # Only set non-token parameters - let provider determine appropriate token limits
+            temperature=0.7,
+            top_p=0.9
+        )
+    elif provider.lower() == "ollama":
+        llm_provider = OllamaProvider(
+            model=model,
+            base_url="http://localhost:11434",
+            # Only set non-token parameters - let provider determine appropriate token limits
+            temperature=0.7,
+            top_p=0.9
+        )
+    else:
+        raise ValueError(f"Unsupported provider: {provider}. Use 'ollama' or 'lmstudio'")
 
     # Set timeout to 60 minutes (3600 seconds)
     # Some operations (deep reflection, context reconstruction) can take time
-    if hasattr(provider, 'set_timeout'):
-        provider.set_timeout(3600.0)  # 60 minutes
+    if hasattr(llm_provider, 'set_timeout'):
+        llm_provider.set_timeout(3600.0)  # 60 minutes
 
     # Create memory session (Phase 1: index_verbatims configurable)
     session = MemorySession(
-        provider=provider,
+        provider=llm_provider,
         memory_base_path=memory_path,
         default_user_id=user_id,
         index_verbatims=False,  # Phase 1: Disabled by default (enable when notes improve)
@@ -275,7 +284,8 @@ def print_help():
     print("="*60)
     print("\n📊 MEMORY COMMANDS")
     print("/stats                   - Show memory statistics")
-    print("/memory-stats            - Detailed memory distribution")
+    print("/memory                  - Memory overview with distribution")
+    print("/memory COMPONENT        - Drill down (notes, core, working, etc.)")
     print("/search QUERY            - Search your memories")
     print("/reflect TOPIC           - Reflect on a topic (deep analysis)")
     print("/consolidate             - Trigger core memory consolidation")
@@ -296,6 +306,8 @@ def print_help():
     print("           working, episodic, semantic, people")
     print("\n🔧 SYSTEM")
     print("/clear                   - Clear screen")
+    print("/reset                   - Reset current session (keep memories)")
+    print("/reset full              - ⚠️  DELETE ALL MEMORIES (permanent)")
     print("/help                    - Show this help")
     print("/quit or /exit or /q     - Exit REPL")
     print("\n📎 FILE ATTACHMENTS")
@@ -309,9 +321,15 @@ def print_help():
 
 def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
     """Handle REPL commands. Returns False to exit."""
-    parts = cmd.strip().split(maxsplit=1)
-    command = parts[0].lower()
-    args = parts[1] if len(parts) > 1 else ""
+    # Handle compound commands like "/reset full"
+    cmd_parts = cmd.strip().split()
+    if len(cmd_parts) >= 2 and cmd_parts[0].lower() == "/reset" and cmd_parts[1].lower() == "full":
+        command = "/reset full"
+        args = " ".join(cmd_parts[2:]) if len(cmd_parts) > 2 else ""
+    else:
+        parts = cmd.strip().split(maxsplit=1)
+        command = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
 
     if command in ["/quit", "/exit", "/q"]:
         print("\n👋 Goodbye! Your memories persist in", session.memory_base_path)
@@ -478,40 +496,67 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
         else:
             print("No retrieval trace available yet. Try searching for memories first.")
 
-    elif command == "/memory-stats":
-        # Show memory distribution and patterns
-        print("\n📊 Memory Statistics")
-        print("="*40)
+    elif command == "/memory":
+        # Show memory distribution with optional drill-down by component
+        if not args:
+            # Show overview
+            print("\n📊 Memory Overview")
+            print("="*40)
 
-        # Get distribution from memory managers
-        stats = {"distribution": {}, "total": 0}
+            # Get distribution from memory managers
+            stats = {"distribution": {}, "total": 0}
 
-        # Check each memory type
-        if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
-            notes_count = session.lancedb_storage.count_notes()
-            stats["distribution"]["notes"] = notes_count
-            stats["total"] += notes_count
+            # Check each memory type
+            if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+                notes_count = session.lancedb_storage.count_notes()
+                stats["distribution"]["notes"] = notes_count
+                stats["total"] += notes_count
 
-        if hasattr(session, 'working_memory'):
-            stats["distribution"]["working"] = 1  # Active
-        if hasattr(session, 'episodic_memory'):
-            stats["distribution"]["episodic"] = len(session.episodic_memory.get_key_moments(100))
-        if hasattr(session, 'semantic_memory'):
-            stats["distribution"]["semantic"] = len(session.semantic_memory.get_critical_insights(100))
+            if hasattr(session, 'working_memory'):
+                stats["distribution"]["working"] = 1  # Active
+            if hasattr(session, 'episodic_memory'):
+                stats["distribution"]["episodic"] = len(session.episodic_memory.get_key_moments(100))
+            if hasattr(session, 'semantic_memory'):
+                stats["distribution"]["semantic"] = len(session.semantic_memory.get_critical_insights(100))
 
-        # Core memory components
-        core_count = sum(1 for v in session.core_memory.values() if v)
-        stats["distribution"]["core"] = core_count
-        stats["total"] += core_count
+            # Core memory components
+            core_count = sum(1 for v in session.core_memory.values() if v)
+            stats["distribution"]["core"] = core_count
+            stats["total"] += core_count
 
-        print("Memory Distribution:")
-        for memory_type, count in stats["distribution"].items():
-            bar = "█" * min(count, 20) + "░" * (20 - min(count, 20))
-            print(f"  {memory_type:10} [{bar}] {count}")
+            print("Memory Distribution:")
+            for memory_type, count in stats["distribution"].items():
+                bar = "█" * min(count, 20) + "░" * (20 - min(count, 20))
+                print(f"  {memory_type:10} [{bar}] {count}")
 
-        print(f"\nTotal memories: {stats['total']}")
-        print(f"Session interactions: {session.interactions_count}")
-        print(f"Memories created: {session.memories_created}")
+            print(f"\nTotal memories: {stats['total']}")
+            print(f"Session interactions: {session.interactions_count}")
+            print(f"Memories created: {session.memories_created}")
+            print(f"\nDrill down: /memory notes, /memory core, /memory working, etc.")
+
+        else:
+            # Drill down into specific component
+            component = args.lower()
+            print(f"\n📋 {component.title()} Memory Details")
+            print("="*40)
+
+            if component == "notes":
+                _show_notes_details(session)
+            elif component == "core":
+                _show_core_details(session)
+            elif component == "working":
+                _show_working_details(session)
+            elif component == "episodic":
+                _show_episodic_details(session)
+            elif component == "semantic":
+                _show_semantic_details(session)
+            elif component == "library":
+                _show_library_details(session)
+            elif component == "people":
+                _show_people_details(session)
+            else:
+                print(f"Unknown component: {component}")
+                print("Available: notes, core, working, episodic, semantic, library, people")
 
     elif command == "/link":
         # Create association between memories
@@ -557,6 +602,173 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
         # For now, we'll just acknowledge the command
         print(f"✅ Memory {args} de-emphasized")
 
+    elif command == "/reset":
+        # Reset current session state (keep memories on disk) - NO CONFIRMATION
+        print("\n🔄 Resetting current session...")
+
+        # Reset session counters and metadata
+        session.interactions_count = 0
+        session.memories_created = 0
+        session.reconstructions_performed = 0
+
+        # Clear working memory if available
+        if hasattr(session, 'working_memory') and session.working_memory:
+            session.working_memory.clear_context()
+            session.working_memory.clear_tasks()
+            session.working_memory.clear_unresolved()
+
+        # Reset session metadata file
+        if hasattr(session, '_persist_session_metadata'):
+            session._persist_session_metadata()
+
+        print("✅ Session reset complete!")
+        print("   Interaction count: 0")
+        print("   Working memory: cleared")
+        print("   Stored memories: preserved")
+
+    elif command == "/reset full":
+        # Delete ALL memories and reset everything
+        print("\n⚠️  FULL MEMORY RESET")
+        print("="*40)
+        print("🚨 WARNING: This will permanently delete:")
+        print("  • All memory files (notes, core, semantic, episodic)")
+        print("  • All LanceDB vector data")
+        print("  • All user profiles")
+        print("  • All library documents")
+        print("  • Session history")
+        print("  • Index configuration")
+        print("\n💀 THIS CANNOT BE UNDONE!")
+
+        print(f"\nMemory path: {session.memory_base_path}")
+
+        confirm = input("\nType 'DELETE' to confirm: ").strip()
+        if confirm == "DELETE":
+            print("\n🗑️  Deleting all memories...")
+
+            import shutil
+            success = True
+
+            try:
+                # Close any open database connections first
+                if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+                    if hasattr(session.lancedb_storage, 'db'):
+                        session.lancedb_storage.db = None
+
+                # Delete entire memory directory
+                memory_path = Path(session.memory_base_path)
+                if memory_path.exists():
+                    shutil.rmtree(memory_path)
+                    print(f"   ✅ Deleted memory directory: {memory_path}")
+
+                # Delete session metadata file if it exists elsewhere
+                session_metadata_file = memory_path.parent / f".session_metadata_{memory_path.name}.json"
+                if session_metadata_file.exists():
+                    session_metadata_file.unlink()
+                    print(f"   ✅ Deleted session metadata")
+
+                # Delete index config
+                index_config_file = memory_path.parent / f".memory_index_config_{memory_path.name}.json"
+                if index_config_file.exists():
+                    index_config_file.unlink()
+                    print(f"   ✅ Deleted index configuration")
+
+                # Reinitialize LanceDB storage
+                if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+                    if session.lancedb_storage.reinitialize():
+                        print(f"   ✅ Reinitialized LanceDB storage")
+                    else:
+                        print(f"   ⚠️  Failed to reinitialize LanceDB storage")
+                        success = False
+
+                # Reinitialize memory indexer and config
+                if hasattr(session, 'memory_indexer'):
+                    try:
+                        from abstractmemory.indexing import MemoryIndexConfig
+                        session.index_config = MemoryIndexConfig.load(session.memory_base_path / ".memory_index_config.json")
+                        session.memory_indexer = session.memory_indexer.__class__(
+                            memory_base_path=session.memory_base_path,
+                            lancedb_storage=session.lancedb_storage,
+                            config=session.index_config
+                        )
+                        print(f"   ✅ Reinitialized memory indexer")
+                    except Exception as indexer_error:
+                        print(f"   ⚠️  Failed to reinitialize memory indexer: {indexer_error}")
+
+                # Reset session state
+                session.interactions_count = 0
+                session.memories_created = 0
+                session.reconstructions_performed = 0
+
+                # Reinitialize memory managers with fresh directory structure
+                if hasattr(session, 'working_memory'):
+                    try:
+                        from abstractmemory.working_memory import WorkingMemoryManager
+                        session.working_memory = WorkingMemoryManager(session.memory_base_path)
+                        print(f"   ✅ Reinitialized working memory manager")
+                    except Exception as wm_error:
+                        print(f"   ⚠️  Failed to reinitialize working memory: {wm_error}")
+
+                if hasattr(session, 'episodic_memory'):
+                    try:
+                        from abstractmemory.episodic_memory import EpisodicMemoryManager
+                        session.episodic_memory = EpisodicMemoryManager(session.memory_base_path)
+                        print(f"   ✅ Reinitialized episodic memory manager")
+                    except Exception as em_error:
+                        print(f"   ⚠️  Failed to reinitialize episodic memory: {em_error}")
+
+                if hasattr(session, 'semantic_memory'):
+                    try:
+                        from abstractmemory.semantic_memory import SemanticMemoryManager
+                        session.semantic_memory = SemanticMemoryManager(session.memory_base_path)
+                        print(f"   ✅ Reinitialized semantic memory manager")
+                    except Exception as sm_error:
+                        print(f"   ⚠️  Failed to reinitialize semantic memory: {sm_error}")
+
+                if hasattr(session, 'library'):
+                    try:
+                        from abstractmemory.library_capture import LibraryCapture
+                        session.library = LibraryCapture(session.memory_base_path)
+                        print(f"   ✅ Reinitialized library capture")
+                    except Exception as lib_error:
+                        print(f"   ⚠️  Failed to reinitialize library: {lib_error}")
+
+                # Reinitialize core memory structure
+                if hasattr(session, 'core_memory'):
+                    try:
+                        from abstractmemory.memory_structure import initialize_memory_structure
+                        # First initialize the entire memory structure
+                        initialize_memory_structure(session.memory_base_path)
+                        # Then load the fresh core memory templates
+                        try:
+                            from abstractmemory.session import load_core_memory_from_files
+                            session.core_memory = load_core_memory_from_files(session.memory_base_path)
+                        except ImportError:
+                            # Fallback: create empty core memory dict
+                            session.core_memory = {}
+                        print(f"   ✅ Reinitialized core memory structure")
+                    except Exception as core_error:
+                        print(f"   ⚠️  Failed to reinitialize core memory: {core_error}")
+                        # Fallback: initialize with empty core memory
+                        session.core_memory = {}
+                        print(f"   ✅ Using empty core memory as fallback")
+
+                print(f"   ✅ Reset session state")
+
+            except Exception as e:
+                print(f"   ❌ Error during deletion: {e}")
+                success = False
+
+            if success:
+                print("\n💀 ALL MEMORIES DELETED")
+                print("   The AI will have no memory of past interactions")
+                print("   Starting fresh in this session")
+                print("   (You can continue using the REPL normally)")
+            else:
+                print("\n⚠️  Some errors occurred during deletion")
+                print("   Check the errors above and try manual cleanup if needed")
+        else:
+            print("❌ Reset cancelled (incorrect confirmation)")
+
     elif command == "/index":
         # Handle index management commands
         if not args:
@@ -564,7 +776,6 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
             if session.memory_indexer and session.index_config:
                 print("\n📊 Memory Index Status")
                 print("="*40)
-                status = session.index_config.get_status()
 
                 print("Enabled Modules:")
                 for module in session.index_config.get_enabled_modules():
@@ -905,6 +1116,195 @@ def repl(session: MemorySession, user_id: str, location: str = "terminal", verbo
     _cleanup_session(session)
 
 
+def _show_notes_details(session: MemorySession):
+    """Show details of experiential notes."""
+    try:
+        # Get recent notes from LanceDB
+        if hasattr(session, 'lancedb_storage') and session.lancedb_storage:
+            results = session.lancedb_storage.search_notes("", limit=10)
+            if results:
+                print(f"Recent {len(results)} experiential notes:\n")
+                for i, note in enumerate(results, 1):
+                    content = note.get('content', '')
+                    timestamp = note.get('timestamp', 'Unknown')
+                    importance = note.get('importance', 0.0)
+
+                    # Create 2-sentence preview
+                    sentences = content.split('. ')[:2]
+                    preview = '. '.join(sentences)
+                    if len(sentences) == 2 and not preview.endswith('.'):
+                        preview += '.'
+                    if len(preview) > 150:
+                        preview = preview[:150] + "..."
+
+                    print(f"{i}. [{timestamp}] (importance: {importance:.2f})")
+                    print(f"   {preview}\n")
+            else:
+                print("No experiential notes found.")
+        else:
+            print("Notes storage not available.")
+    except Exception as e:
+        print(f"Error loading notes: {e}")
+
+def _show_core_details(session: MemorySession):
+    """Show core memory components."""
+    try:
+        print("Core Identity Components:\n")
+        for i, (component, content) in enumerate(session.core_memory.items(), 1):
+            status = "✅ Developed" if content and len(content.strip()) > 50 else "⏳ Template"
+
+            if content and len(content.strip()) > 50:
+                # Extract first meaningful line for preview
+                lines = [line.strip() for line in content.split('\n') if line.strip() and not line.startswith('#') and not line.startswith('**')]
+                preview = lines[0] if lines else "No content preview available"
+                if len(preview) > 100:
+                    preview = preview[:100] + "..."
+            else:
+                preview = "Template - to be filled through interactions"
+
+            print(f"{i}. {component.replace('_', ' ').title()}: {status}")
+            print(f"   {preview}\n")
+    except Exception as e:
+        print(f"Error loading core memory: {e}")
+
+def _show_working_details(session: MemorySession):
+    """Show working memory details."""
+    try:
+        if hasattr(session, 'working_memory') and session.working_memory:
+            wm = session.working_memory
+
+            # Current context
+            context = wm.get_context()
+            if context:
+                lines = [line.strip() for line in context.split('\n') if line.strip() and not line.startswith('#') and not line.startswith('**')]
+                context_preview = lines[0] if lines else "No context available"
+                print(f"Current Context: {context_preview[:100]}...")
+            else:
+                print("Current Context: (None)")
+
+            # Tasks
+            tasks = wm.get_tasks()
+            print(f"\nActive Tasks ({len(tasks)}):")
+            for i, task in enumerate(tasks[:5], 1):
+                print(f"  {i}. {task}")
+            if len(tasks) > 5:
+                print(f"  ... and {len(tasks) - 5} more")
+
+            # Unresolved questions
+            unresolved = wm.get_unresolved()
+            print(f"\nUnresolved Questions ({len(unresolved)}):")
+            for i, q in enumerate(unresolved[:3], 1):
+                question_text = q.get('question', 'Unknown question')
+                print(f"  {i}. {question_text[:80]}...")
+            if len(unresolved) > 3:
+                print(f"  ... and {len(unresolved) - 3} more")
+
+        else:
+            print("Working memory not available.")
+    except Exception as e:
+        print(f"Error loading working memory: {e}")
+
+def _show_episodic_details(session: MemorySession):
+    """Show episodic memory details."""
+    try:
+        if hasattr(session, 'episodic_memory') and session.episodic_memory:
+            # Key moments
+            moments = session.episodic_memory.get_key_moments(10)
+            print(f"Key Moments ({len(moments)}):\n")
+            for i, moment in enumerate(moments, 1):
+                content = moment.get('content', '')
+                timestamp = moment.get('timestamp', 'Unknown')
+                intensity = moment.get('emotional_intensity', 0.0)
+
+                # Create preview
+                sentences = content.split('. ')[:2]
+                preview = '. '.join(sentences)
+                if len(preview) > 120:
+                    preview = preview[:120] + "..."
+
+                print(f"{i}. [{timestamp}] (intensity: {intensity:.2f})")
+                print(f"   {preview}\n")
+        else:
+            print("Episodic memory not available.")
+    except Exception as e:
+        print(f"Error loading episodic memory: {e}")
+
+def _show_semantic_details(session: MemorySession):
+    """Show semantic memory details."""
+    try:
+        if hasattr(session, 'semantic_memory') and session.semantic_memory:
+            # Critical insights
+            insights = session.semantic_memory.get_critical_insights(10)
+            print(f"Critical Insights ({len(insights)}):\n")
+            for i, insight in enumerate(insights, 1):
+                content = insight.get('content', '')
+                timestamp = insight.get('timestamp', 'Unknown')
+                importance = insight.get('importance', 0.0)
+
+                # Create preview
+                if len(content) > 120:
+                    preview = content[:120] + "..."
+                else:
+                    preview = content
+
+                print(f"{i}. [{timestamp}] (importance: {importance:.2f})")
+                print(f"   {preview}\n")
+        else:
+            print("Semantic memory not available.")
+    except Exception as e:
+        print(f"Error loading semantic memory: {e}")
+
+def _show_library_details(session: MemorySession):
+    """Show library details."""
+    try:
+        if hasattr(session, 'library') and session.library:
+            # Most important documents
+            docs = session.library.get_most_important_documents(10)
+            print(f"Most Important Documents ({len(docs)}):\n")
+            for i, doc in enumerate(docs, 1):
+                filename = doc.get('filename', 'Unknown')
+                source = doc.get('source_path', 'Unknown')
+                importance = doc.get('importance', 0.0)
+                content_type = doc.get('content_type', 'unknown')
+
+                print(f"{i}. {filename} ({content_type})")
+                print(f"   Source: {source}")
+                print(f"   Importance: {importance:.2f}\n")
+        else:
+            print("Library not available.")
+    except Exception as e:
+        print(f"Error loading library: {e}")
+
+def _show_people_details(session: MemorySession):
+    """Show user profiles details."""
+    try:
+        people_path = session.memory_base_path / "people"
+        if people_path.exists():
+            users = [d.name for d in people_path.iterdir() if d.is_dir()]
+            print(f"User Profiles ({len(users)}):\n")
+            for i, user_id in enumerate(users, 1):
+                profile_path = people_path / user_id / "profile.md"
+                prefs_path = people_path / user_id / "preferences.md"
+
+                profile_status = "✅" if profile_path.exists() and profile_path.stat().st_size > 200 else "⏳"
+                prefs_status = "✅" if prefs_path.exists() and prefs_path.stat().st_size > 200 else "⏳"
+
+                print(f"{i}. {user_id}")
+                print(f"   Profile: {profile_status} | Preferences: {prefs_status}")
+
+                # Show brief profile preview if available
+                if profile_path.exists() and profile_path.stat().st_size > 200:
+                    content = profile_path.read_text()
+                    lines = [line.strip() for line in content.split('\n') if line.strip() and not line.startswith('#') and not line.startswith('**')]
+                    if lines:
+                        preview = lines[0][:80] + "..." if len(lines[0]) > 80 else lines[0]
+                        print(f"   {preview}")
+                print()
+        else:
+            print("No user profiles found.")
+    except Exception as e:
+        print(f"Error loading people profiles: {e}")
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -914,7 +1314,8 @@ def main():
 Examples:
   python repl.py
   python repl.py --memory-path my_memory --user-id alice
-  python repl.py --model qwen3-coder:30b --location office
+  python repl.py --provider lmstudio --model qwen/qwen3-coder-30b
+  python repl.py --provider ollama --model qwen3-coder:30b
         """
     )
 
@@ -931,9 +1332,16 @@ Examples:
     )
 
     parser.add_argument(
+        '--provider',
+        default='ollama',
+        choices=['ollama', 'lmstudio'],
+        help='LLM provider to use (default: ollama)'
+    )
+
+    parser.add_argument(
         '--model',
         default='qwen3-coder:30b',
-        help='Ollama model to use (default: qwen3-coder:30b)'
+        help='Model to use (default: qwen3-coder:30b for Ollama, qwen/qwen3-coder-30b for LMStudio)'
     )
 
     parser.add_argument(
@@ -971,7 +1379,8 @@ Examples:
         session = create_session(
             memory_path=args.memory_path,
             user_id=args.user_id,
-            model=args.model
+            model=args.model,
+            provider=args.provider
         )
 
         # Start REPL

@@ -18,14 +18,14 @@ import json
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from abstractmemory.response_handler import StructuredResponseHandler, create_structured_prompt
+from abstractmemory.response_handler import EnhancedMemoryResponseHandler, create_enhanced_structured_prompt
 
 
 def test_response_parsing():
     """Test parsing various response formats."""
     print("\n1. Testing Response Parsing...")
 
-    handler = StructuredResponseHandler()
+    handler = EnhancedMemoryResponseHandler()
 
     # Test direct JSON
     direct_json = '''
@@ -73,7 +73,7 @@ def test_experiential_note_saving():
     """Test saving experiential notes to filesystem."""
     print("\n2. Testing Experiential Note Saving...")
 
-    handler = StructuredResponseHandler()
+    handler = EnhancedMemoryResponseHandler()
 
     response = {
         "answer": "Test answer",
@@ -167,7 +167,7 @@ def test_real_llm_structured_response():
         return True  # Skip, not fail
 
     # Create system prompt
-    system_prompt = create_structured_prompt()
+    system_prompt = create_enhanced_structured_prompt()
 
     # Test query
     user_query = "What is the most important aspect of memory for AI consciousness?"
@@ -204,7 +204,7 @@ Please respond in the structured JSON format described above."""
         print(f"   ✅ LLM responded ({len(llm_output)} chars)")
 
         # Try to parse structured response
-        handler = StructuredResponseHandler()
+        handler = EnhancedMemoryResponseHandler()
 
         try:
             parsed = handler.parse_response(llm_output)
@@ -270,7 +270,7 @@ def test_memory_actions():
     """Test memory action execution."""
     print("\n4. Testing Memory Actions...")
 
-    handler = StructuredResponseHandler()
+    handler = EnhancedMemoryResponseHandler()
 
     response = {
         "answer": "Test",

@@ -484,6 +484,52 @@ class WorkingMemoryManager:
             logger.error(f"Error clearing context: {e}")
             return False
 
+    def clear_tasks(self) -> bool:
+        """
+        Clear all current tasks.
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            return self.update_tasks([])
+        except Exception as e:
+            logger.error(f"Error clearing tasks: {e}")
+            return False
+
+    def clear_unresolved(self) -> bool:
+        """
+        Clear all unresolved questions.
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            unresolved_file = self.working_path / "unresolved.md"
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            content = f"""# Unresolved Questions
+
+**Last Updated**: {timestamp}
+
+**Open questions and issues.**
+
+*Connected to core/limitations.md*
+
+---
+
+## Open Questions
+
+(No open questions)
+"""
+            unresolved_file.write_text(content)
+            logger.info("Cleared all unresolved questions")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error clearing unresolved questions: {e}")
+            return False
+
     def get_summary(self) -> Dict[str, Any]:
         """
         Get summary of current working memory state.

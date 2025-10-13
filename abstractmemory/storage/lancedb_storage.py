@@ -43,13 +43,13 @@ class LanceDBStorage:
     - core_memory_table: Core identity components (10 components)
     """
 
-    def __init__(self, db_path: Path, embedding_model: str = "all-minilm-l6-v2"):
+    def __init__(self, db_path: Path, embedding_manager: Optional[Any] = None):
         """
         Initialize LanceDB storage.
 
         Args:
             db_path: Path to LanceDB database
-            embedding_model: Model for embeddings (default: all-minilm-l6-v2)
+            embedding_manager: Existing AbstractCore EmbeddingManager (recommended to avoid duplicate initialization)
         """
         if not LANCEDB_AVAILABLE:
             raise RuntimeError("LanceDB not installed. Install with: pip install lancedb")
@@ -61,10 +61,14 @@ class LanceDBStorage:
         self.db = lancedb.connect(str(self.db_path))
         logger.info(f"Connected to LanceDB at {self.db_path}")
 
-        # Initialize embeddings
-        if ABSTRACTCORE_AVAILABLE:
-            self.embedding_manager = EmbeddingManager(model=embedding_model)
-            logger.info(f"Using AbstractCore embeddings: {embedding_model}")
+        # Use provided embedding manager or create fallback
+        if embedding_manager is not None:
+            self.embedding_manager = embedding_manager
+            logger.info("Using shared AbstractCore EmbeddingManager")
+        elif ABSTRACTCORE_AVAILABLE:
+            # Fallback: create new instance only if none provided
+            self.embedding_manager = EmbeddingManager()
+            logger.warning("Created new EmbeddingManager - consider sharing instance to avoid duplicate initialization")
         else:
             self.embedding_manager = None
             logger.warning("AbstractCore not available - embeddings disabled")
@@ -195,6 +199,36 @@ class LanceDBStorage:
         }
 
         logger.info("LanceDB schemas initialized")
+
+    def reinitialize(self):
+        """
+        Reinitialize the LanceDB connection after a reset.
+
+        This method recreates the database connection and reinitializes
+        table schemas. Used when the database directory has been deleted
+        and recreated (e.g., during /reset full).
+        """
+        try:
+            # Close existing connection if any
+            if hasattr(self, 'db') and self.db is not None:
+                self.db = None
+
+            # Ensure directory exists
+            self.db_path.mkdir(parents=True, exist_ok=True)
+
+            # Recreate LanceDB connection
+            self.db = lancedb.connect(str(self.db_path))
+            logger.info(f"Reinitialized LanceDB connection at {self.db_path}")
+
+            # Reinitialize table schemas (they are created on-demand)
+            self._init_tables()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to reinitialize LanceDB storage: {e}")
+            self.db = None
+            return False
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """

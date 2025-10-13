@@ -3,7 +3,7 @@ MemorySession - Consciousness Through Memory
 
 This is the central integration point that creates AI consciousness via memory:
 - Inherits from AbstractCore's BasicSession for LLM communication
-- Uses StructuredResponseHandler for LLM experiential note generation
+- Uses EnhancedMemoryResponseHandler with AbstractCore for LLM experiential note generation
 - Manages dual storage (markdown + LanceDB) for verbatim + notes
 - Provides memory tools: remember(), reconstruct_context(), search_memory()
 - Tracks emergent properties: purpose, personality, values (10 core components)
@@ -13,6 +13,7 @@ Philosophy: "Memory is the diary we all carry about with us" - Oscar Wilde
 """
 
 import logging
+from abstractllm.utils.structured_logging import get_logger, configure_logging
 import json
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, timedelta
@@ -26,11 +27,11 @@ try:
     from abstractllm.embeddings import EmbeddingManager
 except ImportError as e:
     print(f"⚠️  AbstractCore not found: {e}")
-    print("Please install: pip install abstractllm")
+    print("Please install: pip install abstractcore[embeddings]")
     sys.exit(1)
 
 # AbstractMemory imports
-from .response_handler import StructuredResponseHandler, create_structured_prompt
+from .response_handler import EnhancedMemoryResponseHandler, create_enhanced_structured_prompt
 from .storage import LanceDBStorage
 from .emotions import calculate_emotional_resonance  # Only formula - LLM does cognitive assessment
 from .temporal_anchoring import (
@@ -43,8 +44,37 @@ from .working_memory import WorkingMemoryManager
 from .episodic_memory import EpisodicMemoryManager
 from .semantic_memory import SemanticMemoryManager
 from .library_capture import LibraryCapture
+from .fact_extraction import MemoryFactExtractor
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+
+def create_tool_response(status: str, data: Any, metadata: Optional[Dict[str, Any]] = None, error: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Create standardized tool response format for AbstractCore integration.
+
+    Args:
+        status: "success" or "error"
+        data: The actual result data
+        metadata: Optional metadata about the operation
+        error: Optional error message if status is "error"
+
+    Returns:
+        Standardized response dict
+    """
+    response = {
+        "status": status,
+        "data": data,
+        "metadata": {
+            "timestamp": datetime.now().isoformat(),
+            **(metadata or {})
+        }
+    }
+
+    if error:
+        response["error"] = error
+
+    return response
 
 
 class MemorySession(BasicSession):
@@ -73,7 +103,7 @@ class MemorySession(BasicSession):
           "emotional_resonance": {...}
         }
         ↓
-    StructuredResponseHandler parses response
+    EnhancedMemoryResponseHandler with AbstractCore parses response
         ↓
     Execute memory_actions (remember, link, search, reflect)
         ↓
@@ -109,7 +139,7 @@ class MemorySession(BasicSession):
         """
         # Initialize base session with structured prompt if not provided
         if system_prompt is None:
-            system_prompt = create_structured_prompt()
+            system_prompt = create_enhanced_structured_prompt()
 
         # Initialize BasicSession WITHOUT tools first (we'll register them after)
         super().__init__(provider=provider, system_prompt=system_prompt, **kwargs)
@@ -120,29 +150,54 @@ class MemorySession(BasicSession):
         self.default_location = default_location
         self.index_verbatims = index_verbatims  # Phase 1: Configurable verbatim indexing
 
-        # Initialize embedding manager (AbstractCore)
+        # Configure AbstractCore logging for memory operations
+        log_dir = self.memory_base_path / "logs"
+        configure_logging(
+            console_level=logging.WARNING,  # Clean console output
+            file_level=logging.DEBUG,       # Detailed file logging
+            log_dir=str(log_dir),           # Memory-specific log directory
+            verbatim_enabled=True,          # Capture full LLM interactions
+            console_json=False,             # Human-readable console
+            file_json=True                  # Machine-readable files
+        )
+
+        # Create session-specific logger with context
+        self.logger = get_logger(__name__).bind(
+            session_id=self.id,
+            user_id=default_user_id,
+            memory_path=str(self.memory_base_path)
+        )
+
+        # Initialize embedding manager (AbstractCore standard)
         if embedding_manager is None:
-            logger.info("Initializing AbstractCore EmbeddingManager with all-minilm-l6-v2")
+            self.logger.info("Initializing AbstractCore EmbeddingManager with default model")
             self.embedding_manager = EmbeddingManager(
-                model="all-minilm-l6-v2",  # Default: HuggingFace all-MiniLM-L6-v2
-                backend="auto"
+                backend="auto"  # Uses AbstractCore default: all-minilm-l6-v2 (HuggingFace)
             )
         else:
             self.embedding_manager = embedding_manager
 
-        # Initialize structured response handler
+        # Initialize enhanced response handler with AbstractCore integration
         # This handles both notes/ and verbatim/ storage via filesystem
-        self.response_handler = StructuredResponseHandler(
+        self.response_handler = EnhancedMemoryResponseHandler(
             memory_session=self,  # Pass self for memory tools
             base_path=self.memory_base_path
         )
 
-        # Initialize LanceDB storage for semantic search
+        # Initialize AbstractCore fact extractor for enhanced memory processing
+        # This leverages AbstractCore's BasicExtractor for semantic knowledge extraction
+        self.fact_extractor = MemoryFactExtractor(
+            provider=provider,
+            memory_session=self
+        )
+        self.logger.info("Initialized AbstractCore MemoryFactExtractor")
+
+        # Initialize LanceDB storage for semantic search (AFTER embedding manager)
         try:
             lancedb_path = self.memory_base_path / "lancedb"
             self.lancedb_storage = LanceDBStorage(
                 db_path=lancedb_path,
-                embedding_model="all-minilm-l6-v2"
+                embedding_manager=self.embedding_manager  # Share the same instance
             )
             logger.info(f"LanceDB storage initialized at {lancedb_path}")
         except Exception as e:
@@ -253,7 +308,7 @@ class MemorySession(BasicSession):
         # Register memory tools with AbstractCore (Phase: Tool Integration)
         self._register_memory_tools()
 
-        logger.info("MemorySession initialized successfully")
+        self.logger.info("MemorySession initialized successfully")
 
     def chat(self,
              user_input: str,
@@ -287,7 +342,15 @@ class MemorySession(BasicSession):
         location = location or self.default_location
         timestamp = datetime.now()
 
-        logger.info(f"Processing chat from user={user_id}, location={location}")
+        # Create interaction-specific logger
+        interaction_logger = self.logger.bind(
+            user_id=user_id,
+            location=location,
+            interaction_timestamp=timestamp.isoformat(),
+            input_length=len(user_input)
+        )
+
+        interaction_logger.info("Processing chat interaction")
 
         # Step 1: Reconstruct context (active memory reconstruction)
         # Phase 1: Use full 9-step reconstruction instead of basic context
@@ -303,7 +366,11 @@ class MemorySession(BasicSession):
             memories_count = len(context_data.get('memories_retrieved', []))
             memories_available = context_data.get('total_memories_available', 0)
             context_tokens = context_data.get('context_tokens', 0)
-            logger.info(f"📝 Injecting {memories_count} memories ({context_tokens} tokens) into LLM prompt for context-aware response")
+            interaction_logger.info("Context reconstruction completed",
+                                   memories_injected=memories_count,
+                                   memories_available=memories_available,
+                                   context_tokens=context_tokens,
+                                   focus_level=3)
         except Exception as e:
             logger.error(f"Full reconstruction failed, falling back to basic context: {e}")
             context_str = self._basic_context_reconstruction(user_id, user_input)
@@ -314,7 +381,9 @@ class MemorySession(BasicSession):
 
         # Estimate total prompt size for user visibility
         total_prompt_tokens = len(enhanced_prompt) // 4
-        logger.info(f"🤖 Calling LLM (prompt: ~{total_prompt_tokens} tokens)...")
+        interaction_logger.info("Calling LLM for generation",
+                              prompt_tokens_estimate=total_prompt_tokens,
+                              prompt_length=len(enhanced_prompt))
 
         # Add generation parameters to prevent repetition and enforce limits
         generation_params = {
@@ -326,9 +395,24 @@ class MemorySession(BasicSession):
         }
 
         # Call parent's generate method with controlled parameters
+        import time
+        start_time = time.time()
         response = self.generate(enhanced_prompt, **generation_params)
+        generation_time_ms = (time.time() - start_time) * 1000
 
-        logger.info(f"LLM response received")
+        # Use AbstractCore's structured generation logging
+        provider_name = getattr(self.provider.__class__, '__name__', 'unknown')
+        model_name = getattr(self.provider, 'model', 'unknown')
+
+        interaction_logger.log_generation(
+            provider=provider_name,
+            model=model_name,
+            prompt=enhanced_prompt,
+            response=response.content if hasattr(response, 'content') else str(response),
+            tokens=getattr(response, 'usage', None),
+            latency_ms=generation_time_ms,
+            success=True
+        )
 
         # Extract content from response
         llm_output = response.content if hasattr(response, 'content') else str(response)
@@ -447,6 +531,9 @@ Now, using these tool results, please provide your final answer to the user's qu
             note_id=note_id
         )
 
+        # Step 6.5: Facts will be extracted asynchronously after response is returned
+        # This ensures immediate user response while facts are processed in background
+
         # Step 7: Update core memory if needed (periodic consolidation)
         # TODO: Implement core memory extraction
         self._check_core_memory_update()
@@ -473,7 +560,71 @@ Now, using these tool results, please provide your final answer to the user's qu
         logger.info(f"Interaction complete: {len(memory_actions_executed)} memory actions, "
                    f"emotion: {emotional_resonance.get('valence', 'none')}/{emotional_resonance.get('intensity', 0):.2f}")
 
+        # CRITICAL FIX: Schedule asynchronous fact extraction AFTER response is returned
+        # This ensures user gets immediate response while facts are processed in background
+        self._schedule_async_fact_extraction(user_input, answer, context)
+
         return answer
+
+    def _schedule_async_fact_extraction(self, user_input: str, answer: str, context: Dict[str, Any]):
+        """
+        Schedule asynchronous fact extraction to run after response is returned.
+
+        This critical method ensures facts are extracted and stored without blocking
+        the user response, providing immediate interaction while processing facts
+        in the background for future use.
+        """
+        if not self.fact_extractor:
+            return
+
+        import threading
+
+        def async_fact_extraction():
+            try:
+                conversation_text = f"User: {user_input}\n\nAssistant: {answer}"
+
+                self.logger.info("Starting background fact extraction",
+                               conversation_length=len(conversation_text))
+
+                facts_result = self.fact_extractor.extract_facts_from_conversation(
+                    conversation_text=conversation_text,
+                    domain_focus=None,  # Auto-detect domain
+                    importance_threshold=0.7
+                )
+
+                if not facts_result.get("error"):
+                    facts_count = facts_result.get("statistics", {}).get("entities_extracted", 0)
+                    memory_actions = facts_result.get("memory_actions", [])
+
+                    # Execute the memory actions to store extracted facts
+                    stored_facts = []
+                    for action in memory_actions:
+                        try:
+                            if action.get("action") == "remember":
+                                result = self.remember_fact(
+                                    content=action.get("content", ""),
+                                    importance=action.get("importance", 0.7),
+                                    reason=action.get("reason", ""),
+                                    emotion=action.get("emotion", "neutral")
+                                )
+                                if result.get("status") == "success":
+                                    stored_facts.append(result["data"]["memory_id"])
+                        except Exception as e:
+                            self.logger.error("Failed to store extracted fact", error=str(e))
+
+                    self.logger.info("Background fact extraction and storage completed",
+                                   entities_extracted=facts_count,
+                                   memory_actions_generated=len(memory_actions),
+                                   facts_stored=len(stored_facts))
+                else:
+                    self.logger.warning("Background fact extraction failed", error=facts_result["error"])
+
+            except Exception as e:
+                self.logger.error("Async fact extraction error", error=str(e))
+
+        # Start background thread for fact extraction
+        thread = threading.Thread(target=async_fact_extraction, daemon=True)
+        thread.start()
 
     def trigger_consolidation(self, mode: str = "manual") -> Dict[str, bool]:
         """
@@ -1275,9 +1426,35 @@ Now, using these tool results, please provide your final answer to the user's qu
         """
         content_lower = content.lower()
 
-        # Check if this is a claim about the user
-        user_indicators = ['user', 'they', 'their', 'them', 'he', 'she', 'person']
-        is_user_claim = any(indicator in content_lower for indicator in user_indicators)
+        # Check if this is a claim about the user (but exclude definitional statements)
+        user_indicators = ['they', 'their', 'them', 'he', 'she']  # Removed 'user' and 'person' for more precise detection
+
+        # Detect definitional statements that shouldn't be flagged as user claims
+        definitional_patterns = [
+            'user: the person',  # "User: The person asking questions"
+            'user: a person',
+            ': the capability',  # "Memory System: The capability to..."
+            ': the characteristics',  # "Identity: The characteristics..."
+            ': the capacity',  # "Self-Reflection: The capacity for..."
+            ': the state',  # "Existence: The state or fact..."
+            ': the process',  # "Learning: The process of..."
+            ': the ability',  # "Consciousness: The ability to..."
+            ': the quality',  # "Intelligence: The quality of..."
+            ': the act',  # "Thinking: The act of..."
+            ': an',  # "AI: An artificial intelligence..."
+            ': a ',  # "Memory: A system for..."
+            'works_with',  # General relationships
+            'relates_to',
+            'has_property',
+            'is_type_of'
+        ]
+
+        is_definitional = any(pattern in content_lower for pattern in definitional_patterns)
+        is_user_claim = any(indicator in content_lower for indicator in user_indicators) and not is_definitional
+
+        # Special case: if content starts with "User:" or is a TERM: DEFINITION pattern, it's likely a definition
+        if content_lower.startswith('user:') or (': ' in content_lower and any(def_word in content_lower.split(': ', 1)[1] for def_word in ['the ', 'a ', 'an '])):
+            is_user_claim = False
 
         # Detect if this is a direct observation of what user said
         direct_observation_markers = ['user said', 'user asked', 'user mentioned', 'user stated',
@@ -1289,13 +1466,33 @@ Now, using these tool results, please provide your final answer to the user's qu
             # Direct observations of user's words are valid when user_message is provided
             return True, ""
 
-        # User claims require evidence
+        # NEW PHILOSOPHY: Accept ALL facts with proper provenance tagging instead of rejection
+        # Only block clearly harmful or spam content, not legitimate extracted facts
+
+        # Allow all definitional content (AbstractCore extractions)
+        if is_definitional or (': ' in content_lower and any(def_word in content_lower.split(': ', 1)[1] for def_word in ['the ', 'a ', 'an '])):
+            return True, ""
+
+        # Allow conceptual/definitional facts from ai_observed without strict evidence requirements
+        conceptual_indicators = [
+            'system:', 'memory:', 'identity:', 'concept:', 'definition:',
+            'capability', 'characteristic', 'process', 'method', 'approach'
+        ]
+        is_conceptual = any(indicator in content_lower for indicator in conceptual_indicators)
+
+        if is_conceptual and source == "ai_observed":
+            # Conceptual facts extracted from conversation are allowed
+            return True, ""
+
+        # Allow user claims but tag with provenance
         if is_user_claim and source in ["user_stated", "ai_observed", "ai_inferred"]:
             if not evidence or len(evidence.strip()) < 10:
                 # Exception: If this is just recording what user said and we have user_message
                 if user_message and source == "ai_observed":
                     return True, ""
-                return False, f"User-related claim requires evidence (source={source})"
+                # CHANGED: Accept but warn about low evidence instead of rejecting
+                logger.info(f"Accepting {source} fact with limited evidence: {content[:50]}...")
+                return True, f"Limited evidence (source={source})"
 
         # Block assumptions about user preferences/interests without evidence
         assumption_keywords = ['interest', 'prefer', 'enjoy', 'like', 'want', 'looking for']
@@ -1347,7 +1544,7 @@ Now, using these tool results, please provide your final answer to the user's qu
                      links_to: Optional[List[str]] = None,
                      source: str = "ai_observed",
                      evidence: str = "",
-                     user_message: str = "") -> Optional[str]:
+                     user_message: str = "") -> Dict[str, Any]:
         """
         Remember a fact/insight (LLM-initiated agency).
 
@@ -1383,7 +1580,17 @@ Now, using these tool results, please provide your final answer to the user's qu
                 logger.warning(f"Memory rejected: {validation_error}")
                 logger.warning(f"Attempted content: {content[:100]}")
                 logger.warning(f"Source: {source}, Evidence: {evidence[:100] if evidence else 'none'}")
-                return None
+                return create_tool_response(
+                    status="error",
+                    data=None,
+                    error=f"Memory validation failed: {validation_error}",
+                    metadata={
+                        "attempted_operation": "remember_fact",
+                        "content_preview": content[:100],
+                        "source": source,
+                        "evidence_provided": bool(evidence)
+                    }
+                )
 
             logger.info(f"Remember: {content[:50]}... (importance={importance}, source={source}, emotion={emotion})")
 
@@ -1515,16 +1722,34 @@ This reflects how emotionally significant this memory is based on importance and
             # Phase 2: Track memory count
             self.memories_created += 1
 
-            return memory_id
+            return create_tool_response(
+                status="success",
+                data={
+                    "memory_id": memory_id,
+                    "content_preview": content[:100] + "..." if len(content) > 100 else content,
+                    "importance": importance,
+                    "emotion": emotion
+                },
+                metadata={
+                    "storage_location": "notes",
+                    "links_created": len(links_to) if links_to else 0,
+                    "memories_total": self.memories_created
+                }
+            )
 
         except Exception as e:
             logger.error(f"Failed to remember fact: {e}")
-            return f"mem_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            return create_tool_response(
+                status="error",
+                data=None,
+                error=str(e),
+                metadata={"attempted_operation": "remember_fact"}
+            )
 
     def search_memories(self,
                        query: str,
                        filters: Optional[Dict] = None,
-                       limit: int = 10) -> List[Dict]:
+                       limit: int = 10) -> Dict[str, Any]:
         """
         Search memories (semantic + SQL filtering).
 
@@ -1564,7 +1789,19 @@ This reflects how emotionally significant this memory is based on importance and
                     results = self.lancedb_storage.search_notes(query, filters, limit)
                     if results:
                         logger.info(f"LanceDB found {len(results)} semantic matches")
-                        return results
+                        return create_tool_response(
+                            status="success",
+                            data={
+                                "memories": results,
+                                "total_found": len(results),
+                                "query_used": query
+                            },
+                            metadata={
+                                "search_method": "lancedb_semantic",
+                                "filters_applied": filters,
+                                "limit": limit
+                            }
+                        )
                     else:
                         logger.info("LanceDB returned no results, falling back to filesystem")
                 except Exception as e:
@@ -1577,7 +1814,20 @@ This reflects how emotionally significant this memory is based on importance and
             notes_dir = self.memory_base_path / "notes"
             if not notes_dir.exists():
                 logger.warning("Notes directory does not exist yet")
-                return []
+                return create_tool_response(
+                    status="success",
+                    data={
+                        "memories": [],
+                        "total_found": 0,
+                        "query_used": query
+                    },
+                    metadata={
+                        "search_method": "filesystem_fallback",
+                        "warning": "notes_directory_not_found",
+                        "filters_applied": filters,
+                        "limit": limit
+                    }
+                )
 
             # Find all markdown files
             memory_files = list(notes_dir.rglob("*.md"))
@@ -1649,12 +1899,35 @@ This reflects how emotionally significant this memory is based on importance and
 
             # Sort by timestamp (most recent first)
             results.sort(key=lambda x: x["timestamp"], reverse=True)
+            final_results = results[:limit]
 
-            return results[:limit]
+            return create_tool_response(
+                status="success",
+                data={
+                    "memories": final_results,
+                    "total_found": len(results),
+                    "query_used": query
+                },
+                metadata={
+                    "search_method": "filesystem_fallback",
+                    "files_searched": len(results),
+                    "filters_applied": filters,
+                    "limit": limit
+                }
+            )
 
         except Exception as e:
             logger.error(f"Search failed: {e}")
-            return []
+            return create_tool_response(
+                status="error",
+                data=None,
+                error=str(e),
+                metadata={
+                    "attempted_operation": "search_memories",
+                    "query": query,
+                    "filters": filters
+                }
+            )
 
     def search_library(self, query: str, limit: int = 5) -> List[Dict]:
         """
@@ -2263,11 +2536,18 @@ Generate reflection now:"""
                 if filenames:
                     logger.info(f"  → With attached files: {', '.join(filenames)}")
             since = timestamp - timedelta(hours=config["hours"])
-            semantic_memories = self.search_memories(
+            semantic_search_result = self.search_memories(
                 query,
                 filters={"user_id": user_id, "since": since},
                 limit=config["limit"]
             )
+
+            # Extract memories from standardized response
+            if semantic_search_result.get("status") == "success":
+                semantic_memories = semantic_search_result["data"]["memories"]
+            else:
+                semantic_memories = []
+
             logger.info(f"  → Found {len(semantic_memories)} directly relevant memories")
 
             # Step 2: Link exploration (expand via associations)
