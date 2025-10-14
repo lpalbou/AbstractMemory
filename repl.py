@@ -727,7 +727,11 @@ def handle_command(cmd: str, session: MemorySession, user_id: str) -> bool:
                 if hasattr(session, 'library'):
                     try:
                         from abstractmemory.library_capture import LibraryCapture
-                        session.library = LibraryCapture(session.memory_base_path)
+                        session.library = LibraryCapture(
+                            library_base_path=session.memory_base_path,
+                            embedding_manager=session.embedding_manager,
+                            lancedb_storage=session.lancedb_storage
+                        )
                         print(f"   ✅ Reinitialized library capture")
                     except Exception as lib_error:
                         print(f"   ⚠️  Failed to reinitialize library: {lib_error}")

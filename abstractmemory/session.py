@@ -2147,7 +2147,14 @@ This reflects how emotionally significant this memory is based on importance and
             memory_limit = depth_config.get(depth, 20)
 
             # 2. Search memories related to topic
-            related_memories = self.search_memories(topic, limit=memory_limit)
+            search_response = self.search_memories(topic, limit=memory_limit)
+            
+            # Extract memories from tool response
+            if isinstance(search_response, dict) and 'data' in search_response:
+                related_memories = search_response['data'].get('memories', [])
+            else:
+                related_memories = []
+                
             logger.info(f"Found {len(related_memories)} related memories for reflection")
 
             if len(related_memories) == 0:
