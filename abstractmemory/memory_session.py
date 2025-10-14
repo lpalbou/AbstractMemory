@@ -24,6 +24,7 @@ try:
     from abstractllm.core.interface import AbstractLLMInterface
     from abstractllm.core.types import GenerateResponse
     from abstractllm.embeddings import EmbeddingManager
+    from abstractllm.tools import tool
 except ImportError as e:
     print(f"⚠️  AbstractCore not found: {e}")
     print("Please install: pip install abstractcore[embeddings]")
@@ -38,6 +39,7 @@ from .semantic_memory import SemanticMemoryManager
 from .library_capture import LibraryCapture
 from .fact_extraction import MemoryFactExtractor
 from .consolidation_scheduler import ConsolidationScheduler
+from .task_queue import TaskQueue
 
 logger = get_logger(__name__)
 
@@ -260,6 +262,18 @@ You MUST respond with a structured JSON object containing:
             # Initialize consolidation scheduler
             self.consolidation_scheduler = ConsolidationScheduler(session=self)
             
+            # Initialize task queue
+            try:
+                queue_file = self.memory_base_path / "task_queue.json"
+                self.task_queue = TaskQueue(
+                    queue_file=queue_file,
+                    notification_callback=getattr(self, '_notification_callback', None)
+                )
+                logger.info("Task queue initialized")
+            except Exception as e:
+                logger.error(f"Task queue initialization failed: {e}")
+                self.task_queue = None
+            
             # Core memory state (emergent properties)
             self.core_memory = {
                 "purpose": None,
@@ -304,7 +318,11 @@ You MUST respond with a structured JSON object containing:
         user_id = user_id or self.default_user_id
         location = location or self.default_location
         
+        logger.debug(f"MemorySession.generate called with prompt length: {len(prompt)}")
+        logger.debug(f"User ID: {user_id}, Location: {location}")
+        
         # Step 1: Reconstruct context from memory layers using full 9-step process
+        logger.debug("Step 1: Starting context reconstruction...")
         try:
             context_data = self.reconstruct_context(
                 user_id=user_id,
@@ -313,26 +331,141 @@ You MUST respond with a structured JSON object containing:
                 focus_level=3  # Balanced depth (0=minimal, 5=exhaustive)
             )
             enhanced_prompt = context_data["synthesized_context"] + f"\n\nUser: {prompt}"
+            logger.debug(f"Context reconstruction complete. Enhanced prompt length: {len(enhanced_prompt)}")
             logger.info(f"Context reconstruction: {context_data.get('total_memories_retrieved', 0)} memories, "
                        f"{context_data.get('context_tokens', 0)} tokens")
         except Exception as e:
             logger.warning(f"Full context reconstruction failed, using basic: {e}")
             enhanced_prompt = self._reconstruct_context_for_prompt(prompt, user_id, location)
+            logger.debug(f"Basic context reconstruction complete. Enhanced prompt length: {len(enhanced_prompt)}")
         
         # Step 2: Call parent's generate method (AbstractCore handles tools)
         # CRITICAL: execute_tools=True tells AbstractCore to actually execute tool calls
-        # NOTE: Using tools instead of response_model due to AbstractCore limitation
-        response = super().generate(enhanced_prompt, name=user_id, location=location, 
-                                  execute_tools=True, **kwargs)
+        # NEW in 2.3.5: Can now use both tools AND response_model simultaneously!
+        from .memory_response_models import MemoryResponse
+        
+        # Ensure non-streaming for structured responses (unless explicitly requested)
+        if 'stream' not in kwargs:
+            kwargs['stream'] = False
+        
+        logger.debug(f"Step 2: Calling BasicSession.generate...")
+        logger.debug(f"Parameters: execute_tools=True, response_model=MemoryResponse, stream={kwargs.get('stream', False)}")
+        
+        response = super().generate(
+            enhanced_prompt, 
+            name=user_id, 
+            location=location,
+            execute_tools=True,
+            response_model=MemoryResponse,
+            **kwargs
+        )
+        
+        logger.debug(f"BasicSession.generate returned. Response type: {type(response)}")
+        logger.debug(f"Response is generator: {hasattr(response, '__iter__') and hasattr(response, '__next__')}")
+        
         
         # Step 3: Handle memory automation based on response type
-        if isinstance(response, (Iterator, type(x for x in []))):
-            # Streaming response - wrap to capture content for memory
-            return self._handle_streaming_memory_automation(response, prompt, user_id, location)
-        else:
-            # Non-streaming response - immediate memory automation
+        logger.debug("Step 3: Starting memory automation...")
+        from .memory_response_models import MemoryResponse
+        
+        if isinstance(response, MemoryResponse):
+            logger.debug("Response is MemoryResponse - handling direct structured response")
+            # Direct structured response - immediate memory automation
             self._handle_memory_automation(prompt, response, user_id, location)
+            logger.debug("Memory automation complete for MemoryResponse")
             return response
+        elif hasattr(response, '__iter__') and hasattr(response, '__next__'):
+            logger.debug("Response is generator - handling structured generator response")
+            # BasicSession returns a generator of (field, value) tuples for structured responses
+            # We need to reconstruct the MemoryResponse and handle memory automation
+            result = self._handle_structured_generator_response(response, prompt, user_id, location)
+            logger.debug(f"Generator response handling complete, returning: {type(result)}")
+            logger.debug("About to return from MemorySession.generate...")
+            return result
+        else:
+            logger.debug(f"Response is GenerateResponse - handling non-structured response: {type(response)}")
+            # Non-streaming GenerateResponse - immediate memory automation
+            self._handle_memory_automation(prompt, response, user_id, location)
+            logger.debug("Memory automation complete for GenerateResponse")
+            return response
+
+    def _handle_structured_generator_response(self, response_generator, prompt: str, user_id: str, location: str):
+        """
+        Handle BasicSession's structured response generator.
+        
+        BasicSession deconstructs MemoryResponse into (field, value) tuples.
+        We reconstruct the MemoryResponse, handle memory automation, and return it.
+        """
+        
+        logger.debug("Starting structured generator response handling...")
+        
+        try:
+            from .memory_response_models import MemoryResponse
+            
+            # Collect all field-value pairs from the generator
+            logger.debug("Collecting field-value pairs from generator...")
+            response_data = {}
+            field_count = 0
+            
+            try:
+                while True:
+                    try:
+                        field, value = next(response_generator)
+                        logger.debug(f"Received field: {field}, value type: {type(value)}")
+                        response_data[field] = value
+                        field_count += 1
+                    except StopIteration as e:
+                        logger.debug(f"Generator exhausted. Return value: {e.value}")
+                        # Check if there's a return value from the generator
+                        if hasattr(e, 'value') and e.value is not None:
+                            logger.debug(f"Generator returned: {e.value}")
+                        break
+            except Exception as e:
+                logger.error(f"Error consuming generator: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            logger.debug(f"Collected {field_count} fields from generator: {list(response_data.keys())}")
+            
+            # Reconstruct the MemoryResponse
+            logger.debug("Reconstructing MemoryResponse from collected data...")
+            logger.debug(f"Response data keys: {list(response_data.keys())}")
+            
+            try:
+                structured_response = MemoryResponse(**response_data)
+                logger.debug("MemoryResponse reconstructed successfully")
+            except Exception as e:
+                logger.error(f"Failed to reconstruct MemoryResponse: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+            
+            # Handle memory automation
+            logger.debug("Starting memory automation for reconstructed response...")
+            try:
+                self._handle_memory_automation(prompt, structured_response, user_id, location)
+                logger.debug("Memory automation complete for reconstructed response")
+            except Exception as e:
+                logger.error(f"Memory automation failed: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+            
+            logger.debug("About to return structured response...")
+            logger.debug(f"Structured response type: {type(structured_response)}")
+            logger.debug(f"Structured response answer length: {len(structured_response.answer) if structured_response.answer else 0}")
+            result = structured_response
+            logger.debug("Returning from _handle_structured_generator_response...")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to reconstruct structured response from generator: {e}")
+            # Fallback: return a basic response
+            from .memory_response_models import MemoryResponse
+            return MemoryResponse(
+                answer="I apologize, but I encountered an issue processing your request.",
+                experiential_note="There was a technical issue with response processing."
+            )
 
     def _reconstruct_context_for_prompt(self, prompt: str, user_id: str, location: str) -> str:
         """
@@ -358,11 +491,30 @@ You MUST respond with a structured JSON object containing:
             
             # Get working memory context
             try:
-                working_context = self.working_memory.get_current_context()
+                working_context = self.working_memory.get_context()
                 if working_context:
                     context_parts.append(f"Current Context: {working_context}")
             except Exception as e:
                 logger.debug(f"Working memory context failed: {e}")
+            
+            # Add temporary semantics (recent extracted facts)
+            try:
+                temp_semantics_file = self.memory_base_path / "working" / "temporary_semantics.md"
+                if temp_semantics_file.exists():
+                    temp_content = temp_semantics_file.read_text(encoding='utf-8')
+                    # Extract most recent facts for context
+                    lines = temp_content.split('\n')
+                    recent_facts = []
+                    
+                    for line in lines[-30:]:  # Look at last 30 lines
+                        if line.startswith('- ') and ('→' in line or ':' in line):  # Both SPO and entity facts
+                            recent_facts.append(line[2:])  # Remove "- " prefix
+                    
+                    if recent_facts:
+                        facts_summary = '; '.join(recent_facts[-5:])  # Last 5 facts
+                        context_parts.append(f"Recent Facts: {facts_summary}")
+            except Exception as e:
+                logger.debug(f"Temporary semantics context failed: {e}")
             
             # Search semantic memory for relevant insights
             try:
@@ -585,11 +737,35 @@ You MUST respond with a structured JSON object containing:
 
             # Working memory
             try:
-                working_context = self.working_memory.get_current_context()
+                working_context = self.working_memory.get_context()
                 if working_context:
                     context_parts.append(f"[Current Focus]: {working_context}")
             except Exception as e:
                 logger.debug(f"Working memory failed: {e}")
+            
+            # Temporary semantics (extracted facts pending consolidation)
+            try:
+                temp_semantics_file = self.memory_base_path / "working" / "temporary_semantics.md"
+                if temp_semantics_file.exists():
+                    temp_content = temp_semantics_file.read_text(encoding='utf-8')
+                    # Extract recent facts (last 2 sections to avoid overwhelming context)
+                    lines = temp_content.split('\n')
+                    recent_facts = []
+                    section_count = 0
+                    
+                    for line in lines:
+                        if line.startswith('## ') and 'id:' in line:
+                            section_count += 1
+                            if section_count > 2:  # Only include last 2 interaction sections
+                                break
+                        if line.startswith('- ') and section_count > 0 and ('→' in line or ':' in line):
+                            recent_facts.append(line[2:])  # Remove "- " prefix
+                    
+                    if recent_facts:
+                        facts_summary = '; '.join(recent_facts[-10:])  # Last 10 facts max
+                        context_parts.append(f"[Recent Facts]: {facts_summary}")
+            except Exception as e:
+                logger.debug(f"Temporary semantics injection failed: {e}")
 
             synthesized_context = "\n".join(context_parts)
             
@@ -624,26 +800,48 @@ You MUST respond with a structured JSON object containing:
                 "error": str(e)
             }
 
-    def _handle_memory_automation(self, user_input: str, response: GenerateResponse, 
+    def _handle_memory_automation(self, user_input: str, response, 
                                  user_id: str, location: str):
         """Handle memory automation after generation."""
         
+        logger.debug("_handle_memory_automation called")
+        logger.debug(f"Response type: {type(response)}")
+        
         try:
-            # Extract response content
-            response_content = response.content if hasattr(response, 'content') else str(response)
+            # Handle structured MemoryResponse (new in AbstractCore 2.3.5)
+            from .memory_response_models import MemoryResponse
             
-            # Parse structured response if it's JSON
-            parsed_response = self._parse_structured_response(response_content)
-            
-            # Extract components
-            answer = parsed_response.get("answer", response_content)
-            experiential_note = parsed_response.get("experiential_note", "")
-            memory_actions = parsed_response.get("memory_actions", [])
-            unresolved_questions = parsed_response.get("unresolved_questions", [])
-            emotional_resonance = parsed_response.get("emotional_resonance", {})
+            if isinstance(response, MemoryResponse):
+                logger.debug("Processing MemoryResponse")
+                # Native structured response - direct access to fields
+                answer = response.answer
+                logger.debug(f"Extracted answer: {len(answer) if answer else 0} chars")
+                experiential_note = response.experiential_note or ""
+                logger.debug(f"Extracted experiential_note: {len(experiential_note)} chars")
+                memory_actions = response.memory_actions or []
+                logger.debug(f"Extracted memory_actions: {len(memory_actions)} actions")
+                unresolved_questions = response.unresolved_questions or []
+                logger.debug(f"Extracted unresolved_questions: {len(unresolved_questions)} questions")
+                emotional_resonance = response.emotional_resonance.dict() if response.emotional_resonance else {}
+                logger.debug(f"Extracted emotional_resonance: {bool(emotional_resonance)}")
+            else:
+                # Fallback for non-structured responses (GenerateResponse)
+                response_content = response.content if hasattr(response, 'content') else str(response)
+                
+                # Parse structured response if it's JSON (legacy support)
+                parsed_response = self._parse_structured_response(response_content)
+                
+                # Extract components
+                answer = parsed_response.get("answer", response_content)
+                experiential_note = parsed_response.get("experiential_note", "")
+                memory_actions = parsed_response.get("memory_actions", [])
+                unresolved_questions = parsed_response.get("unresolved_questions", [])
+                emotional_resonance = parsed_response.get("emotional_resonance", {})
             
             # Store verbatim interaction (dual storage) - use the answer, not raw JSON
+            logger.debug("About to store verbatim interaction...")
             verbatim_id = self._store_verbatim_interaction(user_input, answer, user_id, location)
+            logger.debug(f"Verbatim interaction stored with ID: {verbatim_id}")
             
             # Store experiential note if present and link to verbatim
             note_id = None
@@ -660,15 +858,29 @@ You MUST respond with a structured JSON object containing:
             self._update_working_memory(user_input, answer, user_id)
             
             # Update unresolved questions
+            logger.debug("About to update unresolved questions...")
             if unresolved_questions:
+                logger.debug(f"Updating {len(unresolved_questions)} unresolved questions...")
                 self._update_unresolved_questions(unresolved_questions, user_id)
+                logger.debug("Unresolved questions updated successfully")
+            else:
+                logger.debug("No unresolved questions to update")
             
             # Trigger background fact extraction if available
+            logger.debug("About to trigger background fact extraction...")
             if self.fact_extractor:
+                logger.debug("Fact extractor available, scheduling background fact extraction...")
                 self._schedule_background_fact_extraction(user_input, answer)
+                logger.debug("Background fact extraction scheduled")
+            else:
+                logger.debug("No fact extractor available, skipping fact extraction")
             
             # Check consolidation triggers
+            logger.debug("About to check consolidation triggers...")
             self._check_consolidation_triggers()
+            logger.debug("Consolidation triggers checked")
+            
+            logger.debug("Memory automation completed successfully")
             
         except Exception as e:
             logger.error(f"Memory automation failed: {e}")
@@ -698,9 +910,14 @@ You MUST respond with a structured JSON object containing:
     def _store_verbatim_interaction(self, user_input: str, response: str, user_id: str, location: str) -> str:
         """Store verbatim interaction in dual storage system."""
         
+        logger.debug("_store_verbatim_interaction called")
+        logger.debug(f"User input length: {len(user_input)}")
+        logger.debug(f"Response length: {len(response)}")
+        
         try:
             timestamp = datetime.now()
             interaction_id = f"{user_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+            logger.debug(f"Generated interaction_id: {interaction_id}")
             
             # Store in markdown files
             verbatim_dir = self.memory_base_path / "verbatim" / user_id
@@ -766,46 +983,28 @@ You MUST respond with a structured JSON object containing:
             logger.debug(f"Working memory update failed: {e}")
 
     def _schedule_background_fact_extraction(self, user_input: str, response: str):
-        """Schedule background fact extraction from the conversation."""
+        """Schedule background fact extraction using the task queue."""
         
-        import threading
+        if not self.task_queue or not self.fact_extractor:
+            return
         
-        def extract_facts():
-            try:
-                conversation_text = f"User: {user_input}\n\nAssistant: {response}"
-                
-                facts_result = self.fact_extractor.extract_facts_from_conversation(
-                    conversation_text=conversation_text,
-                    importance_threshold=0.7
-                )
-                
-                if not facts_result.get("error"):
-                    memory_actions = facts_result.get("memory_actions", [])
-                    facts_to_store = []
-                    
-                    for action in memory_actions:
-                        if action.get("action") == "remember":
-                            facts_to_store.append({
-                                "content": action.get("content", ""),
-                                "importance": action.get("importance", 0.7),
-                                "reason": action.get("reason", ""),
-                                "emotion": action.get("emotion", "neutral"),
-                                "timestamp": datetime.now().isoformat(),
-                                "source": "automatic_extraction"
-                            })
-                    
-                    # Store facts in temporary semantics file
-                    if facts_to_store:
-                        self._store_temporary_facts(facts_to_store)
-                    
-                    logger.debug(f"Background fact extraction completed: {len(facts_to_store)} facts stored in temporary_semantics.md")
-                
-            except Exception as e:
-                logger.debug(f"Background fact extraction failed: {e}")
+        conversation_text = f"User: {user_input}\n\nAssistant: {response}"
         
-        # Run in background thread
-        thread = threading.Thread(target=extract_facts, daemon=True)
-        thread.start()
+        # Add fact extraction task to queue
+        task_id = self.task_queue.add_task(
+            name="fact_extraction",
+            description=f"Extract facts from conversation ({len(conversation_text)} chars)",
+            parameters={
+                'fact_extractor': self.fact_extractor,
+                'conversation_text': conversation_text,
+                'importance_threshold': 0.7,
+                'store_facts_callback': self._store_temporary_facts
+            },
+            priority=3,  # Medium priority
+            max_attempts=2  # Retry once if failed
+        )
+        
+        logger.debug(f"Scheduled fact extraction task {task_id}")
 
     def _check_consolidation_triggers(self):
         """Check if memory consolidation should be triggered."""
@@ -822,6 +1021,9 @@ You MUST respond with a structured JSON object containing:
         """
         Store extracted facts in working/temporary_semantics.md for later consolidation.
         
+        Uses a compact, graph-oriented format that preserves Subject-Predicate-Object structure
+        while being actionable for LLM processing.
+        
         Args:
             facts: List of fact dictionaries with content, importance, reason, etc.
         """
@@ -835,30 +1037,34 @@ You MUST respond with a structured JSON object containing:
             if temp_semantics_file.exists():
                 existing_content = temp_semantics_file.read_text(encoding='utf-8')
             
-            # Prepare new facts section
+            # Generate interaction ID for this batch
+            interaction_id = datetime.now().strftime('%H%M%S')
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            new_facts_section = f"\n\n## Facts Extracted - {timestamp}\n\n"
             
-            for i, fact in enumerate(facts, 1):
-                new_facts_section += f"""### Fact {i}
-- **Content**: {fact['content']}
-- **Importance**: {fact['importance']}
-- **Emotion**: {fact['emotion']}
-- **Reason**: {fact['reason']}
-- **Source**: {fact['source']}
-- **Timestamp**: {fact['timestamp']}
-
-"""
+            # Prepare new facts section in compact graph format
+            new_facts_section = f"\n## {timestamp} | id:{interaction_id}\n"
+            
+            for fact in facts:
+                content = fact['content']
+                importance = fact['importance']
+                confidence = fact.get('confidence', importance)  # Fallback to importance if no confidence
+                emotion = fact['emotion']
+                
+                # Always try to extract SPO structure - convert entities to triples using "is"
+                spo = self._parse_semantic_triple(content)
+                if spo:
+                    # Format: Subject → Predicate → Object | importance | confidence | emotion
+                    new_facts_section += f"- {spo['subject']} → {spo['predicate']} → {spo['object']} | {importance:.1f} | {confidence:.1f} | {emotion}\n"
+                else:
+                    # Fallback: keep original format for truly unparseable content
+                    new_facts_section += f"- {content} | {importance:.1f} | {confidence:.1f} | {emotion}\n"
             
             # Create or update file
             if not existing_content or "# Temporary Semantics" not in existing_content:
-                # Create new file with header
+                # Create new file with compact header
                 content = f"""# Temporary Semantics
 
-This file contains automatically extracted facts that are pending consolidation into semantic memory.
-
-**Purpose**: Temporary storage for facts before they are reviewed and consolidated
-**Consolidation**: Facts here will be processed during memory consolidation cycles
+Graph-oriented facts for consolidation. Format: Subject → Predicate → Object | importance | confidence | emotion
 
 ---
 {new_facts_section}"""
@@ -874,9 +1080,78 @@ This file contains automatically extracted facts that are pending consolidation 
         except Exception as e:
             logger.error(f"Temporary facts storage failed: {e}")
 
+    def _is_semantic_triple(self, content: str) -> bool:
+        """Check if content represents a semantic triple (Subject-Predicate-Object)."""
+        
+        # Look for patterns that indicate semantic triples
+        triple_indicators = [
+            " describes ", " explores ", " reads ", " works_with ", " provides ",
+            " supports ", " manages ", " requires ", " creates ", " mentions ",
+            " executes ", " relates_to ", " contains ", " influences "
+        ]
+        
+        return any(indicator in content.lower() for indicator in triple_indicators)
+
+    def _parse_semantic_triple(self, content: str) -> Optional[Dict[str, str]]:
+        """Parse semantic triple from content string."""
+        
+        try:
+            import re
+            
+            # Pattern 1: Explicit relationship verbs (including missing ones)
+            relationship_pattern = r"(.+?)\s+(describes|explores|reads|works_with|provides|supports|manages|requires|creates|mentions|executes|relates_to|contains|influences|constitutes|transforms|enables|uses|models|occurs_in|part_of|precedes|draws_parallels_to|refers_to|formalizes|develops|evolves_into|integrates|related_to|works_with|created_by)\s+(.+)"
+            match = re.search(relationship_pattern, content, re.IGNORECASE)
+            if match:
+                return {
+                    'subject': match.group(1).strip(),
+                    'predicate': match.group(2).strip(),
+                    'object': match.group(3).strip()
+                }
+            
+            # Pattern 2: Entity definition format "Subject: Definition" -> "Subject is Definition"
+            definition_pattern = r"^(.+?):\s*(.+)$"
+            match = re.search(definition_pattern, content.strip())
+            if match:
+                subject = match.group(1).strip()
+                definition = match.group(2).strip()
+                
+                # Clean up common definition prefixes
+                if definition.lower().startswith(('the ', 'a ', 'an ')):
+                    # Keep the article for natural language
+                    pass
+                elif definition.lower().startswith(('concept of', 'process of', 'system for', 'method for')):
+                    # These are already well-formed definitions
+                    pass
+                
+                return {
+                    'subject': subject,
+                    'predicate': 'is',
+                    'object': definition
+                }
+            
+            # Pattern 3: Look for implicit relationships with common verbs
+            implicit_verbs = ['has', 'contains', 'includes', 'involves', 'affects', 'impacts', 'changes', 'modifies']
+            for verb in implicit_verbs:
+                verb_pattern = rf"(.+?)\s+{verb}\s+(.+)"
+                match = re.search(verb_pattern, content, re.IGNORECASE)
+                if match:
+                    return {
+                        'subject': match.group(1).strip(),
+                        'predicate': verb,
+                        'object': match.group(2).strip()
+                    }
+            
+            return None
+            
+        except Exception:
+            return None
+
     def _parse_structured_response(self, response_content: str) -> Dict[str, Any]:
         """
-        Parse structured JSON response from LLM.
+        DEPRECATED: Parse structured JSON response from LLM.
+        
+        This method is kept for backward compatibility but is no longer needed
+        since AbstractCore 2.3.5 supports native structured output with tools.
         
         Args:
             response_content: Raw response content from LLM
@@ -1036,43 +1311,66 @@ This file contains automatically extracted facts that are pending consolidation 
             logger.error(f"Experiential note storage failed: {e}")
             return f"error_note_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    def _execute_memory_actions(self, memory_actions: List[Dict[str, Any]], user_id: str):
+    def _execute_memory_actions(self, memory_actions, user_id: str):
         """Execute memory actions from structured response."""
         
         try:
+            from .memory_response_models import MemoryAction
+            
             for action in memory_actions:
-                action_type = action.get("action", "")
-                
-                if action_type == "remember":
-                    # Store fact in semantic memory
+                # Handle both MemoryAction objects and dict format (legacy support)
+                if isinstance(action, MemoryAction):
+                    action_type = action.action
+                    content = action.content
+                    importance = action.importance or 0.5
+                    emotion = action.emotion or "neutral"
+                    links_to = action.links_to or []
+                else:
+                    # Legacy dict format
+                    action_type = action.get("action", "")
                     content = action.get("content", "")
                     importance = action.get("importance", 0.5)
                     emotion = action.get("emotion", "neutral")
-                    
+                    links_to = action.get("links_to", [])
+                
+                if action_type == "remember":
+                    # Store fact in semantic memory
                     if content:
                         self.remember_fact(
                             content=content,
                             importance=importance,
                             emotion=emotion,
                             reason=f"LLM requested memory storage",
-                            links_to=action.get("links_to", [])
+                            links_to=links_to
                         )
                 
                 elif action_type == "link":
                     # Create memory link
-                    from_id = action.get("from_id", "")
-                    to_id = action.get("to_id", "")
-                    relationship = action.get("type", "relates_to")
+                    if isinstance(action, MemoryAction):
+                        from_id = action.from_id or ""
+                        to_id = action.to_id or ""
+                        relationship = action.relationship or "relates_to"
+                    else:
+                        from_id = action.get("from_id", "")
+                        to_id = action.get("to_id", "")
+                        relationship = action.get("type", "relates_to")
                     
                     if from_id and to_id and self.lancedb_storage:
                         try:
+                            confidence = 0.8
+                            if isinstance(action, MemoryAction):
+                                # MemoryAction doesn't have confidence field, use default
+                                pass
+                            else:
+                                confidence = action.get("confidence", 0.8)
+                                
                             self.lancedb_storage.add_link({
                                 "link_id": f"link_{from_id}_{to_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                                 "from_id": from_id,
                                 "to_id": to_id,
                                 "relationship": relationship,
                                 "timestamp": datetime.now(),
-                                "confidence": action.get("confidence", 0.8),
+                                "confidence": confidence,
                                 "metadata": f'{{"source": "llm_action"}}'
                             })
                         except Exception as e:
@@ -1109,11 +1407,44 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 {chr(10).join([f"- {q}" for q in all_questions])}
 """
             
-            questions_file.write_text(content, encoding='utf-8')
-            logger.debug(f"Updated unresolved questions: {len(all_questions)} total")
+            # Use a timeout-based approach to prevent hanging on file write
+            import signal
+            import time
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("File write operation timed out")
+            
+            try:
+                # Set a 5-second timeout for the file write operation
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(5)
+                
+                logger.debug("About to write unresolved questions file...")
+                questions_file.write_text(content, encoding='utf-8')
+                logger.debug("File write completed successfully")
+                
+                # Cancel the timeout
+                signal.alarm(0)
+                
+                logger.debug(f"Updated unresolved questions: {len(all_questions)} total")
+                logger.debug("About to return from _update_unresolved_questions")
+                
+            except TimeoutError:
+                logger.error("File write operation timed out after 5 seconds")
+                # Cancel the timeout
+                signal.alarm(0)
+                raise
+            except Exception as write_error:
+                logger.error(f"File write failed: {write_error}")
+                # Cancel the timeout
+                signal.alarm(0)
+                raise
             
         except Exception as e:
             logger.error(f"Unresolved questions update failed: {e}")
+            logger.debug("Exception occurred in _update_unresolved_questions, about to return")
+        
+        logger.debug("Returning from _update_unresolved_questions")
 
     def _create_memory_tools(self) -> List[Callable]:
         """

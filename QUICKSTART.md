@@ -31,7 +31,7 @@ python -c "from abstractmemory.session import MemorySession; print('✅ Installa
 
 ```bash
 # Start the REPL with defaults
-python repl.py
+python memory_cli.py
 ```
 
 You should see:
@@ -107,16 +107,16 @@ cat repl_memory/working/context.md
 
 ```bash
 # Custom user and memory location
-python repl.py --memory-path alice_memory --user-id alice
+python memory_cli.py --memory-path alice_memory --name alice
 
 # Use a different model
-python repl.py --model llama3:8b
+python memory_cli.py --model llama3:8b
 
 # Specify location context
-python repl.py --location "home office"
+python memory_cli.py --location "home office"
 
 # Combine options
-python repl.py --memory-path my_ai --user-id bob --model qwen3-coder:7b --location office
+python memory_cli.py --memory-path my_ai --name bob --model qwen3-coder:7b --location office
 ```
 
 ---
@@ -147,7 +147,7 @@ cat repl_memory/people/user/preferences.md
 ## Example Session
 
 ```bash
-$ python repl.py --user-id alice
+$ python memory_cli.py --name alice
 
 user> Hello! I'm learning about distributed systems
 
@@ -206,7 +206,7 @@ ollama list
 ollama pull qwen3-coder:30b
 
 # Or use a different model
-python repl.py --model llama3:8b
+python memory_cli.py --model llama3:8b
 ```
 
 ### "Import Error"
@@ -223,7 +223,7 @@ python -c "from abstractmemory.session import MemorySession"
 
 ```bash
 # Use smaller model
-python repl.py --model qwen3-coder:7b
+python memory_cli.py --model qwen3-coder:7b
 
 # Check Ollama is running
 ollama list
