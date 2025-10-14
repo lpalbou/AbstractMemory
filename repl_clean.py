@@ -16,6 +16,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Dict, Any
 
 # AbstractCore imports
 try:
@@ -209,6 +210,17 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print("  /save <file> [options]   Save session with optional analytics")
         print("  /load <file>             Load saved session")
         
+        print("\n📎 FILE ATTACHMENT")
+        print("─" * 50)
+        print("  @filename.py             Attach file to your message")
+        print("  @./path/to/file.txt      Attach file with relative path")
+        print("  @/absolute/path/file     Attach file with absolute path")
+        print("  @file1.py @file2.txt     Attach multiple files")
+        print("  Examples:")
+        print("    'Explain this code @main.py'")
+        print("    'Compare @old.py @new.py'")
+        print("    'Review @./docs/api.md'")
+        
         print("\n🧠 MEMORY FEATURES")
         print("─" * 50)
         print("  • Automatic conversation storage")
@@ -311,13 +323,15 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print("=" * 50)
 
     def _show_memory_overview(self):
-        """Show memory system overview."""
+        """Show detailed memory system overview with usage statistics."""
         
         print("\n🧠 Memory System Overview")
-        print("=" * 50)
+        print("=" * 70)
         
         try:
-            # Check memory components
+            # Memory Component Status
+            print("\n📊 COMPONENT STATUS")
+            print("─" * 40)
             components = [
                 ("Working Memory", hasattr(self.session, 'working_memory')),
                 ("Episodic Memory", hasattr(self.session, 'episodic_memory')),
@@ -330,19 +344,191 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             
             for component, available in components:
                 status = "✅" if available else "❌"
-                print(f"{status} {component}")
+                print(f"  {status} {component}")
             
-            # Memory directories
-            print(f"\n📁 Memory Structure:")
-            for subdir in ['notes', 'verbatim', 'library', 'core', 'working', 'episodic', 'semantic']:
-                path = self.memory_path / subdir
-                exists = "✅" if path.exists() else "📁"
-                print(f"   {exists} {subdir}/")
+            # Memory Usage Statistics
+            print(f"\n📈 MEMORY USAGE STATISTICS")
+            print("─" * 40)
+            
+            # Count files and estimate tokens for each memory type
+            memory_stats = self._calculate_memory_usage()
+            
+            for memory_type, stats in memory_stats.items():
+                print(f"  📁 {memory_type.title()}")
+                print(f"     Files: {stats['file_count']}")
+                print(f"     Size: {stats['size_mb']:.2f} MB")
+                print(f"     Tokens: ~{stats['token_estimate']:,}")
+                if stats.get('recent_activity'):
+                    print(f"     Recent: {stats['recent_activity']}")
+                print()
+            
+            # Core Memory Status
+            print(f"🧭 CORE IDENTITY STATUS")
+            print("─" * 40)
+            core_path = self.memory_path / "core"
+            if core_path.exists():
+                core_components = ["purpose", "values", "personality", "capabilities", 
+                                 "limitations", "relationships", "self_model", 
+                                 "awareness_development", "emotional_significance", "authentic_voice"]
+                
+                for component in core_components:
+                    file_path = core_path / f"{component}.md"
+                    if file_path.exists():
+                        try:
+                            content = file_path.read_text(encoding='utf-8')
+                            if len(content) > 100 and "# Template" not in content:
+                                status = "✅ Established"
+                                tokens = len(content) // 4
+                                print(f"  {status} {component.replace('_', ' ').title()} (~{tokens} tokens)")
+                            else:
+                                print(f"  📝 {component.replace('_', ' ').title()} (template)")
+                        except Exception:
+                            print(f"  ❌ {component.replace('_', ' ').title()} (error)")
+                    else:
+                        print(f"  📝 {component.replace('_', ' ').title()} (missing)")
+            else:
+                print("  📝 No core memory established yet")
+            
+            # Recent Activity
+            print(f"\n⚡ RECENT ACTIVITY")
+            print("─" * 40)
+            recent_stats = self._get_recent_activity_stats()
+            print(f"  Context Reconstructions: {recent_stats.get('reconstructions', 0)}")
+            print(f"  Facts Extracted: {recent_stats.get('facts_extracted', 0)}")
+            print(f"  Notes Created: {recent_stats.get('notes_created', 0)}")
+            print(f"  Memory Searches: {recent_stats.get('searches', 0)}")
+            
+            # Working Memory Status
+            print(f"\n🔄 WORKING MEMORY")
+            print("─" * 40)
+            working_path = self.memory_path / "working"
+            if working_path.exists():
+                temp_semantics = working_path / "temporary_semantics.md"
+                unresolved = working_path / "unresolved.md"
+                
+                if temp_semantics.exists():
+                    content = temp_semantics.read_text(encoding='utf-8')
+                    fact_count = content.count("### Fact")
+                    print(f"  📝 Temporary Facts: {fact_count} pending consolidation")
+                else:
+                    print(f"  📝 Temporary Facts: 0 pending")
+                
+                if unresolved.exists():
+                    content = unresolved.read_text(encoding='utf-8')
+                    question_count = content.count("- ")
+                    print(f"  ❓ Unresolved Questions: {question_count}")
+                else:
+                    print(f"  ❓ Unresolved Questions: 0")
             
         except Exception as e:
             print(f"❌ Error getting memory overview: {e}")
         
-        print("=" * 50)
+        print("=" * 70)
+
+    def _calculate_memory_usage(self) -> Dict[str, Dict[str, Any]]:
+        """Calculate memory usage statistics for each memory type."""
+        
+        stats = {}
+        memory_types = ['notes', 'verbatim', 'library', 'core', 'working', 'episodic', 'semantic']
+        
+        for memory_type in memory_types:
+            type_path = self.memory_path / memory_type
+            
+            file_count = 0
+            total_size = 0
+            total_tokens = 0
+            recent_files = 0
+            
+            if type_path.exists():
+                try:
+                    from datetime import datetime, timedelta
+                    recent_threshold = datetime.now() - timedelta(days=7)
+                    
+                    for file_path in type_path.rglob("*.md"):
+                        if file_path.is_file():
+                            file_count += 1
+                            
+                            # Get file size
+                            size = file_path.stat().st_size
+                            total_size += size
+                            
+                            # Estimate tokens (rough: 1 token ≈ 4 characters)
+                            try:
+                                content = file_path.read_text(encoding='utf-8')
+                                total_tokens += len(content) // 4
+                            except Exception:
+                                total_tokens += size // 4  # Fallback estimate
+                            
+                            # Check if recent
+                            if datetime.fromtimestamp(file_path.stat().st_mtime) > recent_threshold:
+                                recent_files += 1
+                
+                except Exception as e:
+                    # Fallback for errors
+                    pass
+            
+            # Recent activity description
+            recent_activity = ""
+            if recent_files > 0:
+                recent_activity = f"{recent_files} files in last 7 days"
+            
+            stats[memory_type] = {
+                'file_count': file_count,
+                'size_mb': total_size / (1024 * 1024),
+                'token_estimate': total_tokens,
+                'recent_activity': recent_activity
+            }
+        
+        return stats
+
+    def _get_recent_activity_stats(self) -> Dict[str, int]:
+        """Get recent activity statistics from session or memory files."""
+        
+        stats = {
+            'reconstructions': 0,
+            'facts_extracted': 0,
+            'notes_created': 0,
+            'searches': 0
+        }
+        
+        try:
+            # Try to get stats from session if available
+            if hasattr(self.session, 'reconstructions_performed'):
+                stats['reconstructions'] = getattr(self.session, 'reconstructions_performed', 0)
+            
+            # Count recent notes (last 24 hours)
+            from datetime import datetime, timedelta
+            recent_threshold = datetime.now() - timedelta(hours=24)
+            
+            notes_path = self.memory_path / "notes"
+            if notes_path.exists():
+                for note_file in notes_path.rglob("*.md"):
+                    if note_file.is_file():
+                        mtime = datetime.fromtimestamp(note_file.stat().st_mtime)
+                        if mtime > recent_threshold:
+                            stats['notes_created'] += 1
+            
+            # Count temporary facts
+            temp_semantics = self.memory_path / "working" / "temporary_semantics.md"
+            if temp_semantics.exists():
+                try:
+                    content = temp_semantics.read_text(encoding='utf-8')
+                    # Count recent fact sections (last 24 hours)
+                    import re
+                    today = datetime.now().strftime('%Y-%m-%d')
+                    if today in content:
+                        stats['facts_extracted'] = content.count("### Fact")
+                except Exception:
+                    pass
+            
+            # Estimate searches (could be tracked in session in future)
+            stats['searches'] = stats['reconstructions']  # Approximation
+            
+        except Exception as e:
+            # Return zeros on error
+            pass
+        
+        return stats
 
     def _show_available_tools(self):
         """Show available memory tools."""
@@ -496,6 +682,132 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         except Exception:
             pass
 
+    def _process_file_references(self, user_input: str) -> str:
+        """
+        Process @filename references in user input and inject file contents.
+        
+        Supports:
+        - @filename.py (relative to current directory)
+        - @./path/to/file.txt (relative path)
+        - @/absolute/path/to/file.txt (absolute path)
+        - Multiple files: @file1.py @file2.txt
+        
+        Args:
+            user_input: Raw user input potentially containing @filename references
+            
+        Returns:
+            Enhanced prompt with file contents injected
+        """
+        
+        import re
+        from pathlib import Path
+        
+        # Find all @filename patterns
+        # Matches: @filename, @./path/file, @/abs/path/file, @../relative/file
+        pattern = r'@([^\s@]+(?:\.[^\s@]*)?)'
+        matches = re.findall(pattern, user_input)
+        
+        if not matches:
+            return user_input
+        
+        # Process each file reference
+        file_contents = []
+        processed_files = []
+        
+        for filename in matches:
+            try:
+                # Handle different path types
+                if filename.startswith('/'):
+                    # Absolute path
+                    file_path = Path(filename)
+                elif filename.startswith('./') or filename.startswith('../'):
+                    # Relative path with explicit prefix
+                    file_path = Path(filename).resolve()
+                else:
+                    # Simple filename - look in current directory first, then workspace
+                    file_path = Path(filename)
+                    if not file_path.exists():
+                        # Try in workspace root
+                        workspace_path = Path.cwd() / filename
+                        if workspace_path.exists():
+                            file_path = workspace_path
+                
+                # Check if file exists and is readable
+                if not file_path.exists():
+                    print(f"⚠️  File not found: {filename}")
+                    continue
+                
+                if not file_path.is_file():
+                    print(f"⚠️  Not a file: {filename}")
+                    continue
+                
+                # Check file size (limit to 100KB for safety)
+                file_size = file_path.stat().st_size
+                if file_size > 100 * 1024:  # 100KB
+                    print(f"⚠️  File too large (>{file_size/1024:.1f}KB): {filename}")
+                    continue
+                
+                # Read file content
+                try:
+                    content = file_path.read_text(encoding='utf-8')
+                    
+                    # Determine file type for syntax highlighting hint
+                    file_ext = file_path.suffix.lower()
+                    lang_map = {
+                        '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
+                        '.java': 'java', '.cpp': 'cpp', '.c': 'c', '.h': 'c',
+                        '.rs': 'rust', '.go': 'go', '.rb': 'ruby', '.php': 'php',
+                        '.html': 'html', '.css': 'css', '.scss': 'scss',
+                        '.json': 'json', '.xml': 'xml', '.yaml': 'yaml', '.yml': 'yaml',
+                        '.md': 'markdown', '.txt': 'text', '.sh': 'bash',
+                        '.sql': 'sql', '.r': 'r', '.m': 'matlab'
+                    }
+                    language = lang_map.get(file_ext, 'text')
+                    
+                    # Format file content
+                    file_block = f"""
+[File: {file_path}]
+```{language}
+{content}
+```"""
+                    
+                    file_contents.append(file_block)
+                    processed_files.append(str(file_path))
+                    
+                    print(f"📁 Loaded: {file_path} ({len(content)} chars)")
+                    
+                except UnicodeDecodeError:
+                    print(f"⚠️  Cannot read file (binary?): {filename}")
+                    continue
+                    
+            except Exception as e:
+                print(f"⚠️  Error reading {filename}: {e}")
+                continue
+        
+        # If no files were successfully processed, return original input
+        if not file_contents:
+            return user_input
+        
+        # Remove @filename references from the original input
+        cleaned_input = user_input
+        for filename in matches:
+            cleaned_input = cleaned_input.replace(f"@{filename}", "")
+        cleaned_input = re.sub(r'\s+', ' ', cleaned_input).strip()
+        
+        # Construct enhanced prompt
+        if file_contents:
+            files_section = "--- Attached Files ---" + "".join(file_contents)
+            
+            if cleaned_input:
+                enhanced_prompt = f"{cleaned_input}\n\n{files_section}"
+            else:
+                enhanced_prompt = f"Please analyze the attached files.\n\n{files_section}"
+            
+            print(f"📎 Attached {len(processed_files)} file(s) to context")
+            return enhanced_prompt
+        
+        return user_input
+
     def run(self):
         """Run the interactive REPL."""
         
@@ -504,6 +816,7 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print("="*70)
         print("Type /help for commands, or just chat naturally.")
         print("I have memory tools and will remember our conversations!")
+        print("Use @filename to attach files to your messages!")
         print("="*70)
         
         try:
@@ -518,6 +831,9 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                     if self.handle_command(user_input):
                         continue
                     
+                    # Process @filename references and enhance prompt
+                    enhanced_prompt = self._process_file_references(user_input)
+                    
                     # Generate response using memory-enhanced session
                     start_time = time.time()
                     
@@ -526,7 +842,7 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                     
                     # AbstractCore handles everything - tools, conversation, etc.
                     response = self.session.generate(
-                        prompt=user_input,
+                        prompt=enhanced_prompt,
                         user_id=self.user_id,
                         location=self.location
                     )
