@@ -333,33 +333,66 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         return True
 
     def _show_help(self):
-        """Show help information."""
+        """Show help information with enhanced colors for better UX."""
         
-        print("\n" + "="*70)
-        print("🧠 AbstractMemory REPL - Memory-Enhanced AI Assistant".center(70))
-        print("="*70)
+        try:
+            from colorama import Fore, Back, Style, init
+            init(autoreset=True)
+            
+            print("\n" + Fore.CYAN + "="*70)
+            print(Fore.YELLOW + Style.BRIGHT + "🧠 AbstractMemory REPL - Memory-Enhanced AI Assistant".center(70))
+            print(Fore.CYAN + "="*70 + Style.RESET_ALL)
+        except ImportError:
+            print("\n" + "="*70)
+            print("🧠 AbstractMemory REPL - Memory-Enhanced AI Assistant".center(70))
+            print("="*70)
         
-        print("\n📖 COMMANDS")
-        print("─" * 50)
-        print("  /help                    Show this help")
-        print("  /quit                    Exit the REPL")
-        print("  /clear                   Clear terminal screen")
-        print("  /reset                   Reset conversation history")
-        print("  /reset full              Reset everything - ALL memory components (with confirmation)")
-        print("  /stats                   Show detailed memory statistics")
-        print("  /history                 Show recent conversation")
-        print("  /memory                  Show memory overview")
-        print("  /tools                   Show available memory tools")
-        print("  /facts                   Show extracted facts from temporary_semantics.md")
-        print("  /unresolved              Show unresolved questions")
-        print("  /resolved                Show resolved questions")
-        print("  /archive [stats|search|recent|frequent] Archive memory (AI's subconscious)")
-        print("  /reconstruct <query>     Show exact context that would be fed to LLM")
-        print("  /search <query>          Semantic search across all memory")
-        print("  /queue [task_id] [cmd]   Manage background task queue")
-        print("  /notifications           Show recent background notifications")
-        print("  /save <file> [options]   Save session with optional analytics")
-        print("  /load <file>             Load saved session")
+        try:
+            from colorama import Fore, Style
+            
+            print(f"\n{Fore.BLUE + Style.BRIGHT}📖 COMMANDS{Style.RESET_ALL}")
+            print(Fore.BLUE + "─" * 50 + Style.RESET_ALL)
+            print(f"  {Fore.GREEN}/help{Style.RESET_ALL}                    Show this help")
+            print(f"  {Fore.GREEN}/quit{Style.RESET_ALL}                    Exit the REPL")
+            print(f"  {Fore.GREEN}/clear{Style.RESET_ALL}                   Clear terminal screen")
+            print(f"  {Fore.GREEN}/reset{Style.RESET_ALL}                   Reset conversation history")
+            print(f"  {Fore.GREEN}/reset full{Style.RESET_ALL}              Reset everything - ALL memory components (with confirmation)")
+            print(f"  {Fore.GREEN}/stats{Style.RESET_ALL}                   Show detailed memory statistics")
+            print(f"  {Fore.GREEN}/history{Style.RESET_ALL}                 Show recent conversation")
+            print(f"  {Fore.GREEN}/memory{Style.RESET_ALL}                  Show memory overview")
+            print(f"  {Fore.GREEN}/tools{Style.RESET_ALL}                   Show available memory tools")
+            print(f"  {Fore.GREEN}/facts{Style.RESET_ALL}                   Show extracted facts from temporary_semantics.md")
+            print(f"  {Fore.GREEN}/unresolved{Style.RESET_ALL}              Show unresolved questions")
+            print(f"  {Fore.GREEN}/resolved{Style.RESET_ALL}                Show resolved questions")
+            print(f"  {Fore.GREEN}/archive{Style.RESET_ALL} {Fore.YELLOW}[stats|search|recent|frequent]{Style.RESET_ALL} Archive memory (AI's subconscious)")
+            print(f"  {Fore.GREEN}/reconstruct{Style.RESET_ALL} {Fore.YELLOW}<query>{Style.RESET_ALL}     Show exact context that would be fed to LLM")
+            print(f"  {Fore.GREEN}/search{Style.RESET_ALL} {Fore.YELLOW}<query>{Style.RESET_ALL}          Semantic search across all memory")
+            print(f"  {Fore.GREEN}/queue{Style.RESET_ALL} {Fore.YELLOW}[task_id] [cmd]{Style.RESET_ALL}   Manage background task queue")
+            print(f"  {Fore.GREEN}/notifications{Style.RESET_ALL}           Show recent background notifications")
+            print(f"  {Fore.GREEN}/save{Style.RESET_ALL} {Fore.YELLOW}<file> [options]{Style.RESET_ALL}   Save session with optional analytics")
+            print(f"  {Fore.GREEN}/load{Style.RESET_ALL} {Fore.YELLOW}<file>{Style.RESET_ALL}             Load saved session")
+        except ImportError:
+            print("\n📖 COMMANDS")
+            print("─" * 50)
+            print("  /help                    Show this help")
+            print("  /quit                    Exit the REPL")
+            print("  /clear                   Clear terminal screen")
+            print("  /reset                   Reset conversation history")
+            print("  /reset full              Reset everything - ALL memory components (with confirmation)")
+            print("  /stats                   Show detailed memory statistics")
+            print("  /history                 Show recent conversation")
+            print("  /memory                  Show memory overview")
+            print("  /tools                   Show available memory tools")
+            print("  /facts                   Show extracted facts from temporary_semantics.md")
+            print("  /unresolved              Show unresolved questions")
+            print("  /resolved                Show resolved questions")
+            print("  /archive [stats|search|recent|frequent] Archive memory (AI's subconscious)")
+            print("  /reconstruct <query>     Show exact context that would be fed to LLM")
+            print("  /search <query>          Semantic search across all memory")
+            print("  /queue [task_id] [cmd]   Manage background task queue")
+            print("  /notifications           Show recent background notifications")
+            print("  /save <file> [options]   Save session with optional analytics")
+            print("  /load <file>             Load saved session")
         
         print("\n📎 FILE ATTACHMENT")
         print("─" * 50)
@@ -381,25 +414,48 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print("  • Automatic fact extraction")
         print("  • Memory consolidation")
         
-        print("\n🛠️ AVAILABLE TOOLS")
-        print("─" * 50)
-        print("  Memory Tools:")
-        print("    • remember_fact() - Store important information")
-        print("    • search_memories() - Search past conversations")
-        print("    • reflect_on() - Deep reflection and analysis")
-        print("    • capture_document() - Save documents to library")
-        print("    • search_library() - Search document library")
-        print("    • search_all_memories() - Unified search across all storage layers")
-        print("    • explore_relationships() - Explore concept relationships in knowledge graph")
-        print("    • deep_reflect() - Enhanced reflection using triple storage")
-        print("    • smart_reconstruct() - Intelligent context reconstruction")
-        print("  File & System Tools:")
-        print("    • list_files() - List directory contents")
-        print("    • search_files() - Search inside files")
-        print("    • read_file() - Read file contents")
-        print("    • write_file() - Create/modify files")
-        print("    • edit_file() - Edit files with patterns")
-        print("    • execute_command() - Run shell commands")
+        try:
+            from colorama import Fore, Style
+            
+            print(f"\n{Fore.MAGENTA + Style.BRIGHT}🛠️ AVAILABLE TOOLS{Style.RESET_ALL}")
+            print(Fore.MAGENTA + "─" * 50 + Style.RESET_ALL)
+            print(f"  {Fore.CYAN + Style.BRIGHT}Memory Tools:{Style.RESET_ALL}")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}remember_fact{Style.RESET_ALL}() - Store important information")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}search_memories{Style.RESET_ALL}() - Search past conversations")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}reflect_on{Style.RESET_ALL}() - Deep reflection and analysis")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}capture_document{Style.RESET_ALL}() - Save documents to library")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}search_library{Style.RESET_ALL}() - Search document library")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}search_all_memories{Style.RESET_ALL}() - Unified search across all storage layers")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}explore_relationships{Style.RESET_ALL}() - Explore concept relationships in knowledge graph")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}deep_reflect{Style.RESET_ALL}() - Enhanced reflection using triple storage")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}smart_reconstruct{Style.RESET_ALL}() - Intelligent context reconstruction")
+            print(f"  {Fore.CYAN + Style.BRIGHT}File & System Tools:{Style.RESET_ALL}")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}list_files{Style.RESET_ALL}() - List directory contents")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}search_files{Style.RESET_ALL}() - Search inside files")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}read_file{Style.RESET_ALL}() - Read file contents")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}write_file{Style.RESET_ALL}() - Create/modify files")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}edit_file{Style.RESET_ALL}() - Edit files with patterns")
+            print(f"    • {Fore.BLUE + Style.BRIGHT}execute_command{Style.RESET_ALL}() - Run shell commands")
+        except ImportError:
+            print("\n🛠️ AVAILABLE TOOLS")
+            print("─" * 50)
+            print("  Memory Tools:")
+            print("    • remember_fact() - Store important information")
+            print("    • search_memories() - Search past conversations")
+            print("    • reflect_on() - Deep reflection and analysis")
+            print("    • capture_document() - Save documents to library")
+            print("    • search_library() - Search document library")
+            print("    • search_all_memories() - Unified search across all storage layers")
+            print("    • explore_relationships() - Explore concept relationships in knowledge graph")
+            print("    • deep_reflect() - Enhanced reflection using triple storage")
+            print("    • smart_reconstruct() - Intelligent context reconstruction")
+            print("  File & System Tools:")
+            print("    • list_files() - List directory contents")
+            print("    • search_files() - Search inside files")
+            print("    • read_file() - Read file contents")
+            print("    • write_file() - Create/modify files")
+            print("    • edit_file() - Edit files with patterns")
+            print("    • execute_command() - Run shell commands")
         
         print("\n💡 TIPS")
         print("─" * 50)
@@ -739,25 +795,100 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             return []
 
     def _show_available_tools(self):
-        """Show available memory tools."""
-        
-        print("\n🛠️  Available Memory Tools")
-        print("=" * 50)
+        """Show available memory tools with enhanced colors and formatting."""
         
         try:
-            if hasattr(self.session, 'tools') and self.session.tools:
-                for tool in self.session.tools:
-                    print(f"📌 {tool.name}")
-                    if hasattr(tool, 'description'):
-                        print(f"   {tool.description}")
-                    print()
-            else:
-                print("No tools available")
-        
-        except Exception as e:
-            print(f"❌ Error getting tools: {e}")
-        
-        print("=" * 50)
+            from colorama import Fore, Style, init
+            init(autoreset=True)
+            
+            print(f"\n{Fore.MAGENTA + Style.BRIGHT}🛠️  Available Memory Tools{Style.RESET_ALL}")
+            print(Fore.MAGENTA + "=" * 50 + Style.RESET_ALL)
+            
+            try:
+                if hasattr(self.session, 'tools') and self.session.tools:
+                    for tool in self.session.tools:
+                        # Color the tool name
+                        print(f"{Fore.CYAN}📌 {Fore.BLUE + Style.BRIGHT}{tool.name}{Style.RESET_ALL}")
+                        
+                        if hasattr(tool, 'description') and tool.description:
+                            # Parse and colorize the description
+                            desc = tool.description.strip()
+                            
+                            # Split description into lines for better formatting
+                            lines = desc.split('\n')
+                            in_args_section = False
+                            in_examples_section = False
+                            
+                            for line in lines:
+                                line = line.strip()
+                                if not line:
+                                    print()
+                                    continue
+                                
+                                # Detect sections
+                                if line.startswith('Args:'):
+                                    in_args_section = True
+                                    in_examples_section = False
+                                    print(f"   {Fore.YELLOW + Style.BRIGHT}{line}{Style.RESET_ALL}")
+                                elif line.startswith('Returns:'):
+                                    in_args_section = False
+                                    in_examples_section = False
+                                    print(f"   {Fore.GREEN + Style.BRIGHT}{line}{Style.RESET_ALL}")
+                                elif line.startswith('Examples:'):
+                                    in_args_section = False
+                                    in_examples_section = True
+                                    print(f"   {Fore.MAGENTA + Style.BRIGHT}{line}{Style.RESET_ALL}")
+                                elif in_args_section and ':' in line:
+                                    # Colorize parameter names
+                                    if line.strip().startswith(('    ', '\t')):
+                                        # Parameter line
+                                        parts = line.split(':', 1)
+                                        if len(parts) == 2:
+                                            param_name = parts[0].strip()
+                                            param_desc = parts[1].strip()
+                                            print(f"       {Fore.CYAN + Style.BRIGHT}{param_name}{Style.RESET_ALL}: {param_desc}")
+                                        else:
+                                            print(f"   {line}")
+                                    else:
+                                        print(f"   {line}")
+                                elif in_examples_section:
+                                    # Colorize examples
+                                    if '(' in line and ')' in line:
+                                        # Function call example
+                                        print(f"       {Fore.GREEN}{line}{Style.RESET_ALL}")
+                                    else:
+                                        print(f"       {line}")
+                                else:
+                                    # Regular description text
+                                    print(f"   {line}")
+                        print()
+                else:
+                    print(f"{Fore.YELLOW}No tools available{Style.RESET_ALL}")
+            
+            except Exception as e:
+                print(f"{Fore.RED}❌ Error getting tools: {e}{Style.RESET_ALL}")
+            
+            print(Fore.MAGENTA + "=" * 50 + Style.RESET_ALL)
+            
+        except ImportError:
+            # Fallback without colors
+            print("\n🛠️  Available Memory Tools")
+            print("=" * 50)
+            
+            try:
+                if hasattr(self.session, 'tools') and self.session.tools:
+                    for tool in self.session.tools:
+                        print(f"📌 {tool.name}")
+                        if hasattr(tool, 'description'):
+                            print(f"   {tool.description}")
+                        print()
+                else:
+                    print("No tools available")
+            
+            except Exception as e:
+                print(f"❌ Error getting tools: {e}")
+            
+            print("=" * 50)
 
     def _show_facts(self):
         """Show extracted facts from temporary_semantics.md."""
@@ -2339,16 +2470,29 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                 print(f"✅ All processes completed in {elapsed_wait:.1f}s")
 
     def run(self):
-        """Run the interactive REPL."""
+        """Run the interactive REPL with enhanced colors."""
         
-        print("\n" + "="*70)
-        print("🧠 AbstractMemory REPL".center(70))
-        print("="*70)
-        print("Type /help for commands, or just chat naturally.")
-        print("I have memory tools and will remember our conversations!")
-        print("Use @filename to attach files to your messages!")
-        print("Rich metadata display shows tokens, timing, importance & alignment!")
-        print("="*70)
+        try:
+            from colorama import Fore, Style, init
+            init(autoreset=True)
+            
+            print("\n" + Fore.CYAN + "="*70 + Style.RESET_ALL)
+            print(Fore.YELLOW + Style.BRIGHT + "🧠 AbstractMemory REPL".center(70) + Style.RESET_ALL)
+            print(Fore.CYAN + "="*70 + Style.RESET_ALL)
+            print(f"{Fore.GREEN}Type {Fore.CYAN}/help{Fore.GREEN} for commands, or just chat naturally.{Style.RESET_ALL}")
+            print(f"{Fore.BLUE}I have {Fore.MAGENTA}memory tools{Fore.BLUE} and will remember our conversations!{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}Use {Fore.CYAN}@filename{Fore.YELLOW} to attach files to your messages!{Style.RESET_ALL}")
+            print(f"{Fore.MAGENTA}Rich metadata display shows tokens, timing, importance & alignment!{Style.RESET_ALL}")
+            print(Fore.CYAN + "="*70 + Style.RESET_ALL)
+        except ImportError:
+            print("\n" + "="*70)
+            print("🧠 AbstractMemory REPL".center(70))
+            print("="*70)
+            print("Type /help for commands, or just chat naturally.")
+            print("I have memory tools and will remember our conversations!")
+            print("Use @filename to attach files to your messages!")
+            print("Rich metadata display shows tokens, timing, importance & alignment!")
+            print("="*70)
         
         try:
             while True:
