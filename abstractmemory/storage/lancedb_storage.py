@@ -67,8 +67,12 @@ class LanceDBStorage:
             logger.info("Using shared AbstractCore EmbeddingManager")
         elif ABSTRACTCORE_AVAILABLE:
             # Fallback: create new instance only if none provided
-            self.embedding_manager = EmbeddingManager()
-            logger.warning("Created new EmbeddingManager - consider sharing instance to avoid duplicate initialization")
+            # Use memory-local cache directory to keep embeddings self-contained
+            embeddings_cache_dir = self.db_path.parent / "embeddings"
+            embeddings_cache_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.embedding_manager = EmbeddingManager(cache_dir=embeddings_cache_dir)
+            logger.warning(f"Created new EmbeddingManager with cache at {embeddings_cache_dir} - consider sharing instance to avoid duplicate initialization")
         else:
             self.embedding_manager = None
             logger.warning("AbstractCore not available - embeddings disabled")

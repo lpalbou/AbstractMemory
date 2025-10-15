@@ -157,11 +157,20 @@ class TaskQueue:
                 if 'parameters' in task_dict:
                     serializable_params = {}
                     for key, value in task_dict['parameters'].items():
-                        if key in ['fact_extractor', 'store_facts_callback']:
-                            # Skip function objects
+                        # Skip function objects and large objects
+                        if key in ['fact_extractor', 'store_facts_callback', 'embedding_manager', 'lancedb_storage']:
+                            continue
+                        elif callable(value):
                             continue
                         else:
-                            serializable_params[key] = value
+                            try:
+                                # Test if value is serializable and not too large
+                                test_json = json.dumps(value, default=str)
+                                if len(test_json) < 5000:  # Skip very large objects
+                                    serializable_params[key] = value
+                            except (TypeError, ValueError, RecursionError):
+                                # Skip non-serializable values
+                                continue
                     task_dict['parameters'] = serializable_params
                 
                 # Convert datetime objects to ISO strings
@@ -352,7 +361,7 @@ class TaskQueue:
                 time.sleep(5)  # Wait before retrying
     
     def _execute_task(self, task: BackgroundTask):
-        """Execute a single task."""
+        """Execute a single task with timeout protection."""
         attempt_number = len(task.attempts) + 1
         attempt = TaskAttempt(
             attempt_number=attempt_number,
@@ -362,7 +371,7 @@ class TaskQueue:
         with self._lock:
             task.status = TaskStatus.RUNNING
             task.attempts.append(attempt)
-            self._save_queue()
+            # Reduce frequent saves - only save on status changes
         
         if self.notification_callback:
             self.notification_callback(f"Starting {task.name} (attempt {attempt_number})", "⚙️")
@@ -370,8 +379,16 @@ class TaskQueue:
         logger.info(f"Executing task {task.task_id}: {task.name} (attempt {attempt_number})")
         
         try:
-            # Execute the actual task based on task name
-            success = self._run_task_by_name(task)
+            # Execute the actual task with thread-safe timeout protection
+            import concurrent.futures
+            
+            # Use ThreadPoolExecutor for timeout (works in background threads)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._run_task_by_name, task)
+                try:
+                    success = future.result(timeout=300)  # 5 minutes timeout
+                except concurrent.futures.TimeoutError:
+                    raise TimeoutError(f"Task {task.task_id} timed out after 300 seconds")
             
             # Update attempt
             attempt.end_time = datetime.now()
@@ -421,6 +438,8 @@ class TaskQueue:
         finally:
             with self._lock:
                 self._save_queue()
+                # Clean up old completed tasks to prevent memory leaks
+                self._cleanup_old_tasks()
     
     def _run_task_by_name(self, task: BackgroundTask) -> bool:
         """
@@ -436,17 +455,23 @@ class TaskQueue:
             return self._run_fact_extraction_task(task)
         elif task.name == "consolidation":
             return self._run_consolidation_task(task)
+        elif task.name == "embedding_generation":
+            return self._run_embedding_generation_task(task)
         else:
             logger.error(f"Unknown task type: {task.name}")
             return False
     
     def _run_fact_extraction_task(self, task: BackgroundTask) -> bool:
         """Run fact extraction task."""
+        logger.debug(f"🔄 [TaskQueue] Starting fact extraction task: {task.task_id}")
+        
         try:
             # Get parameters
             params = task.parameters
             conversation_text = params.get('conversation_text')
             importance_threshold = params.get('importance_threshold', 0.7)
+            
+            logger.debug(f"📝 [TaskQueue] Fact extraction parameters: text_length={len(conversation_text or '')}, threshold={importance_threshold}")
             
             # Function objects are not serialized, so we need to get them from the session
             # This is a limitation - tasks can only run while the session is active
@@ -454,27 +479,30 @@ class TaskQueue:
             store_facts_callback = params.get('store_facts_callback')
             
             if not conversation_text:
-                logger.error("Missing conversation_text for fact extraction")
+                logger.error("❌ [TaskQueue] Missing conversation_text for fact extraction")
                 return False
             
             if not fact_extractor or not store_facts_callback:
-                logger.warning("Function objects missing - task may have been loaded from disk")
+                logger.warning("⚠️  [TaskQueue] Function objects missing - task may have been loaded from disk")
                 # For now, we'll skip this task if functions are missing
                 # In a production system, we'd need to reconnect to the session
                 return False
             
             # Run fact extraction
+            logger.debug("🧠 [TaskQueue] Running BasicExtractor for fact extraction...")
             facts_result = fact_extractor.extract_facts_from_conversation(
                 conversation_text=conversation_text,
                 importance_threshold=importance_threshold
             )
             
             if facts_result.get("error"):
-                logger.error(f"Fact extraction failed: {facts_result['error']}")
+                logger.error(f"❌ [TaskQueue] Fact extraction failed: {facts_result['error']}")
                 return False
             
             # Process and store facts
             memory_actions = facts_result.get("memory_actions", [])
+            logger.debug(f"📊 [TaskQueue] Fact extraction completed: {len(memory_actions)} memory actions generated")
+            
             facts_to_store = []
             
             for action in memory_actions:
@@ -518,3 +546,136 @@ class TaskQueue:
         except Exception as e:
             logger.error(f"Consolidation task failed: {e}")
             return False
+
+    def _run_embedding_generation_task(self, task: BackgroundTask) -> bool:
+        """Run embedding generation task."""
+        logger.debug(f"🔄 [TaskQueue] Starting embedding generation task: {task.task_id}")
+        
+        try:
+            # Get parameters
+            params = task.parameters
+            content = params.get('content')
+            content_type = params.get('content_type')
+            content_id = params.get('content_id')
+            metadata = params.get('metadata', {})
+            
+            logger.debug(f"📝 [TaskQueue] Embedding parameters: type={content_type}, content_length={len(content or '')}")
+            
+            # Function objects are not serialized, so we need to get them from the session
+            embedding_manager = params.get('embedding_manager')
+            lancedb_storage = params.get('lancedb_storage')
+            
+            if not content or not content_type or not content_id:
+                logger.error("❌ [TaskQueue] Missing required parameters for embedding generation")
+                return False
+            
+            if not embedding_manager or not lancedb_storage:
+                logger.warning("⚠️  [TaskQueue] Function objects missing - task may have been loaded from disk")
+                return False
+            
+            # Generate embedding with thread-safe timeout protection
+            logger.debug("🧠 [TaskQueue] Generating embedding...")
+            
+            try:
+                # Use ThreadPoolExecutor for timeout (works in background threads)
+                import concurrent.futures
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(embedding_manager.embed, content)
+                    try:
+                        embedding = future.result(timeout=120)  # 2 minutes timeout
+                        logger.debug(f"✅ [TaskQueue] Embedding generated: {len(embedding)} dimensions")
+                    except concurrent.futures.TimeoutError:
+                        raise TimeoutError("Embedding generation timed out after 120 seconds")
+                    
+            except TimeoutError as e:
+                logger.error(f"❌ [TaskQueue] Embedding generation timed out: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"❌ [TaskQueue] Embedding generation failed: {e}")
+                return False
+            
+            # Store in LanceDB based on content type
+            if content_type == "verbatim":
+                lancedb_storage.add_verbatim({
+                    "id": content_id,
+                    "user_id": metadata.get('user_id', 'unknown'),
+                    "timestamp": datetime.now(),
+                    "location": metadata.get('location', 'unknown'),
+                    "user_input": metadata.get('user_input', ''),
+                    "agent_response": metadata.get('response', ''),
+                    "topic": metadata.get('topic', ''),
+                    "category": metadata.get('category', 'conversation'),
+                    "confidence": metadata.get('confidence', 1.0),
+                    "tags": metadata.get('tags', '[]'),
+                    "file_path": metadata.get('file_path', ''),
+                    "metadata": f'{{"interaction_id": "{content_id}", "word_count": {metadata.get("word_count", 0)}}}'
+                })
+                logger.debug(f"✅ [TaskQueue] Verbatim stored in LanceDB: {content_id}")
+                
+            elif content_type == "note":
+                lancedb_storage.add_note(
+                    note_id=content_id,
+                    content=content,
+                    user_id=metadata.get('user_id', 'unknown'),
+                    location=metadata.get('location', 'unknown'),
+                    embedding=embedding,
+                    metadata=metadata
+                )
+                logger.debug(f"✅ [TaskQueue] Note stored in LanceDB: {content_id}")
+                
+            elif content_type == "document":
+                lancedb_storage.add_library_document(
+                    doc_id=content_id,
+                    title=metadata.get('title', 'Unknown Document'),
+                    content=content,
+                    source_path=metadata.get('source_path', ''),
+                    embedding=embedding,
+                    metadata=metadata
+                )
+                logger.debug(f"✅ [TaskQueue] Document stored in LanceDB: {content_id}")
+            
+            else:
+                logger.warning(f"⚠️  [TaskQueue] Unknown content type for embedding: {content_type}")
+                return False
+            
+            logger.info(f"✅ [TaskQueue] Embedding generation task completed: {task.task_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ [TaskQueue] Error in embedding generation task {task.task_id}: {e}")
+            return False
+    
+    def _cleanup_old_tasks(self):
+        """Clean up old completed/failed tasks to prevent memory leaks."""
+        try:
+            current_time = datetime.now()
+            tasks_to_remove = []
+            
+            for task_id, task in self.tasks.items():
+                if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+                    # Remove tasks older than 1 hour
+                    if task.end_time and (current_time - task.end_time).total_seconds() > 3600:
+                        tasks_to_remove.append(task_id)
+            
+            # Keep only the 50 most recent completed tasks
+            completed_tasks = [
+                (task_id, task) for task_id, task in self.tasks.items()
+                if task.status == TaskStatus.COMPLETED and task_id not in tasks_to_remove
+            ]
+            
+            if len(completed_tasks) > 50:
+                # Sort by end time and keep only the 50 most recent
+                completed_tasks.sort(key=lambda x: x[1].end_time or datetime.min, reverse=True)
+                for task_id, _ in completed_tasks[50:]:
+                    tasks_to_remove.append(task_id)
+            
+            # Remove old tasks
+            for task_id in tasks_to_remove:
+                del self.tasks[task_id]
+            
+            if tasks_to_remove:
+                logger.debug(f"🧹 [TaskQueue] Cleaned up {len(tasks_to_remove)} old tasks")
+                
+        except Exception as e:
+            logger.warning(f"⚠️  [TaskQueue] Task cleanup failed: {e}")

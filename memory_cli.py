@@ -52,7 +52,7 @@ from abstractmemory.memory_session import MemorySession
 class AbstractMemoryREPL:
     """Clean REPL for AbstractMemory using proper AbstractCore integration."""
 
-    def __init__(self, provider_name: str, model: str, memory_path: str = "repl_memory",
+    def __init__(self, provider_name: str, model: str, memory_path: str = "memory",
                  user_id: str = "user", location: str = "terminal", verbose: bool = False, debug: bool = False, 
                  prompt_mode: bool = False):
         """Initialize the REPL with memory-enhanced session."""
@@ -104,13 +104,23 @@ class AbstractMemoryREPL:
             print(f"❌ Failed to create provider: {e}")
             sys.exit(1)
         
-        # Initialize embedding manager
+        # Initialize embedding manager with memory-local cache
         try:
             if self.debug:
                 logger.debug("Initializing embedding manager...")
-            self.embedding_manager = EmbeddingManager(model="all-minilm-l6-v2", backend="auto")
+            
+            # Set cache directory to memory folder to keep everything self-contained
+            embeddings_cache_dir = Path(self.memory_path) / "embeddings"
+            embeddings_cache_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.embedding_manager = EmbeddingManager(
+                model="all-minilm-l6-v2", 
+                backend="auto",
+                cache_dir=embeddings_cache_dir
+            )
             if self.debug:
                 logger.debug(f"Embedding manager initialized: {type(self.embedding_manager)}")
+                logger.debug(f"Embedding cache directory: {embeddings_cache_dir}")
         except Exception as e:
             logger.warning(f"Embedding manager initialization failed: {e}")
             print(f"⚠️  Embedding manager initialization failed: {e}")
@@ -244,6 +254,9 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         elif cmd == 'resolved':
             self._show_resolved_questions()
         
+        elif cmd.startswith('archive'):
+            self._handle_archive_command(cmd, args)
+        
         elif cmd.startswith('reconstruct'):
             # Parse /reconstruct <query> command
             if len(args) == 0:
@@ -340,6 +353,7 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print("  /facts                   Show extracted facts from temporary_semantics.md")
         print("  /unresolved              Show unresolved questions")
         print("  /resolved                Show resolved questions")
+        print("  /archive [stats|search|recent|frequent] Archive memory (AI's subconscious)")
         print("  /reconstruct <query>     Show exact context that would be fed to LLM")
         print("  /search <query>          Semantic search across all memory")
         print("  /queue [task_id] [cmd]   Manage background task queue")
@@ -1104,6 +1118,112 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         
         print("=" * 70)
 
+    def _handle_archive_command(self, cmd: str, args: list):
+        """Handle /archive commands for searching the AI's subconscious file memory."""
+        
+        if not hasattr(self.session, 'triple_storage_manager') or not self.session.triple_storage_manager:
+            print("❌ Archive system not available (triple storage manager not initialized)")
+            return
+        
+        try:
+            from abstractmemory.enhanced_file_handler import EnhancedFileHandler
+            
+            enhanced_handler = EnhancedFileHandler(
+                memory_session=self.session,
+                triple_storage_manager=self.session.triple_storage_manager
+            )
+            archive_memory = enhanced_handler.archive_memory
+            
+            if len(args) == 0 or args[0] == 'stats':
+                # Show archive statistics
+                print("📚 Archive Memory (AI's Subconscious)")
+                print("=" * 70)
+                
+                stats = archive_memory.get_archive_stats()
+                print(f"Total Files Learned: {stats['total_files']:,}")
+                print(f"Total Accesses: {stats['total_accesses']:,}")
+                print(f"Average Access Count: {stats['average_access_count']}")
+                print(f"Archive Size: {stats['archive_size_mb']} MB")
+                print(f"Unique Concepts: {stats['unique_concepts']:,}")
+                
+                if stats.get('first_file_date'):
+                    print(f"First File: {stats['first_file_date'][:10]}")
+                if stats.get('last_access_date'):
+                    print(f"Last Access: {stats['last_access_date'][:10]}")
+                
+                print("\n🔥 Top Concepts:")
+                for concept in stats.get('top_concepts', []):
+                    print(f"  • {concept['concept']}: {concept['file_count']} files")
+                
+                if stats.get('most_accessed_file'):
+                    most_accessed = stats['most_accessed_file']
+                    print(f"\n🏆 Most Accessed: {most_accessed['access_count']} times")
+                
+            elif args[0] == 'search':
+                # Search archive
+                if len(args) < 2:
+                    print("❓ Usage: /archive search <query>")
+                    print("   Example: /archive search python")
+                    return
+                
+                query = ' '.join(args[1:])
+                print(f"🔍 Searching Archive for: '{query}'")
+                print("=" * 70)
+                
+                # Search by concepts first
+                results = archive_memory.search_archive(query, "concepts", limit=10)
+                
+                if results:
+                    for i, result in enumerate(results, 1):
+                        print(f"{i}. {result['file_name']}")
+                        print(f"   📁 {result['original_path']}")
+                        print(f"   🔢 Accessed {result['access_count']} times (last: {result['last_accessed'][:10]})")
+                        print(f"   🎯 Match: {result['match_value']} ({result['match_type']})")
+                        print()
+                else:
+                    print("No files found matching your query")
+                
+            elif args[0] == 'recent':
+                # Show recent files
+                limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
+                print(f"📅 Recently Accessed Files (last {limit})")
+                print("=" * 70)
+                
+                results = archive_memory.search_archive("", "recent", limit=limit)
+                
+                for i, result in enumerate(results, 1):
+                    print(f"{i}. {result['file_name']}")
+                    print(f"   📁 {result['original_path']}")
+                    print(f"   🔢 Accessed {result['access_count']} times")
+                    print(f"   📅 Last: {result['last_accessed'][:16].replace('T', ' ')}")
+                    print()
+                
+            elif args[0] == 'frequent':
+                # Show most frequently accessed files
+                limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
+                print(f"🔥 Most Frequently Accessed Files (top {limit})")
+                print("=" * 70)
+                
+                results = archive_memory.search_archive("", "frequent", limit=limit)
+                
+                for i, result in enumerate(results, 1):
+                    print(f"{i}. {result['file_name']} ({result['access_count']} times)")
+                    print(f"   📁 {result['original_path']}")
+                    print(f"   📅 Last: {result['last_accessed'][:16].replace('T', ' ')}")
+                    print()
+                
+            else:
+                print("❓ Archive Commands:")
+                print("  /archive stats           Show archive statistics")
+                print("  /archive search <query>  Search archived files")
+                print("  /archive recent [N]      Show N recent files (default: 10)")
+                print("  /archive frequent [N]    Show N most accessed files (default: 10)")
+                
+        except Exception as e:
+            print(f"❌ Error accessing archive: {e}")
+        
+        print("=" * 70)
+
     def _handle_save(self, filename: str, summary: bool = False, assessment: bool = False, facts: bool = False):
         """Handle /save <file> command - save current session to file with optional analytics"""
         try:
@@ -1249,13 +1369,13 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                 cache_size = cache_stats.get('persistent_cache_size', 0)
                 
                 # Get cache location for display
-                cache_dir = Path(cache_file).parent.name if cache_file != 'unknown' else 'unknown'
+                cache_path = Path(cache_file).parent if cache_file != 'unknown' else 'unknown'
                 
                 # Call save_caches
                 self.session.embedding_manager.save_caches()
                 
                 if not self.prompt_mode or self.debug:
-                    print(f"💾 Saved embedding cache: {cache_size} entries (~/.abstractllm/{cache_dir}/)\n")
+                    print(f"💾 Saved embedding cache: {cache_size} entries ({cache_path})\n")
                 
         except Exception as e:
             if self.verbose:
@@ -1289,7 +1409,34 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         if not matches:
             return user_input
         
-        # Process each file reference
+        # Use enhanced file handler if available
+        if hasattr(self.session, 'triple_storage_manager') and self.session.triple_storage_manager:
+            try:
+                from abstractmemory.enhanced_file_handler import EnhancedFileHandler
+                
+                enhanced_handler = EnhancedFileHandler(
+                    memory_session=self.session,
+                    triple_storage_manager=self.session.triple_storage_manager
+                )
+                
+                enhanced_prompt, processed_files_metadata = enhanced_handler.process_file_references(
+                    user_input, self.user_id, self.location
+                )
+                
+                # Show processed files info
+                for file_meta in processed_files_metadata:
+                    archive_info = file_meta.get('archive_result', {})
+                    status = "NEW" if archive_info.get('is_new_file', False) else f"ACCESS #{archive_info.get('access_count', 0)}"
+                    print(f"📁 Enhanced: {file_meta['file_path']} ({len(file_meta['content'])} chars)")
+                    print(f"   📚 Archive: {archive_info.get('file_hash', 'unknown')[:12]}... ({status})")
+                    print(f"   💾 Storage: {len(file_meta['storage_ids'])} active layers + archive")
+                
+                return enhanced_prompt
+                
+            except Exception as e:
+                logger.warning(f"Enhanced file handler failed, falling back to basic: {e}")
+        
+        # Fallback to basic file processing
         file_contents = []
         processed_files = []
         
@@ -1947,14 +2094,14 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         
         # Replace common prefixes with shorter versions and emojis
         replacements = {
-            'repl_memory/notes/': '📝 notes/',
-            'repl_memory/verbatim/': '💬 verbatim/',
-            'repl_memory/working/': '🧠 working/',
-            'repl_memory/core/': '🎯 core/',
-            'repl_memory/episodic/': '📚 episodic/',
-            'repl_memory/semantic/': '🧬 semantic/',
-            'repl_memory/people/': '👥 people/',
-            'repl_memory/library/': '📖 library/',
+            'memory/notes/': '📝 notes/',
+            'memory/verbatim/': '💬 verbatim/',
+            'memory/working/': '🧠 working/',
+            'memory/core/': '🎯 core/',
+            'memory/episodic/': '📚 episodic/',
+            'memory/semantic/': '🧬 semantic/',
+            'memory/people/': '👥 people/',
+            'memory/library/': '📖 library/',
             'notes/': '📝 notes/',
             'verbatim/': '💬 verbatim/',
             'working/': '🧠 working/',
@@ -2304,8 +2451,8 @@ Available Tools:
     )
     
     # Core arguments
-    parser.add_argument('--memory-path', default='repl_memory',
-                       help='Path to memory storage (default: repl_memory)')
+    parser.add_argument('--memory-path', default='memory',
+                       help='Path to memory storage (default: memory)')
     parser.add_argument('--name', default='user',
                        help='User name for conversation (default: user)')
     parser.add_argument('--provider', default='ollama',

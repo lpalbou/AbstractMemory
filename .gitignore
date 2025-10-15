@@ -274,5 +274,6 @@ core.*
 
 agent_memory/
 repl_memory/
-untracked``
+untracked/
 
+memory/

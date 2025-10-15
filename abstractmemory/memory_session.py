@@ -40,6 +40,9 @@ from .library_capture import LibraryCapture
 from .fact_extraction import MemoryFactExtractor
 from .consolidation_scheduler import ConsolidationScheduler
 from .task_queue import TaskQueue
+from .understanding_evolution import UnderstandingEvolutionDetector
+from .storage.knowledge_graph import KnowledgeGraphStorage
+from .triple_storage_manager import TripleStorageManager
 
 logger = get_logger(__name__)
 
@@ -94,6 +97,12 @@ class MemorySession(BasicSession):
         
         # Store provider reference for memory components
         self.provider = provider
+        
+        # Ensure embedding cache is saved to the correct location
+        if self.embedding_manager and hasattr(self.embedding_manager, 'save_caches'):
+            # Register cleanup to save cache in the correct location
+            import atexit
+            atexit.register(self._cleanup_embedding_cache)
         
         # Initialize memory components
         self._initialize_memory_components()
@@ -240,6 +249,40 @@ You MUST respond with a structured JSON object containing:
             self.working_memory = WorkingMemoryManager(self.memory_base_path)
             self.episodic_memory = EpisodicMemoryManager(self.memory_base_path)
             self.semantic_memory = SemanticMemoryManager(self.memory_base_path)
+            
+            # Initialize Phase 1 components: Knowledge Graph and Understanding Evolution
+            self.knowledge_graph = None
+            self.understanding_detector = None
+            self.triple_storage_manager = None
+            
+            try:
+                # Initialize Knowledge Graph Storage
+                self.knowledge_graph = KnowledgeGraphStorage(
+                    storage_path=self.memory_base_path / "knowledge_graph"
+                )
+                logger.info("Knowledge Graph Storage initialized")
+                
+                # Initialize Understanding Evolution Detector
+                if self.provider:
+                    self.understanding_detector = UnderstandingEvolutionDetector(
+                        memory_session=self,
+                        llm_provider=self.provider
+                    )
+                    logger.info("Understanding Evolution Detector initialized")
+                
+                # Initialize Triple Storage Manager
+                if self.lancedb_storage and self.knowledge_graph:
+                    self.triple_storage_manager = TripleStorageManager(
+                        base_path=self.memory_base_path,
+                        embedding_manager=self.embedding_manager,
+                        lancedb_storage=self.lancedb_storage,
+                        knowledge_graph=self.knowledge_graph
+                    )
+                    logger.info("Triple Storage Manager initialized - Phase 1 complete!")
+                
+            except Exception as e:
+                logger.warning(f"Phase 1 components initialization failed: {e}")
+                logger.info("Continuing with basic memory functionality")
             
             # Initialize library capture (subconscious memory)
             self.library = LibraryCapture(
@@ -875,6 +918,15 @@ You MUST respond with a structured JSON object containing:
             else:
                 logger.debug("No fact extractor available, skipping fact extraction")
             
+            # Phase 1: Check for understanding evolution (automatic question resolution)
+            logger.debug("About to check understanding evolution...")
+            if self.understanding_detector:
+                logger.debug("Understanding detector available, checking question resolution...")
+                self._check_understanding_evolution(user_input, answer, user_id)
+                logger.debug("Understanding evolution check completed")
+            else:
+                logger.debug("No understanding detector available, skipping evolution check")
+            
             # Check consolidation triggers
             logger.debug("About to check consolidation triggers...")
             self._check_consolidation_triggers()
@@ -945,20 +997,27 @@ You MUST respond with a structured JSON object containing:
                     # Extract topic from user input for categorization
                     topic = user_input[:50].replace(" ", "_").replace("/", "_").replace("?", "").replace("!", "")
                     
-                    self.lancedb_storage.add_verbatim({
-                        "id": interaction_id,
-                        "user_id": user_id,
-                        "timestamp": timestamp,
-                        "location": location,
-                        "user_input": user_input,
-                        "agent_response": response,  # Correct field name for schema
-                        "topic": topic,
-                        "category": "conversation",
-                        "confidence": 1.0,  # Verbatim = 100% confident
-                        "tags": "[]",  # JSON array as string
-                        "file_path": str(verbatim_file),
-                        "metadata": f'{{"interaction_id": "{interaction_id}", "word_count": {len(user_input.split()) + len(response.split())}}}'
-                    })
+                    # Create verbatim content for embedding
+                    verbatim_content = f"User: {user_input}\n\nAssistant: {response}"
+                    
+                    # Schedule background embedding generation
+                    self._schedule_background_embedding(
+                        content=verbatim_content,
+                        content_type="verbatim",
+                        content_id=interaction_id,
+                        metadata={
+                            'user_input': user_input,
+                            'response': response,
+                            'user_id': user_id,
+                            'location': location,
+                            'topic': topic,
+                            'category': 'conversation',
+                            'confidence': 1.0,
+                            'tags': '[]',
+                            'file_path': str(verbatim_file),
+                            'word_count': len(user_input.split()) + len(response.split())
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"LanceDB verbatim storage failed: {e}")
             
@@ -986,9 +1045,13 @@ You MUST respond with a structured JSON object containing:
         """Schedule background fact extraction using the task queue."""
         
         if not self.task_queue or not self.fact_extractor:
+            logger.debug("⚠️  [MemorySession] Task queue or fact extractor not available for background processing")
             return
         
         conversation_text = f"User: {user_input}\n\nAssistant: {response}"
+        
+        logger.debug(f"📋 [MemorySession] Scheduling background fact extraction task")
+        logger.debug(f"📝 [MemorySession] Conversation length: {len(conversation_text)} chars")
         
         # Add fact extraction task to queue
         task_id = self.task_queue.add_task(
@@ -1004,7 +1067,85 @@ You MUST respond with a structured JSON object containing:
             max_attempts=2  # Retry once if failed
         )
         
-        logger.debug(f"Scheduled fact extraction task {task_id}")
+        logger.info(f"✅ [MemorySession] Scheduled fact extraction task: {task_id}")
+        logger.debug(f"🔄 [MemorySession] Task queue now has {len(self.task_queue.get_all_tasks())} total tasks")
+
+    def _schedule_background_embedding(self, content: str, content_type: str, content_id: str, metadata: dict):
+        """Schedule background embedding generation to avoid blocking main thread."""
+        
+        if not self.task_queue or not self.embedding_manager:
+            logger.debug("⚠️  [MemorySession] Task queue or embedding manager not available for background embedding")
+            return
+        
+        logger.debug(f"📋 [MemorySession] Scheduling background embedding task for {content_type}")
+        logger.debug(f"📝 [MemorySession] Content length: {len(content)} chars")
+        
+        # Add embedding task to queue
+        task_id = self.task_queue.add_task(
+            name="embedding_generation",
+            description=f"Generate embedding for {content_type} ({len(content)} chars)",
+            parameters={
+                'embedding_manager': self.embedding_manager,
+                'lancedb_storage': self.lancedb_storage,
+                'content': content,
+                'content_type': content_type,
+                'content_id': content_id,
+                'metadata': metadata
+            },
+            priority=2,  # High priority for embeddings
+            max_attempts=2
+        )
+        
+        logger.info(f"✅ [MemorySession] Scheduled embedding task: {task_id}")
+        logger.debug(f"🔄 [MemorySession] Task queue now has {len(self.task_queue.get_all_tasks())} total tasks")
+        
+        # Periodically save embedding cache to ensure it's in the correct location
+        if hasattr(self.embedding_manager, 'save_caches'):
+            try:
+                self.embedding_manager.save_caches()
+                logger.debug(f"💾 [MemorySession] Embedding cache saved to: {self.embedding_manager.cache_dir}")
+            except Exception as e:
+                logger.debug(f"⚠️  [MemorySession] Cache save failed: {e}")
+
+    def _check_understanding_evolution(self, user_input: str, response: str, user_id: str):
+        """Check if new information resolves any unresolved questions (Phase 1 feature)."""
+        
+        if not self.understanding_detector:
+            logger.debug("⚠️  [MemorySession] Understanding detector not available for evolution check")
+            return
+        
+        logger.debug(f"🧠 [MemorySession] Checking understanding evolution for user: {user_id}")
+        
+        try:
+            # Create conversation context
+            conversation_context = f"User: {user_input}\nAssistant: {response}"
+            logger.debug(f"📝 [MemorySession] Conversation context length: {len(conversation_context)} chars")
+            
+            # Check for question resolutions
+            logger.debug("❓ [MemorySession] Checking for question resolutions...")
+            resolutions = self.understanding_detector.check_question_resolution(
+                new_information=response,
+                conversation_context=conversation_context,
+                user_id=user_id
+            )
+            
+            if resolutions:
+                logger.info(f"💡 [MemorySession] Found {len(resolutions)} resolved questions - processing understanding evolution")
+                logger.debug(f"🔍 [MemorySession] Resolved questions: {[r['question'][:50] + '...' for r in resolutions]}")
+                
+                # Process resolutions (move to resolved, create semantic memories, generate self-awareness notes)
+                logger.debug("🔄 [MemorySession] Processing understanding evolution...")
+                success = self.understanding_detector.process_resolutions(resolutions)
+                
+                if success:
+                    logger.info("✅ [MemorySession] Understanding evolution processing completed successfully")
+                else:
+                    logger.warning("⚠️  [MemorySession] Understanding evolution processing encountered errors")
+            else:
+                logger.debug("ℹ️  [MemorySession] No questions resolved in this interaction")
+                
+        except Exception as e:
+            logger.error(f"❌ [MemorySession] Understanding evolution check failed: {e}")
 
     def _check_consolidation_triggers(self):
         """Check if memory consolidation should be triggered."""
@@ -1408,36 +1549,32 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
             
             # Use a timeout-based approach to prevent hanging on file write
-            import signal
             import time
             
-            def timeout_handler(signum, frame):
-                raise TimeoutError("File write operation timed out")
-            
             try:
-                # Set a 5-second timeout for the file write operation
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(5)
+                # Use thread-safe timeout for file write operation
+                import concurrent.futures
                 
-                logger.debug("About to write unresolved questions file...")
-                questions_file.write_text(content, encoding='utf-8')
-                logger.debug("File write completed successfully")
+                def write_file():
+                    logger.debug("About to write unresolved questions file...")
+                    questions_file.write_text(content, encoding='utf-8')
+                    logger.debug("File write completed successfully")
                 
-                # Cancel the timeout
-                signal.alarm(0)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(write_file)
+                    try:
+                        future.result(timeout=5)  # 5 seconds timeout
+                    except concurrent.futures.TimeoutError:
+                        raise TimeoutError("File write operation timed out after 5 seconds")
                 
                 logger.debug(f"Updated unresolved questions: {len(all_questions)} total")
                 logger.debug("About to return from _update_unresolved_questions")
                 
             except TimeoutError:
                 logger.error("File write operation timed out after 5 seconds")
-                # Cancel the timeout
-                signal.alarm(0)
                 raise
             except Exception as write_error:
                 logger.error(f"File write failed: {write_error}")
-                # Cancel the timeout
-                signal.alarm(0)
                 raise
             
         except Exception as e:
@@ -1445,6 +1582,16 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             logger.debug("Exception occurred in _update_unresolved_questions, about to return")
         
         logger.debug("Returning from _update_unresolved_questions")
+
+    def _cleanup_embedding_cache(self):
+        """Ensure embedding cache is saved to the correct location on cleanup."""
+        try:
+            if self.embedding_manager and hasattr(self.embedding_manager, 'save_caches'):
+                logger.debug(f"💾 [MemorySession] Saving embedding cache to: {self.embedding_manager.cache_dir}")
+                self.embedding_manager.save_caches()
+                logger.info(f"✅ [MemorySession] Embedding cache saved to memory folder")
+        except Exception as e:
+            logger.warning(f"⚠️  [MemorySession] Failed to save embedding cache: {e}")
 
     def _create_memory_tools(self) -> List[Callable]:
         """
@@ -1584,6 +1731,174 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 return f"❌ Library search failed: {e}"
         
         tools.append(search_library)
+        
+        # Enhanced Tool: Unified search using high-level interface
+        def search_all_memories(query: str, include_relationships: bool = True, max_results: int = 10) -> str:
+            """Search across all memory layers using enhanced triple storage interface."""
+            try:
+                if not self.triple_storage_manager:
+                    # Fallback to regular memory search
+                    return search_memories(query, limit=max_results)
+                
+                # Use enhanced unified search
+                results = self.triple_storage_manager.unified_search(
+                    query=query,
+                    include_relationships=include_relationships,
+                    max_results=max_results
+                )
+                
+                if not results:
+                    return f"No memories found for '{query}'"
+                
+                # Format results by source layer
+                formatted_results = []
+                for result in results:
+                    source = result.source_layer
+                    content = result.content[:200] + "..." if len(result.content) > 200 else result.content
+                    score = f"{result.relevance_score:.2f}"
+                    
+                    formatted_results.append(f"[{source}] ({score}) {content}")
+                
+                return f"Found {len(results)} memories:\n" + "\n".join(formatted_results)
+                
+            except Exception as e:
+                return f"❌ Unified search failed: {e}"
+        
+        tools.append(search_all_memories)
+        
+        # Phase 1 Tool: Get relationship context for concepts
+        def explore_relationships(concept: str, depth: int = 2) -> str:
+            """Explore relationship context for a concept using the knowledge graph."""
+            try:
+                if not self.triple_storage_manager:
+                    return f"Knowledge graph not available for relationship exploration"
+                
+                context = self.triple_storage_manager.get_relationship_context(concept, depth)
+                
+                if not context.get('exists', False):
+                    return f"No relationships found for concept '{concept}'"
+                
+                # Format relationship context
+                total_rels = context.get('direct_relationships', 0)
+                related_concepts = context.get('related_concepts', [])
+                rel_types = context.get('relationship_types', {})
+                
+                result = f"Relationship context for '{concept}':\n"
+                result += f"Direct relationships: {total_rels}\n"
+                result += f"Related concepts: {len(related_concepts)}\n"
+                
+                # Show relationship types
+                for rel_type, rels in rel_types.items():
+                    if rels:
+                        result += f"{rel_type}: {len(rels)} connections\n"
+                
+                # Show top related concepts
+                if related_concepts:
+                    result += "\nTop related:\n"
+                    for rel in related_concepts[:5]:
+                        result += f"- {rel['concept']} ({rel['relationship']}, {rel['confidence']:.2f})\n"
+                
+                return result
+                
+            except Exception as e:
+                return f"❌ Relationship exploration failed: {e}"
+        
+        tools.append(explore_relationships)
+        
+        # Enhanced High-Level Interface Tools
+        def deep_reflect(topic: str, depth: str = "deep") -> str:
+            """Deep reflection using enhanced triple storage with relationship context."""
+            try:
+                if not self.triple_storage_manager:
+                    return reflect_on(topic, depth)  # Fallback to basic reflection
+                
+                reflection = self.triple_storage_manager.reflect(
+                    topic=topic,
+                    reflection_depth=depth,
+                    include_contradictions=True
+                )
+                
+                if reflection.get('error'):
+                    return f"❌ Reflection failed: {reflection['error']}"
+                
+                # Format reflection results
+                result = f"Deep reflection on '{topic}':\n\n"
+                
+                insights = reflection.get('insights', [])
+                if insights:
+                    result += f"💡 Insights ({len(insights)}):\n"
+                    for insight in insights[:3]:
+                        result += f"  - {insight}\n"
+                    result += "\n"
+                
+                patterns = reflection.get('patterns', [])
+                if patterns:
+                    result += f"🔗 Relationship patterns:\n"
+                    for pattern in patterns[:3]:
+                        result += f"  - {pattern}\n"
+                    result += "\n"
+                
+                evolution = reflection.get('evolution', '')
+                if evolution:
+                    result += f"📈 Understanding evolution: {evolution}\n\n"
+                
+                contradictions = reflection.get('contradictions', [])
+                if contradictions:
+                    result += f"⚠️  Contradictions detected: {len(contradictions)}\n"
+                
+                confidence = reflection.get('confidence', 0)
+                result += f"🎯 Confidence: {confidence:.2f}"
+                
+                return result
+                
+            except Exception as e:
+                return f"❌ Deep reflection failed: {e}"
+        
+        tools.append(deep_reflect)
+        
+        def smart_reconstruct(query: str, depth: int = 3) -> str:
+            """Intelligent context reconstruction across all storage layers."""
+            try:
+                if not self.triple_storage_manager:
+                    return f"Enhanced reconstruction not available - triple storage manager not initialized"
+                
+                context = self.triple_storage_manager.reconstruct(
+                    query=query,
+                    user_id=self.default_user_id,
+                    context_depth=depth,
+                    relationship_depth=2
+                )
+                
+                if context.get('error'):
+                    return f"❌ Reconstruction failed: {context['error']}"
+                
+                # Format reconstruction results
+                result = f"Context reconstruction for '{query}':\n\n"
+                
+                synthesis = context.get('synthesis', '')
+                result += f"📋 Summary: {synthesis}\n\n"
+                
+                semantic_context = context.get('semantic_context', [])
+                if semantic_context:
+                    result += f"🔍 Semantic context ({len(semantic_context)} memories):\n"
+                    for i, mem in enumerate(semantic_context[:3], 1):
+                        content = mem.content[:100] + "..." if len(mem.content) > 100 else mem.content
+                        result += f"  {i}. [{mem.source_layer}] {content}\n"
+                    result += "\n"
+                
+                relationship_context = context.get('relationship_context', {})
+                if relationship_context.get('exists'):
+                    result += f"🕸️  Relationship context: {relationship_context.get('total_relationships', 0)} connections\n"
+                
+                confidence = context.get('confidence', 0)
+                result += f"🎯 Confidence: {confidence:.2f}"
+                
+                return result
+                
+            except Exception as e:
+                return f"❌ Smart reconstruction failed: {e}"
+        
+        tools.append(smart_reconstruct)
         
         return tools
 
