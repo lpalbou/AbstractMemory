@@ -7,7 +7,7 @@ This tests the fix for the episodic memory integration issue.
 import json
 from pathlib import Path
 from datetime import datetime
-from abstractmemory.temporal_anchoring import create_temporal_anchor
+from abstractmemory.deprecated.temporal_anchoring import create_temporal_anchor
 
 
 def test_episodic_memory_updates(tmp_path):

@@ -1,4 +1,5 @@
 """
+DEPRECATED: Enhanced Response Handler using AbstractCore's StructuredOutputHandler.
 Enhanced Response Handler using AbstractCore's StructuredOutputHandler.
 
 This integrates AbstractCore's robust structured response handling with
@@ -16,7 +17,7 @@ from pydantic import BaseModel, ValidationError
 from abstractllm.structured import StructuredOutputHandler, FeedbackRetry
 
 # AbstractMemory imports
-from .memory_response_models import (
+from ..memory_response_models import (
     MemoryResponse,
     SimpleMemoryResponse,
     MemoryAction,

@@ -40,7 +40,11 @@ except ImportError:
     ToolDefinition = None
 
 if TYPE_CHECKING:
-    from .session import MemorySession
+    # Support both old and new session implementations
+    try:
+        from .memory_session import MemorySession
+    except ImportError:
+        from .deprecated.session import MemorySession
 
 logger = logging.getLogger(__name__)
 

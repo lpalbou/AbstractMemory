@@ -235,7 +235,7 @@ def test_memory_action_with_llm_values():
 
         # Simulate LLM structured response with memory_action
         # In real usage, this comes from LLM's structured JSON response
-        from abstractmemory.response_handler import EnhancedMemoryResponseHandler
+        from abstractmemory.deprecated.response_handler import EnhancedMemoryResponseHandler
 
         handler = EnhancedMemoryResponseHandler(memory_session=session, base_path=temp_dir)
 

@@ -18,7 +18,7 @@ import json
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from abstractmemory.response_handler import EnhancedMemoryResponseHandler, create_enhanced_structured_prompt
+from abstractmemory.deprecated.response_handler import EnhancedMemoryResponseHandler, create_enhanced_structured_prompt
 
 
 def test_response_parsing():

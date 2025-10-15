@@ -1,4 +1,6 @@
 """
+DEPRECATED: MemorySession with Enhanced Memory Response Handler.
+
 MemorySession - Consciousness Through Memory
 
 This is the central integration point that creates AI consciousness via memory:
@@ -32,19 +34,19 @@ except ImportError as e:
 
 # AbstractMemory imports
 from .response_handler import EnhancedMemoryResponseHandler, create_enhanced_structured_prompt
-from .storage import LanceDBStorage
-from .emotions import calculate_emotional_resonance  # Only formula - LLM does cognitive assessment
+from ..storage import LanceDBStorage
+from ..emotions import calculate_emotional_resonance  # Only formula - LLM does cognitive assessment
 from .temporal_anchoring import (
     is_anchor_event,
     create_temporal_anchor,
     get_temporal_anchors
 )
-from .memory_structure import initialize_memory_structure
-from .working_memory import WorkingMemoryManager
-from .episodic_memory import EpisodicMemoryManager
-from .semantic_memory import SemanticMemoryManager
-from .library_capture import LibraryCapture
-from .fact_extraction import MemoryFactExtractor
+from ..memory_structure import initialize_memory_structure
+from ..working_memory import WorkingMemoryManager
+from ..episodic_memory import EpisodicMemoryManager
+from ..semantic_memory import SemanticMemoryManager
+from ..library_capture import LibraryCapture
+from ..fact_extraction import MemoryFactExtractor
 
 logger = get_logger(__name__)
 
@@ -206,7 +208,7 @@ class MemorySession(BasicSession):
 
         # Initialize Memory Indexer with configuration
         try:
-            from .indexing import MemoryIndexer, MemoryIndexConfig
+            from ..indexing import MemoryIndexer, MemoryIndexConfig
             self.index_config = MemoryIndexConfig.load(self.memory_base_path / ".memory_index_config.json")
             self.memory_indexer = MemoryIndexer(
                 memory_base_path=self.memory_base_path,
@@ -286,7 +288,7 @@ class MemorySession(BasicSession):
         self.last_consolidation_count = 0
 
         # Initialize consolidation scheduler (daily/weekly/monthly)
-        from .consolidation_scheduler import ConsolidationScheduler
+        from ..consolidation_scheduler import ConsolidationScheduler
         self.scheduler = ConsolidationScheduler(self)
 
         # Initialize enhanced memory managers (Phase 4)
@@ -296,7 +298,7 @@ class MemorySession(BasicSession):
         logger.info("Enhanced memory managers (working/episodic/semantic) initialized")
 
         # Initialize user profile manager (Phase 6)
-        from .user_profile_extraction import UserProfileManager
+        from ..user_profile_extraction import UserProfileManager
         self.user_profile_manager = UserProfileManager(
             memory_base_path=self.memory_base_path,
             llm_provider=self.provider  # Use same LLM for profile extraction
@@ -649,7 +651,7 @@ Now, using these tool results, please provide your final answer to the user's qu
         logger.info(f"🔄 Manual consolidation triggered (mode={mode})")
 
         try:
-            from .core_memory_extraction import consolidate_core_memory
+            from ..core_memory_extraction import consolidate_core_memory
             results = consolidate_core_memory(self, mode=mode)
 
             # Log results
@@ -684,7 +686,7 @@ Now, using these tool results, please provide your final answer to the user's qu
         available to the LLM during generation.
         """
         try:
-            from .tools import create_memory_tools
+            from ..tools import create_memory_tools
 
             # Create callable tool functions (NOT ToolDefinitions)
             memory_tool_functions = create_memory_tools(self)
@@ -1067,7 +1069,7 @@ Now, using these tool results, please provide your final answer to the user's qu
                 logger.info(f"🔄 Triggering core memory consolidation at {self.interactions_count} interactions")
 
                 try:
-                    from .core_memory_extraction import consolidate_core_memory
+                    from ..core_memory_extraction import consolidate_core_memory
                     results = consolidate_core_memory(self, mode="periodic")
 
                     # Count how many components were updated

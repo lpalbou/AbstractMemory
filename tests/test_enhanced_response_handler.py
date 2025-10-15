@@ -12,7 +12,7 @@ from abstractllm.core.interface import AbstractLLMInterface
 from abstractllm.core.types import GenerateResponse
 
 # AbstractMemory imports
-from abstractmemory.response_handler import EnhancedMemoryResponseHandler
+from abstractmemory.deprecated.response_handler import EnhancedMemoryResponseHandler
 from abstractmemory.memory_response_models import MemoryResponse, MemoryAction, EmotionalResonance
 
 

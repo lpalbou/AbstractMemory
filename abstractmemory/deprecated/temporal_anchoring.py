@@ -1,4 +1,6 @@
 """
+DEPRECATED: Temporal Anchoring System for AbstractMemory.
+
 Temporal Anchoring System for AbstractMemory
 
 High-emotion events become temporal anchors - "before/after" moments that mark
