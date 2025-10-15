@@ -389,6 +389,10 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print("    • reflect_on() - Deep reflection and analysis")
         print("    • capture_document() - Save documents to library")
         print("    • search_library() - Search document library")
+        print("    • search_all_memories() - Unified search across all storage layers")
+        print("    • explore_relationships() - Explore concept relationships in knowledge graph")
+        print("    • deep_reflect() - Enhanced reflection using triple storage")
+        print("    • smart_reconstruct() - Intelligent context reconstruction")
         print("  File & System Tools:")
         print("    • list_files() - List directory contents")
         print("    • search_files() - Search inside files")
@@ -1616,28 +1620,28 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         current_time = datetime.now().strftime("%H:%M:%S")
         
         print(f"\n📋 Background Task Queue [{current_time}]")
-        print("=" * 88)
+        print("=" * 95)
         
         if not hasattr(self.session, 'task_queue') or not self.session.task_queue:
             print("Task queue not available.")
-            print("=" * 88)
+            print("=" * 95)
             return
         
         tasks = self.session.task_queue.get_all_tasks()
         
         if not tasks:
             print("No tasks in queue.")
-            print("=" * 88)
+            print("=" * 95)
             return
         
         # Table header with fixed-width formatting
-        print(f"{'ID':<8} | {'Name':<15} | {'Status':<10} | {'Requested':<9} | {'Started':<9} | {'Ended':<9} | {'Attempts':<8}")
-        print("-" * 88)
+        print(f"{'ID':<10} | {'Name':<22} | {'Status':<10} | {'Requested':<9} | {'Started':<9} | {'Ended':<9} | {'Attempts':<8}")
+        print("-" * 95)
         
         # Table rows with consistent formatting
         for task in tasks:
-            task_id = task.task_id[:8]  # Ensure max 8 chars
-            name = (task.name[:15]).ljust(15)  # Pad to exactly 15 chars
+            task_id = task.task_id[:10]  # Ensure max 10 chars
+            name = (task.name[:22]).ljust(22)  # Pad to exactly 22 chars
             status = task.status.value
             
             req_time = task.request_time.strftime("%H:%M:%S")
@@ -1662,9 +1666,9 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                 status_display = f"{status:<10}"
             
             # Use fixed-width formatting for perfect alignment
-            print(f"{task_id:<8} | {name} | {status_display} | {req_time:<9} | {start_time:<9} | {end_time:<9} | {attempts:<8}")
+            print(f"{task_id:<10} | {name} | {status_display} | {req_time:<9} | {start_time:<9} | {end_time:<9} | {attempts:<8}")
         
-        print("=" * 88)
+        print("=" * 95)
         print(f"Total tasks: {len(tasks)}")
 
     def _show_task_details(self, task_id: str):

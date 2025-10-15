@@ -1631,7 +1631,26 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         # Tool 1: Remember important information
         def remember_fact(content: str, importance: float = 0.7, emotion: str = "neutral", 
                          reason: str = "", links_to: Optional[List[str]] = None) -> str:
-            """Remember important information by storing it in memory. Use this when you encounter facts, preferences, insights, or anything worth preserving."""
+            """
+            Remember important information by storing it in memory.
+            
+            Use this when you encounter facts, preferences, insights, or anything worth preserving.
+            The AI can consciously choose what to remember based on importance and emotional significance.
+            
+            Args:
+                content: The information to remember (required)
+                importance: Importance level from 0.0 to 1.0 (default: 0.7)
+                emotion: Emotional context - "neutral", "positive", "negative", "excited", "concerned" (default: "neutral")
+                reason: Why this information is worth remembering (default: "")
+                links_to: List of related memory IDs or concepts (default: None)
+            
+            Returns:
+                Confirmation message with memory ID or error message
+            
+            Examples:
+                remember_fact("User prefers Python over JavaScript", 0.8, "neutral", "Programming preference")
+                remember_fact("Important deadline: Project due March 15", 0.9, "concerned", "Critical timeline")
+            """
             try:
                 result = self.remember_fact(
                     content=content,
@@ -1649,7 +1668,24 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         
         # Tool 2: Search memory
         def search_memories(query: str, limit: int = 10) -> str:
-            """Search your memory for relevant information using semantic search. Use this to recall previous conversations, facts, or insights."""
+            """
+            Search your memory for relevant information using semantic search.
+            
+            Use this to recall previous conversations, facts you've stored, or insights you've developed.
+            Searches across notes, conversations, and stored memories using semantic similarity.
+            
+            Args:
+                query: Search query describing what you're looking for (required)
+                limit: Maximum number of results to return (default: 10)
+            
+            Returns:
+                Formatted list of relevant memories with content snippets or "No memories found"
+            
+            Examples:
+                search_memories("Python programming tips")
+                search_memories("user preferences about databases", 5)
+                search_memories("previous discussions about AI ethics")
+            """
             try:
                 results = self.search_memories(query=query, filters={}, limit=limit)
                 if isinstance(results, dict) and 'data' in results:
@@ -1671,7 +1707,24 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         
         # Tool 3: Reflect on topics
         def reflect_on(topic: str, depth: str = "deep") -> str:
-            """Engage in deep reflection on a topic, analyzing patterns, contradictions, and evolution of understanding."""
+            """
+            Engage in deep reflection on a topic, analyzing patterns, contradictions, and evolution of understanding.
+            
+            Use this to gain deeper insights by analyzing stored memories, identifying patterns,
+            and understanding how your knowledge on a topic has evolved over time.
+            
+            Args:
+                topic: The topic or concept to reflect on (required)
+                depth: Reflection depth - "surface", "deep", or "comprehensive" (default: "deep")
+            
+            Returns:
+                Structured reflection with insights, patterns, and understanding evolution
+            
+            Examples:
+                reflect_on("machine learning ethics")
+                reflect_on("user communication patterns", "comprehensive")
+                reflect_on("programming best practices", "surface")
+            """
             try:
                 result = self.reflect_on(topic=topic, depth=depth)
                 if isinstance(result, dict):
@@ -1734,7 +1787,25 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         
         # Enhanced Tool: Unified search using high-level interface
         def search_all_memories(query: str, include_relationships: bool = True, max_results: int = 10) -> str:
-            """Search across all memory layers using enhanced triple storage interface."""
+            """
+            Search across all memory layers using enhanced triple storage interface.
+            
+            This is the most comprehensive search tool, querying filesystem, LanceDB embeddings,
+            and knowledge graph relationships simultaneously for the most complete results.
+            
+            Args:
+                query: Search query describing what you're looking for (required)
+                include_relationships: Whether to include knowledge graph relationships (default: True)
+                max_results: Maximum number of results to return (default: 10)
+            
+            Returns:
+                Unified search results from all storage layers with relevance scores and source indicators
+            
+            Examples:
+                search_all_memories("Python async programming")
+                search_all_memories("user feedback on UI design", False, 5)
+                search_all_memories("database optimization techniques", True, 15)
+            """
             try:
                 if not self.triple_storage_manager:
                     # Fallback to regular memory search
@@ -1768,7 +1839,24 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         
         # Phase 1 Tool: Get relationship context for concepts
         def explore_relationships(concept: str, depth: int = 2) -> str:
-            """Explore relationship context for a concept using the knowledge graph."""
+            """
+            Explore relationship context for a concept using the knowledge graph.
+            
+            Discovers how concepts are connected through the knowledge graph, showing
+            direct relationships, related concepts, and relationship patterns.
+            
+            Args:
+                concept: The concept or entity to explore relationships for (required)
+                depth: How many relationship hops to explore (default: 2)
+            
+            Returns:
+                Detailed relationship context with connections, types, and related concepts
+            
+            Examples:
+                explore_relationships("machine learning")
+                explore_relationships("user authentication", 3)
+                explore_relationships("database design patterns", 1)
+            """
             try:
                 if not self.triple_storage_manager:
                     return f"Knowledge graph not available for relationship exploration"
@@ -1807,7 +1895,24 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         
         # Enhanced High-Level Interface Tools
         def deep_reflect(topic: str, depth: str = "deep") -> str:
-            """Deep reflection using enhanced triple storage with relationship context."""
+            """
+            Deep reflection using enhanced triple storage with relationship context.
+            
+            Advanced reflection that leverages all storage layers and relationship context
+            to provide comprehensive insights, patterns, and understanding evolution analysis.
+            
+            Args:
+                topic: The topic or concept to reflect deeply on (required)
+                depth: Reflection depth - "surface", "deep", or "comprehensive" (default: "deep")
+            
+            Returns:
+                Enhanced reflection with insights, relationship patterns, evolution tracking, and contradictions
+            
+            Examples:
+                deep_reflect("artificial intelligence ethics")
+                deep_reflect("software architecture decisions", "comprehensive")
+                deep_reflect("team collaboration patterns", "surface")
+            """
             try:
                 if not self.triple_storage_manager:
                     return reflect_on(topic, depth)  # Fallback to basic reflection
@@ -1857,7 +1962,24 @@ Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         tools.append(deep_reflect)
         
         def smart_reconstruct(query: str, depth: int = 3) -> str:
-            """Intelligent context reconstruction across all storage layers."""
+            """
+            Intelligent context reconstruction across all storage layers.
+            
+            Reconstructs comprehensive context by analyzing filesystem, embeddings, and knowledge graph
+            to provide the most relevant background information for a query or topic.
+            
+            Args:
+                query: The query or topic to reconstruct context for (required)
+                depth: Context depth level from 1 (basic) to 5 (comprehensive) (default: 3)
+            
+            Returns:
+                Comprehensive context reconstruction with summary, semantic context, and relationship analysis
+            
+            Examples:
+                smart_reconstruct("Python web development best practices")
+                smart_reconstruct("user onboarding process improvements", 5)
+                smart_reconstruct("database performance optimization", 2)
+            """
             try:
                 if not self.triple_storage_manager:
                     return f"Enhanced reconstruction not available - triple storage manager not initialized"
