@@ -569,3 +569,89 @@ class ArchiveMemory:
             return (now - date).days <= days
         except Exception:
             return False
+    
+    def get_all_files(self, sort_by: str = "last_accessed", limit: int = None) -> List[Dict[str, Any]]:
+        """
+        Get all archived files with metadata for table display.
+        
+        Args:
+            sort_by: Sort criteria (last_accessed, access_count, file_name, size)
+            limit: Maximum number of files to return
+            
+        Returns:
+            List of file metadata dictionaries
+        """
+        logger.debug(f"📋 [ArchiveMemory] Getting all files (sort: {sort_by}, limit: {limit})")
+        
+        files = []
+        
+        # Get all files from path index
+        for original_path, file_hash in self.path_index.items():
+            metadata = self._get_file_metadata(file_hash)
+            if metadata:
+                # Calculate file size in KB/MB
+                size_bytes = metadata.get("content_size", 0)
+                if size_bytes < 1024:
+                    size_display = f"{size_bytes}B"
+                elif size_bytes < 1024 * 1024:
+                    size_display = f"{size_bytes/1024:.1f}KB"
+                else:
+                    size_display = f"{size_bytes/(1024*1024):.1f}MB"
+                
+                # Format dates
+                last_accessed = metadata.get("last_accessed", "")
+                if last_accessed:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(last_accessed.replace('Z', '+00:00'))
+                        last_accessed_display = dt.strftime("%m-%d %H:%M")
+                    except:
+                        last_accessed_display = last_accessed[:10]
+                else:
+                    last_accessed_display = "Unknown"
+                
+                first_learned = metadata.get("first_learned", "")
+                if first_learned:
+                    try:
+                        dt = datetime.fromisoformat(first_learned.replace('Z', '+00:00'))
+                        first_learned_display = dt.strftime("%m-%d %H:%M")
+                    except:
+                        first_learned_display = first_learned[:10]
+                else:
+                    first_learned_display = "Unknown"
+                
+                files.append({
+                    "file_hash": file_hash,
+                    "file_name": metadata.get("file_name", "Unknown"),
+                    "original_path": original_path,
+                    "size_display": size_display,
+                    "size_bytes": size_bytes,
+                    "access_count": metadata.get("access_count", 0),
+                    "last_accessed": last_accessed,
+                    "last_accessed_display": last_accessed_display,
+                    "first_learned": first_learned,
+                    "first_learned_display": first_learned_display,
+                    "file_extension": metadata.get("file_extension", ""),
+                    "semantic_type": metadata.get("semantic_type", "unknown"),
+                    "concepts_count": len(metadata.get("concepts", [])),
+                    "users_count": len(metadata.get("accessed_by_users", []))
+                })
+        
+        # Sort files
+        if sort_by == "last_accessed":
+            files.sort(key=lambda x: x["last_accessed"], reverse=True)
+        elif sort_by == "access_count":
+            files.sort(key=lambda x: x["access_count"], reverse=True)
+        elif sort_by == "file_name":
+            files.sort(key=lambda x: x["file_name"].lower())
+        elif sort_by == "size":
+            files.sort(key=lambda x: x["size_bytes"], reverse=True)
+        elif sort_by == "first_learned":
+            files.sort(key=lambda x: x["first_learned"], reverse=True)
+        
+        # Apply limit
+        if limit:
+            files = files[:limit]
+        
+        logger.debug(f"📋 [ArchiveMemory] Returning {len(files)} files")
+        return files

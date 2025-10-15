@@ -24,6 +24,8 @@ Usage:
 import argparse
 import sys
 import time
+import readline
+import os
 from pathlib import Path
 from abstractllm.utils.structured_logging import get_logger
 
@@ -69,6 +71,9 @@ class AbstractMemoryREPL:
         self._input_active = False  # Track if user is typing
         self._last_prompt = ""      # Store last prompt for redisplay
         self._notifications = []    # Store recent notifications
+        
+        # Set up command history with readline
+        self._setup_command_history()
         
         # Set up logging level for debug mode
         if self.debug:
@@ -237,7 +242,10 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             # Clear terminal like Unix command
             import os
             os.system('clear' if os.name == 'posix' else 'cls')
-            print("🧹 Terminal cleared")
+        
+        elif cmd == 'commands':
+            # Show command history
+            self._show_command_history(args)
         
         elif cmd == 'memory':
             self._show_memory_overview()
@@ -246,7 +254,15 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             self._show_available_tools()
         
         elif cmd == 'facts':
-            self._show_facts()
+            if len(args) == 0:
+                self._show_facts()
+            elif len(args) >= 2 and args[0] == 'extract':
+                filepath = ' '.join(args[1:])
+                self._extract_facts_from_file(filepath)
+            else:
+                print("❓ Usage:")
+                print("  /facts                   Show extracted facts")
+                print("  /facts extract <filepath> Extract facts from file")
         
         elif cmd == 'unresolved':
             self._show_unresolved_questions()
@@ -294,6 +310,7 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                 print("   /queue                    - Show all tasks")
                 print("   /queue <task_id>          - Show task details")
                 print("   /queue <task_id> retry    - Retry failed task")
+                print("   /queue <task_id> stop     - Stop running task")
                 print("   /queue <task_id> remove   - Remove task")
         
         elif cmd == 'test-notify':
@@ -332,67 +349,154 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         
         return True
 
+    def _setup_command_history(self):
+        """Set up readline for command history and arrow key navigation."""
+        try:
+            # Set up history file in memory folder
+            history_file = self.memory_path / ".cli_history"
+            
+            # Configure readline
+            readline.set_startup_hook(None)
+            readline.set_pre_input_hook(None)
+            
+            # Enable history
+            readline.clear_history()
+            
+            # Load existing history if it exists
+            if history_file.exists():
+                try:
+                    readline.read_history_file(str(history_file))
+                    if self.debug:
+                        history_length = readline.get_current_history_length()
+                        logger.debug(f"Loaded {history_length} commands from history")
+                except (OSError, IOError) as e:
+                    if self.debug:
+                        logger.debug(f"Could not load history file: {e}")
+            
+            # Set history length limit (keep last 1000 commands)
+            readline.set_history_length(1000)
+            
+            # Store history file path for saving later
+            self._history_file = history_file
+            
+            if self.debug:
+                logger.debug(f"Command history enabled: {history_file}")
+                
+        except ImportError:
+            # readline not available (e.g., on some Windows systems)
+            self._history_file = None
+            if self.debug:
+                logger.debug("readline not available - command history disabled")
+        except Exception as e:
+            self._history_file = None
+            if self.debug:
+                logger.debug(f"Failed to setup command history: {e}")
+
+    def _save_command_history(self):
+        """Save command history to file."""
+        if hasattr(self, '_history_file') and self._history_file:
+            try:
+                # Ensure memory directory exists
+                self._history_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Save history
+                readline.write_history_file(str(self._history_file))
+                
+                if self.debug:
+                    history_length = readline.get_current_history_length()
+                    logger.debug(f"Saved {history_length} commands to history")
+                    
+            except Exception as e:
+                if self.debug:
+                    logger.debug(f"Failed to save command history: {e}")
+
+    def _add_to_history(self, command: str):
+        """Add a command to readline history."""
+        if command.strip() and hasattr(readline, 'add_history'):
+            try:
+                # Don't add duplicate consecutive commands
+                if readline.get_current_history_length() > 0:
+                    last_command = readline.get_history_item(readline.get_current_history_length())
+                    if last_command == command.strip():
+                        return
+                
+                readline.add_history(command.strip())
+            except Exception as e:
+                if self.debug:
+                    logger.debug(f"Failed to add command to history: {e}")
+
+    def _show_command_history(self, args):
+        """Show recent command history."""
+        try:
+            # Default to showing last 20 commands
+            limit = 20
+            if args and args[0].isdigit():
+                limit = min(int(args[0]), 100)  # Max 100 commands
+            
+            print(f"\n📜 Command History (last {limit} commands)")
+            print("=" * 60)
+            
+            if not hasattr(readline, 'get_current_history_length'):
+                print("Command history not available (readline not supported)")
+                print("=" * 60)
+                return
+            
+            history_length = readline.get_current_history_length()
+            
+            if history_length == 0:
+                print("No commands in history yet")
+                print("=" * 60)
+                return
+            
+            # Calculate start index
+            start_idx = max(1, history_length - limit + 1)
+            
+            for i in range(start_idx, history_length + 1):
+                try:
+                    command = readline.get_history_item(i)
+                    if command:
+                        # Show relative index (most recent = highest number)
+                        rel_idx = i - start_idx + 1
+                        print(f"  {rel_idx:2d}. {command}")
+                except Exception:
+                    continue
+            
+            print(f"\n💡 Use ↑/↓ arrow keys to navigate through history")
+            print("=" * 60)
+            
+        except Exception as e:
+            print(f"❌ Error showing command history: {e}")
+            print("=" * 60)
+
     def _show_help(self):
         """Show help information with enhanced colors for better UX."""
         
-        try:
-            from colorama import Fore, Back, Style, init
-            init(autoreset=True)
-            
-            print("\n" + Fore.CYAN + "="*70)
-            print(Fore.YELLOW + Style.BRIGHT + "🧠 AbstractMemory REPL - Memory-Enhanced AI Assistant".center(70))
-            print(Fore.CYAN + "="*70 + Style.RESET_ALL)
-        except ImportError:
-            print("\n" + "="*70)
-            print("🧠 AbstractMemory REPL - Memory-Enhanced AI Assistant".center(70))
-            print("="*70)
+        print("\n" + "="*70)
+        print("🧠 AbstractMemory REPL - Memory-Enhanced AI Assistant".center(70))
+        print("="*70)
         
-        try:
-            from colorama import Fore, Style
-            
-            print(f"\n{Fore.BLUE + Style.BRIGHT}📖 COMMANDS{Style.RESET_ALL}")
-            print(Fore.BLUE + "─" * 50 + Style.RESET_ALL)
-            print(f"  {Fore.GREEN}/help{Style.RESET_ALL}                    Show this help")
-            print(f"  {Fore.GREEN}/quit{Style.RESET_ALL}                    Exit the REPL")
-            print(f"  {Fore.GREEN}/clear{Style.RESET_ALL}                   Clear terminal screen")
-            print(f"  {Fore.GREEN}/reset{Style.RESET_ALL}                   Reset conversation history")
-            print(f"  {Fore.GREEN}/reset full{Style.RESET_ALL}              Reset everything - ALL memory components (with confirmation)")
-            print(f"  {Fore.GREEN}/stats{Style.RESET_ALL}                   Show detailed memory statistics")
-            print(f"  {Fore.GREEN}/history{Style.RESET_ALL}                 Show recent conversation")
-            print(f"  {Fore.GREEN}/memory{Style.RESET_ALL}                  Show memory overview")
-            print(f"  {Fore.GREEN}/tools{Style.RESET_ALL}                   Show available memory tools")
-            print(f"  {Fore.GREEN}/facts{Style.RESET_ALL}                   Show extracted facts from temporary_semantics.md")
-            print(f"  {Fore.GREEN}/unresolved{Style.RESET_ALL}              Show unresolved questions")
-            print(f"  {Fore.GREEN}/resolved{Style.RESET_ALL}                Show resolved questions")
-            print(f"  {Fore.GREEN}/archive{Style.RESET_ALL} {Fore.YELLOW}[stats|search|recent|frequent]{Style.RESET_ALL} Archive memory (AI's subconscious)")
-            print(f"  {Fore.GREEN}/reconstruct{Style.RESET_ALL} {Fore.YELLOW}<query>{Style.RESET_ALL}     Show exact context that would be fed to LLM")
-            print(f"  {Fore.GREEN}/search{Style.RESET_ALL} {Fore.YELLOW}<query>{Style.RESET_ALL}          Semantic search across all memory")
-            print(f"  {Fore.GREEN}/queue{Style.RESET_ALL} {Fore.YELLOW}[task_id] [cmd]{Style.RESET_ALL}   Manage background task queue")
-            print(f"  {Fore.GREEN}/notifications{Style.RESET_ALL}           Show recent background notifications")
-            print(f"  {Fore.GREEN}/save{Style.RESET_ALL} {Fore.YELLOW}<file> [options]{Style.RESET_ALL}   Save session with optional analytics")
-            print(f"  {Fore.GREEN}/load{Style.RESET_ALL} {Fore.YELLOW}<file>{Style.RESET_ALL}             Load saved session")
-        except ImportError:
-            print("\n📖 COMMANDS")
-            print("─" * 50)
-            print("  /help                    Show this help")
-            print("  /quit                    Exit the REPL")
-            print("  /clear                   Clear terminal screen")
-            print("  /reset                   Reset conversation history")
-            print("  /reset full              Reset everything - ALL memory components (with confirmation)")
-            print("  /stats                   Show detailed memory statistics")
-            print("  /history                 Show recent conversation")
-            print("  /memory                  Show memory overview")
-            print("  /tools                   Show available memory tools")
-            print("  /facts                   Show extracted facts from temporary_semantics.md")
-            print("  /unresolved              Show unresolved questions")
-            print("  /resolved                Show resolved questions")
-            print("  /archive [stats|search|recent|frequent] Archive memory (AI's subconscious)")
-            print("  /reconstruct <query>     Show exact context that would be fed to LLM")
-            print("  /search <query>          Semantic search across all memory")
-            print("  /queue [task_id] [cmd]   Manage background task queue")
-            print("  /notifications           Show recent background notifications")
-            print("  /save <file> [options]   Save session with optional analytics")
-            print("  /load <file>             Load saved session")
+        print("\n📖 COMMANDS")
+        print("─" * 50)
+        print("  /help                    Show this help")
+        print("  /quit                    Exit the REPL")
+        print("  /clear                   Clear terminal screen")
+        print("  /reset                   Reset conversation history")
+        print("  /reset full              Reset everything - ALL memory components (with confirmation)")
+        print("  /stats                   Show detailed memory statistics")
+        print("  /history                 Show recent conversation")
+        print("  /commands [N]            Show command history (last N commands)")
+        print("  /memory                  Show memory overview")
+        print("  /tools                   Show available memory tools")
+        print("  /facts [extract <file>]  Show extracted facts or extract from file")
+        print("  /unresolved              Show unresolved questions")
+        print("  /resolved                Show resolved questions")
+        print("  /archive [stats|search|recent|frequent] Archive memory table (AI's subconscious)")
+        print("  /reconstruct <query>     Show exact context that would be fed to LLM")
+        print("  /search <query>          Semantic search across all memory")
+        print("  /queue [task_id] [cmd]   Manage background task queue")
+        print("  /notifications           Show recent background notifications")
+        print("  /save <file> [options]   Save session with optional analytics")
+        print("  /load <file>             Load saved session")
         
         print("\n📎 FILE ATTACHMENT")
         print("─" * 50)
@@ -891,33 +995,51 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             print("=" * 50)
 
     def _show_facts(self):
-        """Show extracted facts from temporary_semantics.md."""
+        """Show extracted facts in a clean table format."""
         
-        print("\n📝 Extracted Facts")
-        print("=" * 70)
+        print("\n📝 Knowledge Facts")
+        print("=" * 139)
         
         try:
             temp_semantics_file = self.memory_path / "working" / "temporary_semantics.md"
             
             if not temp_semantics_file.exists():
-                print("No facts extracted yet. Facts appear here after conversations.")
-                print("=" * 70)
+                print("💡 No facts found yet - they'll appear after conversations")
+                print("=" * 139)
                 return
             
             content = temp_semantics_file.read_text(encoding='utf-8')
             lines = content.split('\n')
             
-            current_section = None
             fact_count = 0
+            first_section = True
             
             for line in lines:
                 if line.startswith('## ') and 'id:' in line:
-                    # New section header
+                    # New section header - show as merged row in table
                     current_section = line[3:]  # Remove "## "
-                    print(f"\n🕒 {current_section}")
-                    print("─" * 60)
+                    
+                    if first_section:
+                        # Show table header with new widths: Object increased to 64 (54+10)
+                        print(f"{'Subject':<35} | {'Predicate':<11} | {'Object':<64} | {'Imp':<3} | {'Conf':<4} | {'Emotion':<7}")
+                        print("─" * 139)  # Increased from 124 to 134 (124+10)
+                        first_section = False
+                    else:
+                        # Add separator line before new date section
+                        print("─" * 139)
+                    
+                    # Show date/ID as merged row - fix alignment to match new total width
+                    date_part = current_section.split(' | id:')[0] if ' | id:' in current_section else current_section
+                    id_part = current_section.split(' | id:')[1] if ' | id:' in current_section else ""
+                    # First 3 columns: 35 + 11 + 64 + 2 separators = 112 chars for left side
+                    merged_left = f"🕒 {date_part}"[:112]
+                    merged_right = f"ID:{id_part}"[:15] if id_part else ""
+                    
+                    print(f"{merged_left:<112} | {merged_right:>15}")
+                    print("─" * 139)
+                        
                 elif line.startswith('- ') and ('→' in line or ':' in line):
-                    # Fact line
+                    # Fact line - parse and display in table format
                     fact = line[2:]  # Remove "- "
                     fact_count += 1
                     
@@ -927,26 +1049,35 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                         parts = fact.split(' | ')
                         if len(parts) >= 4:
                             spo = parts[0]
-                            importance = parts[1]
-                            confidence = parts[2]
-                            emotion = parts[3]
-                            print(f"  🔗 {spo}")
-                            print(f"     Importance: {importance} | Confidence: {confidence} | Emotion: {emotion}")
-                        else:
-                            print(f"  🔗 {fact}")
+                            importance = parts[1].replace('Importance: ', '')
+                            confidence = parts[2].replace('Confidence: ', '')
+                            emotion = parts[3].replace('Emotion: ', '')
+                            
+                            # Parse SPO with adjusted widths
+                            if ' → ' in spo:
+                                spo_parts = spo.split(' → ')
+                                if len(spo_parts) >= 3:
+                                    subject = spo_parts[0][:35]  # Max 35 chars
+                                    predicate = spo_parts[1][:11]  # Max 11 chars
+                                    obj = spo_parts[2][:64]  # Max 64 chars (increased from 54)
+                                    
+                                    print(f"{subject:<35} | {predicate:<11} | {obj:<64} | {importance:<3} | {confidence:<4} | {emotion:<7}")
                     elif ':' in fact:
-                        # Entity definition
+                        # Entity definition - treat as "Entity : is : Definition"
                         parts = fact.split(' | ')
                         if len(parts) >= 4:
                             entity_def = parts[0]
-                            importance = parts[1]
-                            confidence = parts[2]
-                            emotion = parts[3]
-                            print(f"  📋 {entity_def}")
-                            print(f"     Importance: {importance} | Confidence: {confidence} | Emotion: {emotion}")
-                        else:
-                            print(f"  📋 {fact}")
-                    print()
+                            importance = parts[1].replace('Importance: ', '')
+                            confidence = parts[2].replace('Confidence: ', '')
+                            emotion = parts[3].replace('Emotion: ', '')
+                            
+                            if ':' in entity_def:
+                                entity_parts = entity_def.split(':', 1)
+                                subject = entity_parts[0].strip()[:35]
+                                predicate = "is"
+                                obj = entity_parts[1].strip()[:64]  # Increased from 54 to 64
+                                
+                                print(f"{subject:<35} | {predicate:<11} | {obj:<64} | {importance:<3} | {confidence:<4} | {emotion:<7}")
             
             if fact_count == 0:
                 print("No facts found in temporary_semantics.md")
@@ -956,7 +1087,91 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         except Exception as e:
             print(f"❌ Error reading facts: {e}")
         
-        print("=" * 70)
+        print("=" * 139)
+
+    def _extract_facts_from_file(self, filepath: str):
+        """Extract facts from a file without creating embeddings."""
+        
+        print(f"\n🧠 Extracting Facts from File")
+        print("=" * 60)
+        
+        try:
+            from pathlib import Path
+            
+            # Handle different path formats
+            file_path = Path(filepath)
+            
+            # If relative path, try relative to current directory first
+            if not file_path.is_absolute():
+                if not file_path.exists():
+                    # Try relative to memory folder
+                    file_path = self.memory_path / filepath
+                    if not file_path.exists():
+                        print(f"❌ File not found: {filepath}")
+                        print("=" * 60)
+                        return
+            
+            if not file_path.exists():
+                print(f"❌ File not found: {filepath}")
+                print("=" * 60)
+                return
+            
+            if not file_path.is_file():
+                print(f"❌ Path is not a file: {filepath}")
+                print("=" * 60)
+                return
+            
+            # Read file content
+            try:
+                content = file_path.read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                try:
+                    content = file_path.read_text(encoding='latin-1')
+                except Exception as e:
+                    print(f"❌ Could not read file: {e}")
+                    print("=" * 60)
+                    return
+            
+            if not content.strip():
+                print(f"❌ File is empty: {filepath}")
+                print("=" * 60)
+                return
+            
+            print(f"📄 File: {file_path.name}")
+            print(f"📏 Size: {len(content)} characters")
+            print()
+            
+            # Check if fact extractor is available
+            if not hasattr(self.session, 'fact_extractor') or not self.session.fact_extractor:
+                print("❌ Fact extractor not available")
+                print("=" * 60)
+                return
+            
+            # Check if task queue is available
+            if not hasattr(self.session, 'task_queue') or not self.session.task_queue:
+                print("❌ Task queue not available")
+                print("=" * 60)
+                return
+            
+            # Schedule fact extraction using EXACT same method as conversation extraction
+            print("🔄 Scheduling fact extraction task...")
+            
+            # Use the session's method directly - this ensures EXACT same process
+            task_id = self.session._schedule_background_fact_extraction(
+                user_input=f"File extraction request: {file_path.name}",
+                response=content  # The file content becomes the "response" to extract from
+            )
+            
+            print(f"✅ Task scheduled: {task_id}")
+            print(f"📋 Monitor with: /queue {task_id}")
+            print()
+            print("💡 Use /queue to monitor progress")
+            print("💡 Use /facts to view extracted facts when complete")
+        
+        except Exception as e:
+            print(f"❌ Error processing file: {e}")
+        
+        print("=" * 60)
 
     def _show_unresolved_questions(self):
         """Show unresolved questions from working memory."""
@@ -1269,9 +1484,41 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             )
             archive_memory = enhanced_handler.archive_memory
             
-            if len(args) == 0 or args[0] == 'stats':
+            if len(args) == 0:
+                # Show archive files table (default)
+                files = archive_memory.get_all_files(sort_by="last_accessed", limit=20)
+                
+                print("\n📚 Archive Memory (AI's Subconscious)")
+                print("=" * 120)
+                
+                if not files:
+                    print("💡 No files archived yet - they'll appear when you reference files with @filename")
+                    print("=" * 120)
+                    return
+                
+                # Table header
+                print(f"{'File Name':<25} | {'Size':<8} | {'Access':<6} | {'Last Used':<11} | {'Learned':<11} | {'Path':<40}")
+                print("─" * 120)
+                
+                for file_info in files:
+                    file_name = file_info["file_name"][:24]  # Truncate long names
+                    size = file_info["size_display"]
+                    access_count = str(file_info["access_count"])
+                    last_used = file_info["last_accessed_display"]
+                    learned = file_info["first_learned_display"]
+                    path = file_info["original_path"]
+                    
+                    # Truncate path to show most relevant part
+                    if len(path) > 40:
+                        path = "..." + path[-37:]
+                    
+                    print(f"{file_name:<25} | {size:<8} | {access_count:<6} | {last_used:<11} | {learned:<11} | {path:<40}")
+                
+                print(f"\n📊 Showing {len(files)} files (sorted by last accessed)")
+                
+            elif args[0] == 'stats':
                 # Show archive statistics
-                print("📚 Archive Memory (AI's Subconscious)")
+                print("📚 Archive Statistics")
                 print("=" * 70)
                 
                 stats = archive_memory.get_archive_stats()
@@ -1349,6 +1596,7 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                 
             else:
                 print("❓ Archive Commands:")
+                print("  /archive                 Show archive files table (default)")
                 print("  /archive stats           Show archive statistics")
                 print("  /archive search <query>  Search archived files")
                 print("  /archive recent [N]      Show N recent files (default: 10)")
@@ -1489,6 +1737,8 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         self._cleanup_done = True
         
         try:
+            # Save command history
+            self._save_command_history()
             # Stop task queue worker first
             if hasattr(self.session, 'task_queue') and self.session.task_queue:
                 try:
@@ -1859,6 +2109,8 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         print(f"\nAvailable Actions:")
         if task.can_retry:
             print(f"  /queue {task_id} retry    - Retry this task")
+        if task.status.value == "running":
+            print(f"  /queue {task_id} stop     - Stop this task")
         if task.status.value != "running":
             print(f"  /queue {task_id} remove   - Remove this task")
         
@@ -1878,6 +2130,13 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             else:
                 print(f"❌ Cannot retry task {task_id} (not found, not failed, or max attempts reached)")
         
+        elif command == "stop":
+            success = self.session.task_queue.stop_task(task_id)
+            if success:
+                print(f"✅ Task {task_id} stopped")
+            else:
+                print(f"❌ Cannot stop task {task_id} (not found, not running, or already too far along)")
+        
         elif command == "remove":
             success = self.session.task_queue.remove_task(task_id)
             if success:
@@ -1887,7 +2146,7 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
         
         else:
             print(f"❌ Unknown command: {command}")
-            print("Available commands: retry, remove")
+            print("Available commands: retry, stop, remove")
 
     def _handle_reset(self, args: list):
         """Handle reset commands."""
@@ -2476,14 +2735,14 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
             from colorama import Fore, Style, init
             init(autoreset=True)
             
-            print("\n" + Fore.CYAN + "="*70 + Style.RESET_ALL)
-            print(Fore.YELLOW + Style.BRIGHT + "🧠 AbstractMemory REPL".center(70) + Style.RESET_ALL)
-            print(Fore.CYAN + "="*70 + Style.RESET_ALL)
-            print(f"{Fore.GREEN}Type {Fore.CYAN}/help{Fore.GREEN} for commands, or just chat naturally.{Style.RESET_ALL}")
-            print(f"{Fore.BLUE}I have {Fore.MAGENTA}memory tools{Fore.BLUE} and will remember our conversations!{Style.RESET_ALL}")
-            print(f"{Fore.YELLOW}Use {Fore.CYAN}@filename{Fore.YELLOW} to attach files to your messages!{Style.RESET_ALL}")
-            print(f"{Fore.MAGENTA}Rich metadata display shows tokens, timing, importance & alignment!{Style.RESET_ALL}")
-            print(Fore.CYAN + "="*70 + Style.RESET_ALL)
+            print("\n" + "="*70)
+            print("🧠 AbstractMemory REPL".center(70))
+            print("="*70)
+            print(f"Type {Fore.CYAN}/help{Style.RESET_ALL} for commands, or just chat naturally.")
+            print(f"I have {Fore.BLUE}memory tools{Style.RESET_ALL} and will remember our conversations!")
+            print(f"Use {Fore.CYAN}@filename{Style.RESET_ALL} to attach files to your messages!")
+            print("Rich metadata display shows tokens, timing, importance & alignment!")
+            print("="*70)
         except ImportError:
             print("\n" + "="*70)
             print("🧠 AbstractMemory REPL".center(70))
@@ -2507,6 +2766,9 @@ Be helpful, thoughtful, and make good use of your memory capabilities to provide
                     
                     if not user_input:
                         continue
+                    
+                    # Add to command history
+                    self._add_to_history(user_input)
                     
                     # Handle commands
                     if self.handle_command(user_input):
@@ -2601,8 +2863,12 @@ Available Tools:
     # Core arguments
     parser.add_argument('--memory-path', default='memory',
                        help='Path to memory storage (default: memory)')
-    parser.add_argument('--name', default='user',
-                       help='User name for conversation (default: user)')
+    # Get OS username for cross-platform compatibility
+    import getpass
+    os_username = getpass.getuser()
+    
+    parser.add_argument('--name', default=os_username,
+                       help=f'User name for conversation (default: {os_username})')
     parser.add_argument('--provider', default='ollama',
                        choices=['ollama', 'lmstudio', 'mlx', 'huggingface', 'openai', 'anthropic'],
                        help='LLM provider to use (default: ollama)')

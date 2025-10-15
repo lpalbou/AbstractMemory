@@ -1069,6 +1069,7 @@ You MUST respond with a structured JSON object containing:
         
         logger.info(f"✅ [MemorySession] Scheduled fact extraction task: {task_id}")
         logger.debug(f"🔄 [MemorySession] Task queue now has {len(self.task_queue.get_all_tasks())} total tasks")
+        return task_id
 
     def _schedule_background_embedding(self, content: str, content_type: str, content_id: str, metadata: dict):
         """Schedule background embedding generation to avoid blocking main thread."""

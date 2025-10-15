@@ -101,6 +101,7 @@ class TaskQueue:
         self.worker_thread: Optional[threading.Thread] = None
         self.running = False
         self._lock = threading.Lock()
+        self.running_futures: Dict[str, Any] = {}  # Track running futures for stopping
         
         # Load existing tasks
         self._load_queue()
@@ -324,6 +325,54 @@ class TaskQueue:
         logger.info(f"Removed task {task_id}")
         return True
     
+    def stop_task(self, task_id: str) -> bool:
+        """
+        Stop a currently running task.
+        
+        Args:
+            task_id: Task ID to stop
+            
+        Returns:
+            True if task was stopped
+        """
+        if task_id not in self.tasks:
+            return False
+        
+        task = self.tasks[task_id]
+        
+        with self._lock:
+            # Only stop running tasks
+            if task.status != TaskStatus.RUNNING:
+                return False
+            
+            # Cancel the future if it exists
+            if task_id in self.running_futures:
+                future = self.running_futures[task_id]
+                cancelled = future.cancel()
+                if cancelled:
+                    # Mark task as cancelled
+                    task.status = TaskStatus.CANCELLED
+                    if task.attempts:
+                        task.attempts[-1].status = TaskStatus.CANCELLED
+                        task.attempts[-1].end_time = datetime.now()
+                        task.attempts[-1].error_message = "Task stopped by user"
+                    
+                    # Remove from running futures
+                    del self.running_futures[task_id]
+                    self._save_queue()
+                    
+                    if self.notification_callback:
+                        self.notification_callback(f"Task {task_id} stopped", "⏹️")
+                    
+                    logger.info(f"Task {task_id} stopped successfully")
+                    return True
+                else:
+                    logger.warning(f"Could not cancel task {task_id} - may be too far along")
+                    return False
+            else:
+                logger.warning(f"Task {task_id} is marked as running but no future found")
+                return False
+    
     def start_worker(self):
         """Start the background worker thread."""
         if self.worker_thread and self.worker_thread.is_alive():
@@ -385,10 +434,26 @@ class TaskQueue:
             # Use ThreadPoolExecutor for timeout (works in background threads)
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self._run_task_by_name, task)
+                
+                # Track the future so we can stop it if needed
+                with self._lock:
+                    self.running_futures[task.task_id] = future
+                
                 try:
-                    success = future.result(timeout=300)  # 5 minutes timeout
+                    # No timeout for any tasks - let them all complete (AbstractCore now supports timeout=None)
+                    success = future.result(timeout=None)
+                    logger.info(f"Task {task.task_id} ({task.name}) completed with infinite timeout")
                 except concurrent.futures.TimeoutError:
-                    raise TimeoutError(f"Task {task.task_id} timed out after 300 seconds")
+                    # This should never happen with timeout=None, but keep for safety
+                    raise TimeoutError(f"Task {task.task_id} timed out unexpectedly")
+                except concurrent.futures.CancelledError:
+                    # Task was cancelled via stop_task
+                    logger.info(f"Task {task.task_id} was cancelled")
+                    return  # Don't update attempt status, it's already set in stop_task
+                finally:
+                    # Remove from running futures
+                    with self._lock:
+                        self.running_futures.pop(task.task_id, None)
             
             # Update attempt
             attempt.end_time = datetime.now()
@@ -583,7 +648,8 @@ class TaskQueue:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(embedding_manager.embed, content)
                     try:
-                        embedding = future.result(timeout=120)  # 2 minutes timeout
+                        # No timeout for embedding generation - let it complete
+                        embedding = future.result(timeout=None)
                         logger.debug(f"✅ [TaskQueue] Embedding generated: {len(embedding)} dimensions")
                     except concurrent.futures.TimeoutError:
                         raise TimeoutError("Embedding generation timed out after 120 seconds")

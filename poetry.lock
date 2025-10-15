@@ -2,15 +2,15 @@
 
 [[package]]
 name = "abstractcore"
-version = "2.3.7"
+version = "2.3.9"
 description = "Unified interface to all LLM providers with essential infrastructure for tool calling, streaming, and model management"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"llm\" or extra == \"embeddings\" or extra == \"all\""
 files = [
-    {file = "abstractcore-2.3.7-py3-none-any.whl", hash = "sha256:b1d034a0e2c74c6b1cf8307d9f5128c3b13c021f2846e078b0f6754680569b75"},
-    {file = "abstractcore-2.3.7.tar.gz", hash = "sha256:91595b0591c8c6a00c391826e8f9afd42671afba98bf59b73d526d6dc2e9fb8a"},
+    {file = "abstractcore-2.3.9-py3-none-any.whl", hash = "sha256:b1d034a0e2c74c6b1cf8307d9f5128c3b13c021f2846e078b0f6754680569b75"},
+    {file = "abstractcore-2.3.9.tar.gz", hash = "sha256:91595b0591c8c6a00c391826e8f9afd42671afba98bf59b73d526d6dc2e9fb8a"},
 ]
 
 [package.dependencies]

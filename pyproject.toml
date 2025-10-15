@@ -9,10 +9,10 @@ description = "Production-ready memory system for LLM agents - NO MOCKS, real se
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "Laurent-Philippe Albou", email = "lpalbou@gmail.com"}
+    {name = "Laurent-Philippe Albou", email = "contact@abstractcore.ai"}
 ]
 maintainers = [
-    {name = "Laurent-Philippe Albou", email = "lpalbou@gmail.com"}
+    {name = "Laurent-Philippe Albou", email = "contact@abstractcore.ai"}
 ]
 keywords = ["llm", "memory", "semantic-search", "embeddings", "ai", "agents", "knowledge-graph", "temporal", "grounded-memory", "vector-search"]
 classifiers = [
