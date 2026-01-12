@@ -38,11 +38,8 @@ dev = [
 lancedb = [
   "lancedb",
 ]
-abstractcore = [
-  "abstractcore>=2.6.8",
-]
 all = [
-  "AbstractMemory[lancedb,abstractcore]",
+  "AbstractMemory[lancedb]",
 ]
 
 [project.urls]

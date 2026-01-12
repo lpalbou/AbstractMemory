@@ -12,6 +12,7 @@ class TripleQuery:
     predicate: Optional[str] = None
     object: Optional[str] = None
     scope: Optional[str] = None  # run|session|global
+    owner_id: Optional[str] = None  # owner identifier within the selected scope
 
     since: Optional[str] = None  # observed_at >= since
     until: Optional[str] = None  # observed_at <= until

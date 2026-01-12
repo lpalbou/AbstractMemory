@@ -17,6 +17,7 @@ class TripleAssertion:
     predicate: str
     object: str
     scope: str = "run"  # run|session|global
+    owner_id: Optional[str] = None  # scope owner identifier (e.g. run_id, session_memory_*, global_memory)
     observed_at: str = field(default_factory=utc_now_iso_seconds)
 
     valid_from: Optional[str] = None
@@ -32,6 +33,7 @@ class TripleAssertion:
             "predicate": self.predicate,
             "object": self.object,
             "scope": self.scope,
+            "owner_id": self.owner_id,
             "observed_at": self.observed_at,
             "valid_from": self.valid_from,
             "valid_until": self.valid_until,
@@ -58,6 +60,7 @@ class TripleAssertion:
             raise ValueError("TripleAssertion.object must be a non-empty string")
 
         scope = data.get("scope") if isinstance(data.get("scope"), str) else "run"
+        owner_id = data.get("owner_id") if isinstance(data.get("owner_id"), str) else None
         observed_at = data.get("observed_at") if isinstance(data.get("observed_at"), str) else utc_now_iso_seconds()
 
         provenance = data.get("provenance") if isinstance(data.get("provenance"), dict) else {}
@@ -76,6 +79,7 @@ class TripleAssertion:
             predicate=predicate.strip(),
             object=obj.strip(),
             scope=scope.strip() or "run",
+            owner_id=owner_id.strip() if isinstance(owner_id, str) and owner_id.strip() else None,
             observed_at=observed_at.strip() or utc_now_iso_seconds(),
             valid_from=data.get("valid_from") if isinstance(data.get("valid_from"), str) else None,
             valid_until=data.get("valid_until") if isinstance(data.get("valid_until"), str) else None,
@@ -83,4 +87,3 @@ class TripleAssertion:
             provenance=dict(provenance),
             attributes=dict(attributes),
         )
-

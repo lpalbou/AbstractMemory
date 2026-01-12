@@ -9,6 +9,7 @@ structured, temporal assertions that can be queried and evolved over time.
 It is intentionally separate from:
 - **AbstractRuntime**: durable execution + provenance-first spans/notes/artifacts
 - **AbstractCore**: LLM/tool access + text processing (summarization/extraction)
+  - AbstractMemory should not depend on AbstractCore directly; gateway/runtime own model execution.
 
 ## Core representation
 The base primitive is an **append-only temporal triple assertion**:
@@ -39,6 +40,11 @@ SQLite remains a useful reference implementation (append-only + time/scopes), bu
 trajectory for long-term memory is a semantic graph with optional vector accelerators.
 
 ## Planned integration points
-- Ingestion: extract triples/JSON-LD from runtime spans/notes via `abstractcore.processing.BasicExtractor`
+- Ingestion: extract triples/JSON-LD from runtime spans/notes via gateway-managed processing (e.g. `abstractcore.processing.BasicExtractor`)
 - Query: provide provenance-backed “memory packets” to workflows/agents
 - Mapping: rebuild Active Memory blocks under `_limits.max_input_tokens`
+
+## Embeddings
+Embeddings are treated as an accelerator for retrieval. AbstractMemory can obtain embeddings by calling
+AbstractGateway’s embeddings API (stable provider+model per gateway instance), so the semantic store does
+not import AbstractCore directly.

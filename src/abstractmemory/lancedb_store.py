@@ -38,6 +38,8 @@ def _build_where_clause(q: TripleQuery) -> str:
         parts.append(f"object = '{_escape_sql_string(q.object)}'")
     if q.scope:
         parts.append(f"scope = '{_escape_sql_string(q.scope)}'")
+    if q.owner_id:
+        parts.append(f"owner_id = '{_escape_sql_string(q.owner_id)}'")
 
     if q.since:
         parts.append(f"observed_at >= '{_escape_sql_string(q.since)}'")
@@ -127,6 +129,7 @@ class LanceDBTripleStore:
                 "predicate": a.predicate,
                 "object": a.object,
                 "scope": a.scope,
+                "owner_id": a.owner_id,
                 "observed_at": a.observed_at,
                 "valid_from": a.valid_from,
                 "valid_until": a.valid_until,
@@ -190,6 +193,7 @@ class LanceDBTripleStore:
                     predicate=str(r.get("predicate") or ""),
                     object=str(r.get("object") or ""),
                     scope=str(r.get("scope") or "run"),
+                    owner_id=str(r.get("owner_id")) if r.get("owner_id") is not None else None,
                     observed_at=str(r.get("observed_at") or ""),
                     valid_from=str(r.get("valid_from")) if r.get("valid_from") is not None else None,
                     valid_until=str(r.get("valid_until")) if r.get("valid_until") is not None else None,
@@ -203,4 +207,3 @@ class LanceDBTripleStore:
         if query_vector is None:
             out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
         return out
-

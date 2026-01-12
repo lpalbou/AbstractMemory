@@ -10,3 +10,5 @@ Design goals (MVP):
 
 The primary representation remains a temporal semantic graph (triples). Embeddings are treated as
 an accelerator for retrieval (and later multimodal indexing), not as the meaning itself.
+
+Embeddings are expected to be generated via **AbstractGateway** (not via a direct AbstractCore dependency).
