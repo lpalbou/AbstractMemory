@@ -9,6 +9,16 @@ def utc_now_iso_seconds() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def canonicalize_term(value: str) -> str:
+    """Canonicalize a KG term for stable matching.
+
+    Policy (v0):
+    - trim surrounding whitespace
+    - lower-case
+    """
+    return str(value or "").strip().lower()
+
+
 @dataclass(frozen=True)
 class TripleAssertion:
     """An append-only semantic assertion with temporal and provenance metadata."""
@@ -26,6 +36,27 @@ class TripleAssertion:
 
     provenance: Dict[str, Any] = field(default_factory=dict)
     attributes: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Canonicalize KG terms so matching is stable across casing/whitespace variants.
+        object.__setattr__(self, "subject", canonicalize_term(self.subject))
+        object.__setattr__(self, "predicate", canonicalize_term(self.predicate))
+        object.__setattr__(self, "object", canonicalize_term(self.object))
+
+        # Keep scope canonical (it is part of the partitioning key).
+        object.__setattr__(self, "scope", canonicalize_term(self.scope) or "run")
+
+        # Defensive trimming for timestamps/ids without altering semantics.
+        if isinstance(self.owner_id, str):
+            oid = self.owner_id.strip()
+            object.__setattr__(self, "owner_id", oid if oid else None)
+        object.__setattr__(self, "observed_at", str(self.observed_at or "").strip() or utc_now_iso_seconds())
+        if isinstance(self.valid_from, str):
+            vf = self.valid_from.strip()
+            object.__setattr__(self, "valid_from", vf if vf else None)
+        if isinstance(self.valid_until, str):
+            vu = self.valid_until.strip()
+            object.__setattr__(self, "valid_until", vu if vu else None)
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
@@ -75,10 +106,10 @@ class TripleAssertion:
                 confidence = None
 
         return cls(
-            subject=subject.strip(),
-            predicate=predicate.strip(),
-            object=obj.strip(),
-            scope=scope.strip() or "run",
+            subject=subject,
+            predicate=predicate,
+            object=obj,
+            scope=scope,
             owner_id=owner_id.strip() if isinstance(owner_id, str) and owner_id.strip() else None,
             observed_at=observed_at.strip() or utc_now_iso_seconds(),
             valid_from=data.get("valid_from") if isinstance(data.get("valid_from"), str) else None,

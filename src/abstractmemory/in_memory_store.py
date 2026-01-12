@@ -110,10 +110,10 @@ class InMemoryTripleStore:
         query_vector: Optional[Sequence[float]] = None
         if q.query_vector:
             query_vector = q.query_vector
-        elif q.query_text and self._embedder is not None:
+        elif q.query_text:
+            if self._embedder is None:
+                raise ValueError("query_text requires a configured embedder (vector search); keyword fallback is disabled")
             query_vector = self._embedder.embed_texts([q.query_text])[0]
-        elif q.query_text and self._embedder is None:
-            raise ValueError("query_text requires a store-configured embedder")
 
         if query_vector is not None:
             ranked: list[tuple[float, TripleAssertion]] = []

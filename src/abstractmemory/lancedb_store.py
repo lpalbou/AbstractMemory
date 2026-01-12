@@ -114,10 +114,10 @@ class LanceDBTripleStore:
         if not pending:
             return []
 
-        texts: Optional[List[str]] = None
+        # Always store a canonical text column (useful for debugging and future indexing).
+        texts: List[str] = [_canonical_text(a) for a in pending]
         vectors: Optional[List[List[float]]] = None
         if self._embedder is not None:
-            texts = [_canonical_text(a) for a in pending]
             vectors = self._embedder.embed_texts(texts)
 
         for idx, a in enumerate(pending):
@@ -136,10 +136,9 @@ class LanceDBTripleStore:
                 "confidence": a.confidence,
                 "provenance_json": json.dumps(a.provenance, ensure_ascii=False, separators=(",", ":")),
                 "attributes_json": json.dumps(a.attributes, ensure_ascii=False, separators=(",", ":")),
+                "text": texts[idx],
             }
 
-            if texts is not None:
-                row["text"] = texts[idx]
             if vectors is not None and idx < len(vectors):
                 row[self._vector_column] = vectors[idx]
 
@@ -166,14 +165,15 @@ class LanceDBTripleStore:
         query_vector: Optional[Sequence[float]] = None
         if q.query_vector:
             query_vector = q.query_vector
-        elif q.query_text and self._embedder is not None:
+        elif q.query_text:
+            if self._embedder is None:
+                raise ValueError("query_text requires a configured embedder (vector search); keyword fallback is disabled")
             query_vector = self._embedder.embed_texts([q.query_text])[0]
-        elif q.query_text and self._embedder is None:
-            raise ValueError("query_text requires a store-configured embedder")
 
+        qb = None
         if query_vector is not None:
             qb = self._table.search(query_vector, vector_column_name=q.vector_column or self._vector_column)
-        else:
+        if qb is None:
             qb = self._table.search()
 
         if where:
@@ -206,4 +206,4 @@ class LanceDBTripleStore:
         # For non-semantic queries, keep compatibility with the SQLite semantics: order by observed_at.
         if query_vector is None:
             out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
-        return out
+        return out[:limit]
