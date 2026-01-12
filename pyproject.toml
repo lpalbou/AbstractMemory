@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "AbstractMemory"
+version = "0.0.1"
+description = "AbstractMemory: temporal, provenance-aware semantic memory primitives for AbstractFramework."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Laurent-Philippe Albou" },
+]
+keywords = [
+  "memory",
+  "knowledge-graph",
+  "triples",
+  "temporal",
+  "agents",
+]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+]
+
+[project.urls]
+"AbstractFramework (monorepo)" = "https://github.com/lpalbou/abstractframework"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/abstractmemory"]
+

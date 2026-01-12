@@ -1,0 +1,30 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Protocol
+
+from .models import TripleAssertion
+
+
+@dataclass(frozen=True)
+class TripleQuery:
+    subject: Optional[str] = None
+    predicate: Optional[str] = None
+    object: Optional[str] = None
+    scope: Optional[str] = None  # run|session|global
+
+    since: Optional[str] = None  # observed_at >= since
+    until: Optional[str] = None  # observed_at <= until
+    active_at: Optional[str] = None  # valid_from/valid_until window intersection
+
+    limit: int = 100
+    order: str = "desc"  # asc|desc by observed_at
+
+
+class TripleStore(Protocol):
+    def add(self, assertions: Iterable[TripleAssertion]) -> List[str]: ...
+
+    def query(self, q: TripleQuery) -> List[TripleAssertion]: ...
+
+    def close(self) -> None: ...
+
