@@ -35,10 +35,18 @@ classifiers = [
 dev = [
   "pytest>=7.0.0",
 ]
+lancedb = [
+  "lancedb",
+]
+abstractcore = [
+  "abstractcore>=2.6.8",
+]
+all = [
+  "AbstractMemory[lancedb,abstractcore]",
+]
 
 [project.urls]
 "AbstractFramework (monorepo)" = "https://github.com/lpalbou/abstractframework"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/abstractmemory"]
-

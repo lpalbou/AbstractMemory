@@ -17,6 +17,13 @@ class TripleQuery:
     until: Optional[str] = None  # observed_at <= until
     active_at: Optional[str] = None  # valid_from/valid_until window intersection
 
+    # Optional semantic search:
+    # - query_text requires a store-configured embedder
+    # - query_vector bypasses embedding generation
+    query_text: Optional[str] = None
+    query_vector: Optional[List[float]] = None
+    vector_column: str = "vector"
+
     limit: int = 100
     order: str = "desc"  # asc|desc by observed_at
 
@@ -27,4 +34,3 @@ class TripleStore(Protocol):
     def query(self, q: TripleQuery) -> List[TripleAssertion]: ...
 
     def close(self) -> None: ...
-

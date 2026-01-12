@@ -30,15 +30,15 @@ Append-only assertions make updates explicit and auditable: “new knowledge” 
 with time and provenance, rather than destructive rewrites.
 
 ## MVP storage
-The MVP store is SQLite-backed (stdlib `sqlite3`) for:
-- portability (single file)
-- speed (indexes + simple SQL)
-- inspectability (open with any SQLite client)
+The current MVP store is **LanceDB-backed** (vector-native) for:
+- semantic/vector retrieval (and future multi-modal retrieval)
+- portability (local path) and inspectability (Lance tables on disk)
+- compatibility with a “single embedding model per runtime instance” contract
 
-Future stores can implement the same interface (Postgres, remote, etc.).
+SQLite remains a useful reference implementation (append-only + time/scopes), but the
+trajectory for long-term memory is a semantic graph with optional vector accelerators.
 
 ## Planned integration points
 - Ingestion: extract triples/JSON-LD from runtime spans/notes via `abstractcore.processing.BasicExtractor`
 - Query: provide provenance-backed “memory packets” to workflows/agents
 - Mapping: rebuild Active Memory blocks under `_limits.max_input_tokens`
-

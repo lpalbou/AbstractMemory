@@ -6,8 +6,7 @@ Design goals (MVP):
 - Triples-first temporal assertions (append-only)
 - Explicit provenance (`span_id`/`artifact_id` references)
 - Deterministic, inspectable query APIs (pattern/time/scope)
+- Optional semantic retrieval via embeddings (vector search)
 
-This package intentionally avoids embedding/vector search at the core layer. Embeddings may be
-added later as an optional retrieval accelerator, but the primary representation is a temporal
-semantic graph that can be audited and evolved over time.
-
+The primary representation remains a temporal semantic graph (triples). Embeddings are treated as
+an accelerator for retrieval (and later multimodal indexing), not as the meaning itself.

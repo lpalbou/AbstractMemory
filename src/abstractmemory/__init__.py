@@ -1,11 +1,10 @@
 from .models import TripleAssertion
-from .sqlite_store import SQLiteTripleStore
+from .lancedb_store import LanceDBTripleStore
 from .store import TripleStore, TripleQuery
 
 __all__ = [
-    "SQLiteTripleStore",
+    "LanceDBTripleStore",
     "TripleAssertion",
     "TripleQuery",
     "TripleStore",
 ]
-
