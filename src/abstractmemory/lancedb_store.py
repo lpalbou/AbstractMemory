@@ -55,8 +55,35 @@ def _build_where_clause(q: TripleQuery) -> str:
 
 
 def _canonical_text(a: TripleAssertion) -> str:
-    # MVP: stable, compact representation; higher-level layers can refine.
-    return f"{a.subject} {a.predicate} {a.object}".strip()
+    # Stable, information-rich representation for embedding retrieval.
+    #
+    # Why include more than "s p o":
+    # - semantic queries often refer to details that aren't present in the triple surface form
+    # - extractor-provided evidence/context improves retrieval selectivity without requiring
+    #   a separate episodic document store in v0
+    base = f"{a.subject} {a.predicate} {a.object}".strip()
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+
+    parts: list[str] = [base]
+    st = attrs.get("subject_type")
+    ot = attrs.get("object_type")
+    if isinstance(st, str) and st.strip():
+        parts.append(f"subject_type: {st.strip()}")
+    if isinstance(ot, str) and ot.strip():
+        parts.append(f"object_type: {ot.strip()}")
+
+    eq = attrs.get("evidence_quote")
+    if isinstance(eq, str) and eq.strip():
+        parts.append(f"evidence: {eq.strip()}")
+
+    ctx = attrs.get("original_context")
+    if isinstance(ctx, str) and ctx.strip():
+        ctx2 = ctx.strip()
+        if len(ctx2) > 400:
+            ctx2 = ctx2[:400] + "…"
+        parts.append(f"context: {ctx2}")
+
+    return "\n".join(parts)
 
 
 def _loads_json(raw: object) -> dict:
@@ -172,7 +199,8 @@ class LanceDBTripleStore:
 
         qb = None
         if query_vector is not None:
-            qb = self._table.search(query_vector, vector_column_name=q.vector_column or self._vector_column)
+            # Use cosine metric so `min_score` can be expressed as cosine similarity.
+            qb = self._table.search(query_vector, vector_column_name=q.vector_column or self._vector_column).metric("cosine")
         if qb is None:
             qb = self._table.search()
 
@@ -187,6 +215,32 @@ class LanceDBTripleStore:
                 continue
             provenance = _loads_json(r.get("provenance_json"))
             attributes = _loads_json(r.get("attributes_json"))
+
+            # Attach retrieval metadata for semantic queries.
+            # LanceDB returns `_distance` for vector searches; with metric=cosine, similarity = 1 - distance.
+            if query_vector is not None:
+                dist_raw = r.get("_distance")
+                dist: Optional[float] = None
+                try:
+                    dist = float(dist_raw) if dist_raw is not None else None
+                except Exception:
+                    dist = None
+                score: Optional[float] = None
+                if dist is not None:
+                    score = 1.0 - dist
+
+                if q.min_score is not None and score is not None and score < float(q.min_score):
+                    continue
+
+                retrieval = attributes.get("_retrieval") if isinstance(attributes.get("_retrieval"), dict) else {}
+                retrieval2 = dict(retrieval)
+                if score is not None:
+                    retrieval2["score"] = score
+                if dist is not None:
+                    retrieval2["distance"] = dist
+                retrieval2.setdefault("metric", "cosine")
+                attributes = dict(attributes)
+                attributes["_retrieval"] = retrieval2
             out.append(
                 TripleAssertion(
                     subject=str(r.get("subject") or ""),
@@ -203,7 +257,8 @@ class LanceDBTripleStore:
                 )
             )
 
-        # For non-semantic queries, keep compatibility with the SQLite semantics: order by observed_at.
+        # For non-semantic queries, keep compatibility with SQLite semantics: order by observed_at.
+        # For semantic queries, LanceDB already returns similarity-ranked results.
         if query_vector is None:
             out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
         return out[:limit]

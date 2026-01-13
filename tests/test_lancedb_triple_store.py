@@ -123,6 +123,43 @@ def test_lancedb_query_text_vector_search_with_embedder(tmp_path):
     assert len(out) >= 1
     assert out[0].subject == "e:marley"
 
+def test_lancedb_query_text_min_score_filters_results(tmp_path):
+    try:
+        import lancedb  # noqa: F401
+    except Exception:
+        pytest.skip("lancedb not installed")
+
+    class _DummyEmbedder:
+        def embed_texts(self, texts):
+            out = []
+            for t in texts:
+                t2 = (t or "").lower()
+                if "marley" in t2:
+                    out.append([1.0, 0.0])
+                elif "scrooge" in t2:
+                    out.append([0.0, 1.0])
+                else:
+                    out.append([0.0, 0.0])
+            return out
+
+    store = LanceDBTripleStore(tmp_path / "kg", embedder=_DummyEmbedder())
+    store.add(
+        [
+            TripleAssertion(subject="e:scrooge", predicate="is_a", object="person", scope="global", attributes={"evidence_quote": "scrooge"}),
+            TripleAssertion(subject="e:marley", predicate="is_a", object="person", scope="global", attributes={"evidence_quote": "marley"}),
+        ]
+    )
+
+    out = store.query(TripleQuery(query_text="marley", scope="global", limit=10, min_score=0.5))
+    assert len(out) == 1
+    assert out[0].subject == "e:marley"
+    attrs = out[0].attributes
+    assert isinstance(attrs, dict)
+    ret = attrs.get("_retrieval")
+    assert isinstance(ret, dict)
+    assert ret.get("metric") == "cosine"
+    assert ret.get("score") is not None
+
 
 def test_where_clause_builder_escapes_and_compares():
     from abstractmemory.lancedb_store import _build_where_clause

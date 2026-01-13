@@ -24,6 +24,7 @@ class TripleQuery:
     query_text: Optional[str] = None
     query_vector: Optional[List[float]] = None
     vector_column: str = "vector"
+    min_score: Optional[float] = None  # cosine similarity threshold (semantic queries)
 
     limit: int = 100
     order: str = "desc"  # asc|desc by observed_at
@@ -66,6 +67,16 @@ class TripleQuery:
         if isinstance(self.vector_column, str):
             vc = self.vector_column.strip() or "vector"
             object.__setattr__(self, "vector_column", vc)
+
+        if self.min_score is not None:
+            try:
+                ms = float(self.min_score)
+            except Exception:
+                ms = None
+            if ms is None or not (ms == ms):  # NaN
+                object.__setattr__(self, "min_score", None)
+            else:
+                object.__setattr__(self, "min_score", ms)
 
         if isinstance(self.order, str):
             object.__setattr__(self, "order", self.order.strip().lower() or "desc")

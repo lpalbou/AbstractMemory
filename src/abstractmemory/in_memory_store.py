@@ -10,7 +10,29 @@ from .store import TripleQuery
 
 
 def _canonical_text(a: TripleAssertion) -> str:
-    return f"{a.subject} {a.predicate} {a.object}".strip()
+    base = f"{a.subject} {a.predicate} {a.object}".strip()
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+
+    parts: list[str] = [base]
+    st = attrs.get("subject_type")
+    ot = attrs.get("object_type")
+    if isinstance(st, str) and st.strip():
+        parts.append(f"subject_type: {st.strip()}")
+    if isinstance(ot, str) and ot.strip():
+        parts.append(f"object_type: {ot.strip()}")
+
+    eq = attrs.get("evidence_quote")
+    if isinstance(eq, str) and eq.strip():
+        parts.append(f"evidence: {eq.strip()}")
+
+    ctx = attrs.get("original_context")
+    if isinstance(ctx, str) and ctx.strip():
+        ctx2 = ctx.strip()
+        if len(ctx2) > 400:
+            ctx2 = ctx2[:400] + "…"
+        parts.append(f"context: {ctx2}")
+
+    return "\n".join(parts)
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
@@ -125,9 +147,35 @@ class InMemoryTripleStore:
                     score = _cosine(query_vector, v)
                 except Exception:
                     score = 0.0
+                if q.min_score is not None and score < float(q.min_score):
+                    continue
                 ranked.append((score, r["assertion"]))
             ranked.sort(key=lambda t: t[0], reverse=True)
-            return [a for _, a in ranked[:limit]]
+
+            out: list[TripleAssertion] = []
+            for score, a in ranked[:limit]:
+                attrs = dict(a.attributes) if isinstance(a.attributes, dict) else {}
+                retrieval = attrs.get("_retrieval") if isinstance(attrs.get("_retrieval"), dict) else {}
+                retrieval2 = dict(retrieval)
+                retrieval2["score"] = float(score)
+                retrieval2.setdefault("metric", "cosine")
+                attrs["_retrieval"] = retrieval2
+                out.append(
+                    TripleAssertion(
+                        subject=a.subject,
+                        predicate=a.predicate,
+                        object=a.object,
+                        scope=a.scope,
+                        owner_id=a.owner_id,
+                        observed_at=a.observed_at,
+                        valid_from=a.valid_from,
+                        valid_until=a.valid_until,
+                        confidence=a.confidence,
+                        provenance=dict(a.provenance),
+                        attributes=attrs,
+                    )
+                )
+            return out
 
         out: list[TripleAssertion] = [r["assertion"] for r in filtered]
         out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
