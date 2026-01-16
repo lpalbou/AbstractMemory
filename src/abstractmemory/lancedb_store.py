@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .embeddings import TextEmbedder
-from .models import TripleAssertion
+from .models import TripleAssertion, normalize_term
 from .store import TripleQuery
 
 
@@ -31,11 +31,11 @@ def _build_where_clause(q: TripleQuery) -> str:
     parts: list[str] = []
 
     if q.subject:
-        parts.append(f"subject = '{_escape_sql_string(q.subject)}'")
+        parts.append(f"lower(subject) = '{_escape_sql_string(normalize_term(q.subject))}'")
     if q.predicate:
-        parts.append(f"predicate = '{_escape_sql_string(q.predicate)}'")
+        parts.append(f"lower(predicate) = '{_escape_sql_string(normalize_term(q.predicate))}'")
     if q.object:
-        parts.append(f"object = '{_escape_sql_string(q.object)}'")
+        parts.append(f"lower(object) = '{_escape_sql_string(normalize_term(q.object))}'")
     if q.scope:
         parts.append(f"scope = '{_escape_sql_string(q.scope)}'")
     if q.owner_id:

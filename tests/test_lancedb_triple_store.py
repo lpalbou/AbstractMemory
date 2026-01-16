@@ -174,9 +174,9 @@ def test_where_clause_builder_escapes_and_compares():
         active_at="2026-01-15T00:00:00+00:00",
     )
     where = _build_where_clause(q)
-    assert "subject = 'e:alice'" in where
-    assert "predicate = 'says'" in where
-    assert "object = 'bob''s car'" in where  # escaped
+    assert "lower(subject) = 'e:alice'" in where
+    assert "lower(predicate) = 'says'" in where
+    assert "lower(object) = 'bob''s car'" in where  # escaped
     assert "scope = 'session'" in where
     assert "observed_at >= '2026-01-01T00:00:00+00:00'" in where
     assert "observed_at <= '2026-02-01T00:00:00+00:00'" in where

@@ -29,7 +29,7 @@ def test_terms_are_canonicalized_on_write_and_query() -> None:
         )
     )
     assert len(out) == 1
+    # Storage is canonical (trim + lower) to prevent misses due to casing drift.
     assert out[0].subject == "scrooge"
     assert out[0].predicate == "related_to"
     assert out[0].object == "christmas"
-

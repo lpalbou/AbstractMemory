@@ -30,7 +30,7 @@ class TripleQuery:
     order: str = "desc"  # asc|desc by observed_at
 
     def __post_init__(self) -> None:
-        # Canonicalize KG terms once so stores can rely on exact matching.
+        # Canonicalize KG terms once (trim + lower; stable exact match).
         if isinstance(self.subject, str):
             s = canonicalize_term(self.subject)
             object.__setattr__(self, "subject", s if s else None)
@@ -42,7 +42,7 @@ class TripleQuery:
             object.__setattr__(self, "object", o if o else None)
 
         if isinstance(self.scope, str):
-            sc = canonicalize_term(self.scope)
+            sc = str(self.scope or "").strip().lower()
             object.__setattr__(self, "scope", sc if sc else None)
 
         # Keep metadata trimmed without changing semantics.
@@ -61,7 +61,7 @@ class TripleQuery:
 
         # For semantic retrieval, normalize text input once.
         if isinstance(self.query_text, str):
-            qt = canonicalize_term(self.query_text)
+            qt = str(self.query_text or "").strip()
             object.__setattr__(self, "query_text", qt if qt else None)
 
         if isinstance(self.vector_column, str):

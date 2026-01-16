@@ -14,9 +14,15 @@ def canonicalize_term(value: str) -> str:
 
     Policy (v0):
     - trim surrounding whitespace
-    - lower-case
+    - lowercase (avoids missed matches due to casing drift)
     """
     return str(value or "").strip().lower()
+
+
+def normalize_term(value: str) -> str:
+    """Normalize a KG term for case-insensitive matching (query-time)."""
+    # `canonicalize_term` already lowercases; keep this for clarity/compatibility.
+    return canonicalize_term(value).lower()
 
 
 @dataclass(frozen=True)
@@ -38,13 +44,13 @@ class TripleAssertion:
     attributes: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Canonicalize KG terms so matching is stable across casing/whitespace variants.
+        # Canonicalize KG terms (trim + lower) for stable matching.
         object.__setattr__(self, "subject", canonicalize_term(self.subject))
         object.__setattr__(self, "predicate", canonicalize_term(self.predicate))
         object.__setattr__(self, "object", canonicalize_term(self.object))
 
         # Keep scope canonical (it is part of the partitioning key).
-        object.__setattr__(self, "scope", canonicalize_term(self.scope) or "run")
+        object.__setattr__(self, "scope", str(self.scope or "").strip().lower() or "run")
 
         # Defensive trimming for timestamps/ids without altering semantics.
         if isinstance(self.owner_id, str):

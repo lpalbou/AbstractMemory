@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Iterable, List, Optional, Sequence
 
 from .embeddings import TextEmbedder
-from .models import TripleAssertion
+from .models import TripleAssertion, normalize_term
 from .store import TripleQuery
 
 
@@ -100,11 +100,11 @@ class InMemoryTripleStore:
         limit = max(1, min(limit, 10_000))
 
         def _match(a: TripleAssertion) -> bool:
-            if q.subject and a.subject != q.subject:
+            if q.subject and normalize_term(a.subject) != normalize_term(q.subject):
                 return False
-            if q.predicate and a.predicate != q.predicate:
+            if q.predicate and normalize_term(a.predicate) != normalize_term(q.predicate):
                 return False
-            if q.object and a.object != q.object:
+            if q.object and normalize_term(a.object) != normalize_term(q.object):
                 return False
             if q.scope and a.scope != q.scope:
                 return False
