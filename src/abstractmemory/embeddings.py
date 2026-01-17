@@ -59,7 +59,13 @@ class AbstractGatewayTextEmbedder:
                 detail = e.read().decode("utf-8")
             except Exception:
                 detail = ""
-            raise RuntimeError(f"Gateway embeddings HTTP {e.code}: {detail or e.reason}") from e
+            hint = ""
+            if int(getattr(e, "code", 0) or 0) == 401:
+                hint = (
+                    " (Set `ABSTRACTGATEWAY_AUTH_TOKEN` / `ABSTRACTFLOW_GATEWAY_AUTH_TOKEN` "
+                    "for the caller process, or pass a Bearer token to the gateway embeddings endpoint.)"
+                )
+            raise RuntimeError(f"Gateway embeddings HTTP {e.code}: {detail or e.reason}{hint}") from e
         except URLError as e:
             raise RuntimeError(f"Gateway embeddings request failed: {e}") from e
 
