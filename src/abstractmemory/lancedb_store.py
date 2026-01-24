@@ -184,8 +184,12 @@ class LanceDBTripleStore:
         if self._table is None:
             return []
 
-        limit = int(q.limit) if isinstance(q.limit, int) else 100
-        limit = max(1, min(limit, 10_000))
+        raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
+        limit: Optional[int]
+        if raw_limit <= 0:
+            limit = None
+        else:
+            limit = max(1, min(raw_limit, 10_000))
 
         where = _build_where_clause(q)
 
@@ -207,7 +211,7 @@ class LanceDBTripleStore:
         if where:
             qb = qb.where(where)
 
-        rows = qb.limit(limit).to_list()
+        rows = qb.limit(limit).to_list() if limit is not None else qb.to_list()
 
         out: List[TripleAssertion] = []
         for r in rows:
@@ -261,4 +265,4 @@ class LanceDBTripleStore:
         # For semantic queries, LanceDB already returns similarity-ranked results.
         if query_vector is None:
             out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
-        return out[:limit]
+        return out if limit is None else out[:limit]

@@ -96,8 +96,12 @@ class InMemoryTripleStore:
         return ids
 
     def query(self, q: TripleQuery) -> List[TripleAssertion]:
-        limit = int(q.limit) if isinstance(q.limit, int) else 100
-        limit = max(1, min(limit, 10_000))
+        raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
+        limit: Optional[int]
+        if raw_limit <= 0:
+            limit = None
+        else:
+            limit = max(1, min(raw_limit, 10_000))
 
         def _match(a: TripleAssertion) -> bool:
             if q.subject and normalize_term(a.subject) != normalize_term(q.subject):
@@ -153,7 +157,7 @@ class InMemoryTripleStore:
             ranked.sort(key=lambda t: t[0], reverse=True)
 
             out: list[TripleAssertion] = []
-            for score, a in ranked[:limit]:
+            for score, a in (ranked if limit is None else ranked[:limit]):
                 attrs = dict(a.attributes) if isinstance(a.attributes, dict) else {}
                 retrieval = attrs.get("_retrieval") if isinstance(attrs.get("_retrieval"), dict) else {}
                 retrieval2 = dict(retrieval)
@@ -179,4 +183,4 @@ class InMemoryTripleStore:
 
         out: list[TripleAssertion] = [r["assertion"] for r in filtered]
         out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
-        return out[:limit]
+        return out if limit is None else out[:limit]
