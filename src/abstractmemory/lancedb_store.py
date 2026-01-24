@@ -189,7 +189,7 @@ class LanceDBTripleStore:
         if raw_limit <= 0:
             limit = None
         else:
-            limit = max(1, min(raw_limit, 10_000))
+            limit = max(1, raw_limit)
 
         where = _build_where_clause(q)
 

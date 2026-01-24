@@ -101,7 +101,7 @@ class InMemoryTripleStore:
         if raw_limit <= 0:
             limit = None
         else:
-            limit = max(1, min(raw_limit, 10_000))
+            limit = max(1, raw_limit)
 
         def _match(a: TripleAssertion) -> bool:
             if q.subject and normalize_term(a.subject) != normalize_term(q.subject):
