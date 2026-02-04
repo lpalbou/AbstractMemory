@@ -90,3 +90,6 @@ Source: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py
 - Expects an OpenAI-like response shape with a `data` list containing `embedding` (and optionally `index`)
 
 Tip: keep a stable provider/model per store instance to preserve a consistent embedding space (the store itself does not enforce this).
+
+See also:
+- Common questions and implementation notes: [`docs/faq.md`](faq.md)

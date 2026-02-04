@@ -132,4 +132,7 @@ Likely next steps (not implemented in this package as of 2026-02-04):
 - Higher-level ingestion helpers (still likely owned by gateway/runtime, not this package)
 - Schema evolution and compaction strategies for long-lived stores
 
-Next: [`docs/getting-started.md`](getting-started.md) and [`docs/api.md`](api.md).
+Next:
+- Getting started: [`docs/getting-started.md`](getting-started.md)
+- API reference: [`docs/api.md`](api.md)
+- FAQ: [`docs/faq.md`](faq.md)

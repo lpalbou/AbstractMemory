@@ -5,6 +5,24 @@
 This file is intended to be a standalone, copy/pasteable context for agentic coding assistants.
 For the human entry point, see [README.md](README.md). For getting started, see [docs/getting-started.md](docs/getting-started.md).
 
+## Docs index
+
+User-facing docs:
+- [docs/getting-started.md](docs/getting-started.md)
+- [docs/faq.md](docs/faq.md)
+- [docs/api.md](docs/api.md)
+- [docs/stores.md](docs/stores.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/development.md](docs/development.md)
+- [docs/README.md](docs/README.md)
+
+Release/docs hygiene:
+- [CHANGELOG.md](CHANGELOG.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)
+- [LICENSE](LICENSE)
+- [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md)
+
 ## Repository layout
 
 - `src/abstractmemory/` — library source (src-layout)
@@ -14,6 +32,8 @@ For the human entry point, see [README.md](README.md). For getting started, see 
 Public API exports are defined in [src/abstractmemory/__init__.py](src/abstractmemory/__init__.py).
 
 ## Install
+
+Requires Python 3.10+ (see [pyproject.toml](pyproject.toml)).
 
 From PyPI (when published):
 
@@ -39,6 +59,8 @@ Dev extras (tests):
 ```bash
 python -m pip install -e ".[dev]"
 ```
+
+Note: the distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
 
 ## Quickstart (in-memory)
 
@@ -156,3 +178,9 @@ See the maintained architecture doc with a component diagram:
 - Run tests: `python -m pytest -q`
 - LanceDB tests are skipped when `lancedb` is not installed.
 - `tests/conftest.py` bootstraps `sys.path` for monorepo layouts: [tests/conftest.py](tests/conftest.py)
+
+## Change checklist (when modifying behavior)
+
+- Update/extend tests (especially store/query contracts).
+- Update user-facing docs (`README.md`, `docs/getting-started.md`, and relevant `docs/*.md`).
+- Add an entry to `CHANGELOG.md`.

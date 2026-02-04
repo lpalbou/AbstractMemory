@@ -4,6 +4,7 @@ AbstractMemory is a small, dependency-light Python library that provides **appen
 
 ## Start here
 - Getting started: [`getting-started.md`](getting-started.md)
+- FAQ: [`faq.md`](faq.md)
 - Architecture: [`architecture.md`](architecture.md)
 - Stores/backends: [`stores.md`](stores.md)
 - API reference: [`api.md`](api.md)
@@ -11,3 +12,8 @@ AbstractMemory is a small, dependency-light Python library that provides **appen
 
 ## Related
 - Package overview: [`README.md`](../README.md)
+- Changelog: [`CHANGELOG.md`](../CHANGELOG.md)
+- Contributing: [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+- Security: [`SECURITY.md`](../SECURITY.md)
+- License: [`LICENSE`](../LICENSE)
+- Acknowledgments: [`ACKNOWLEDGMENTS.md`](../ACKNOWLEDGMENTS.md)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "AbstractMemory"
-version = "0.0.1"
+version = "0.0.2"
 description = "AbstractMemory: temporal, provenance-aware semantic memory primitives for AbstractFramework."
 readme = "README.md"
 requires-python = ">=3.10"

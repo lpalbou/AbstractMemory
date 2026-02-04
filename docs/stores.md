@@ -77,3 +77,4 @@ Vector column consistency:
 
 - Query fields and semantics: [`docs/api.md`](api.md)
 - System view and boundaries: [`docs/architecture.md`](architecture.md)
+- Common questions: [`docs/faq.md`](faq.md)

@@ -91,4 +91,8 @@ Vector search is opt-in:
 Evidence:
 - `ValueError` contract is tested for both stores: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
 
-Next: see [`docs/stores.md`](stores.md) and [`docs/api.md`](api.md).
+Next:
+- Stores/backends: [`docs/stores.md`](stores.md)
+- API reference: [`docs/api.md`](api.md)
+- Architecture and boundaries: [`docs/architecture.md`](architecture.md)
+- Common questions: [`docs/faq.md`](faq.md)

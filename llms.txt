@@ -6,9 +6,13 @@
 
 - [README.md](README.md) — overview, install, minimal example
 - [docs/getting-started.md](docs/getting-started.md) — copy/paste usage
+- [docs/faq.md](docs/faq.md) — common questions and contracts
 - [docs/api.md](docs/api.md) — public API reference
 - [docs/stores.md](docs/stores.md) — backends (in-memory vs LanceDB)
 - [docs/architecture.md](docs/architecture.md) — boundaries + architecture diagram
+- [CHANGELOG.md](CHANGELOG.md) — notable changes (keep in sync with behavior)
+- [SECURITY.md](SECURITY.md) — responsible vulnerability reporting
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev workflow and expectations
 
 ## Key contracts (evidence-first)
 
@@ -38,6 +42,12 @@
 - Run: `python -m pytest -q`
 - Optional LanceDB backend tests: `python -m pip install -e ".[lancedb]"`
 
+## Packaging
+
+- [pyproject.toml](pyproject.toml) — Python version, optional extras, metadata
+- [LICENSE](LICENSE) — project license
+- [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) — credits
+
 ## Full context
 
-- [llms-full.txt](llms-full.txt) — standalone “full context” file (docs content included)
+- [llms-full.txt](llms-full.txt) — extended, copy/pasteable context (includes key contracts + links)

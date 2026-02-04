@@ -62,10 +62,19 @@ assert hits[0].object == "christmas"  # terms are canonicalized (trim + lowercas
 ## Documentation
 
 - Getting started: [`docs/getting-started.md`](docs/getting-started.md)
+- FAQ: [`docs/faq.md`](docs/faq.md)
 - Architecture (with diagrams): [`docs/architecture.md`](docs/architecture.md)
 - Stores/backends: [`docs/stores.md`](docs/stores.md)
 - API reference: [`docs/api.md`](docs/api.md)
 - Development: [`docs/development.md`](docs/development.md)
+
+## Project
+
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Security: [`SECURITY.md`](SECURITY.md)
+- License: [`LICENSE`](LICENSE)
+- Acknowledgments: [`ACKNOWLEDGMENTS.md`](ACKNOWLEDGMENTS.md)
 
 ## Design principles (v0)
 
