@@ -1,0 +1,43 @@
+# AbstractMemory
+
+> Append-only, temporal, provenance-aware triple assertions + deterministic query API, with optional LanceDB persistence and vector/semantic retrieval.
+
+## Start here
+
+- [README.md](README.md) — overview, install, minimal example
+- [docs/getting-started.md](docs/getting-started.md) — copy/paste usage
+- [docs/api.md](docs/api.md) — public API reference
+- [docs/stores.md](docs/stores.md) — backends (in-memory vs LanceDB)
+- [docs/architecture.md](docs/architecture.md) — boundaries + architecture diagram
+
+## Key contracts (evidence-first)
+
+- Canonicalization (trim + lowercase) is part of the matching contract:
+  - [src/abstractmemory/models.py](src/abstractmemory/models.py), [tests/test_term_canonicalization.py](tests/test_term_canonicalization.py)
+- Semantic search is opt-in and requires an embedder (no keyword fallback for `query_text`):
+  - [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_store.py), [src/abstractmemory/lancedb_store.py](src/abstractmemory/lancedb_store.py)
+  - [tests/test_in_memory_query_text_fallback.py](tests/test_in_memory_query_text_fallback.py), [tests/test_lancedb_triple_store.py](tests/test_lancedb_triple_store.py)
+- `limit <= 0` means “unbounded”:
+  - [tests/test_triple_store_limits.py](tests/test_triple_store_limits.py)
+- Non-semantic queries order by `observed_at` and apply `limit` after ordering:
+  - [tests/test_triple_store_limits.py](tests/test_triple_store_limits.py)
+- Timestamps are compared/filtered as strings; prefer RFC-3339/UTC strings:
+  - [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_store.py), [src/abstractmemory/lancedb_store.py](src/abstractmemory/lancedb_store.py)
+
+## Code map (orientation)
+
+- [src/abstractmemory/__init__.py](src/abstractmemory/__init__.py) — public exports
+- [src/abstractmemory/models.py](src/abstractmemory/models.py) — `TripleAssertion` (+ `to_dict` / `from_dict`)
+- [src/abstractmemory/store.py](src/abstractmemory/store.py) — `TripleQuery`, `TripleStore` protocol
+- [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_store.py) — `InMemoryTripleStore`
+- [src/abstractmemory/lancedb_store.py](src/abstractmemory/lancedb_store.py) — `LanceDBTripleStore`
+- [src/abstractmemory/embeddings.py](src/abstractmemory/embeddings.py) — `TextEmbedder`, `AbstractGatewayTextEmbedder`
+
+## Tests
+
+- Run: `python -m pytest -q`
+- Optional LanceDB backend tests: `python -m pip install -e ".[lancedb]"`
+
+## Full context
+
+- [llms-full.txt](llms-full.txt) — standalone “full context” file (docs content included)

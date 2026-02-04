@@ -211,7 +211,13 @@ class LanceDBTripleStore:
         if where:
             qb = qb.where(where)
 
-        rows = qb.limit(limit).to_list() if limit is not None else qb.to_list()
+        if query_vector is None:
+            # LanceDB does not currently expose an order_by API on query builders. For deterministic
+            # observed_at ordering (and correct limit semantics), fetch all matching rows then sort
+            # in Python and apply the limit after sorting.
+            rows = qb.to_list()
+        else:
+            rows = qb.limit(limit).to_list() if limit is not None else qb.to_list()
 
         out: List[TripleAssertion] = []
         for r in rows:
