@@ -4,8 +4,9 @@ AbstractMemory builds on a number of great open-source tools and ideas.
 
 ## Libraries
 
-- **LanceDB** — optional persistent/vector backend used by `LanceDBTripleStore`.
-- **pytest** — development and contract tests.
+- **LanceDB** (`lancedb`) — optional persistent/vector backend used by `LanceDBTripleStore` (see `.[lancedb]` extra in `pyproject.toml`).
+- **pytest** (`pytest`) — development and contract tests (see `.[dev]` extra in `pyproject.toml`).
+- **Hatchling** (`hatchling`) — packaging/build backend (see `[build-system]` in `pyproject.toml`).
 
 ## Ecosystem
 
