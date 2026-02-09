@@ -1,6 +1,11 @@
 # API Reference (v0)
 
-> This package is early/WIP. The API is intentionally small and may change.
+> This package is early (pre-1.0). The API is intentionally small and may change.
+
+See also:
+- First examples: [`docs/getting-started.md`](getting-started.md)
+- System boundaries + diagrams: [`docs/architecture.md`](architecture.md)
+- Backend behavior: [`docs/stores.md`](stores.md)
 
 ## Public exports
 
@@ -23,6 +28,7 @@ Fields (selected):
 - `owner_id`: identifier within the scope (e.g. a session id)
 - `observed_at`: ISO-8601/RFC-3339 timestamp string (default: current UTC to seconds)
 - `valid_from`, `valid_until`: optional validity window (see `TripleQuery.active_at`)
+- `confidence`: optional float
 - `provenance`: free-form dict (e.g. `{"span_id": "...", "artifact_id": "..."}`)
 - `attributes`: free-form dict (extractor evidence/context, retrieval metadata, etc.)
 
@@ -31,6 +37,7 @@ Behavior:
 - Terms are **canonicalized on creation** (trim + lowercase). This is part of the matching contract. Evidence: `TripleAssertion.__post_init__` in [`src/abstractmemory/models.py`](../src/abstractmemory/models.py) and [`tests/test_term_canonicalization.py`](../tests/test_term_canonicalization.py).
   - Canonicalization discards original casing/whitespace. Preserve raw strings separately (e.g. in `attributes`) if needed.
 - Serialization helpers: `to_dict()` / `from_dict(...)` (same file).
+  - Tip: if you ingest untrusted input, prefer `from_dict(...)` (it validates required fields).
 
 ## `TripleQuery`
 
@@ -41,7 +48,7 @@ Used by `TripleStore.query(...)`.
 Core filters:
 - `subject`, `predicate`, `object` (exact match after canonicalization)
 - `scope`, `owner_id`
-- `since`, `until`: compare `observed_at` timestamps
+- `since`, `until`: compare `observed_at` timestamps (`>= since`, `<= until`)
 - `active_at`: filters by validity window intersection:
   - include if `(valid_from is None or valid_from <= active_at)` and `(valid_until is None or valid_until > active_at)`
   - end is **exclusive** (`valid_until > active_at`), consistent across stores
@@ -70,6 +77,10 @@ Minimal store interface:
 - `query(q: TripleQuery) -> list[TripleAssertion]`
 - `close() -> None`
 
+Notes:
+- Assertion ids are generated on `add(...)` and returned as strings; they are not currently part of `TripleAssertion` query results. If you need stable ids, store them yourself (e.g. in `provenance` or `attributes`).
+- For `query_text`, both stores raise `ValueError` when no embedder is configured (no keyword fallback).
+
 ## Stores
 
 Implementation sources:
@@ -88,6 +99,7 @@ Source: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py
 `AbstractGatewayTextEmbedder`:
 - Calls an AbstractGateway embeddings endpoint via HTTP (`POST` JSON `{ "input": [...] }`)
 - Expects an OpenAI-like response shape with a `data` list containing `embedding` (and optionally `index`)
+  - Default `endpoint_path`: `"/api/gateway/embeddings"`
 
 Tip: keep a stable provider/model per store instance to preserve a consistent embedding space (the store itself does not enforce this).
 

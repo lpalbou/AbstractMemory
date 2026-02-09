@@ -1,30 +1,44 @@
-# AbstractMemory (early / WIP)
+# AbstractMemory (early / pre-1.0)
 
-AbstractMemory is a small Python library for **append-only, temporal, provenance-aware triple assertions** with a **deterministic query API** and optional **vector/semantic retrieval**.
+AbstractMemory is a small Python library for **append-only, temporal, provenance-aware triple assertions** with **deterministic structured queries** and optional **vector/semantic retrieval**.
 
 ## Status
-- This package is still early: API and storage details may change.
-- Implemented today: `TripleAssertion`, `TripleQuery`, `InMemoryTripleStore`, `LanceDBTripleStore`, `AbstractGatewayTextEmbedder`.
+- This package is early (pre-1.0): the API is intentionally small, and details may evolve.
+- Current repo version: `0.0.2` (see [`pyproject.toml`](pyproject.toml)).
+- Implemented today (public API): `TripleAssertion`, `TripleQuery`, `TripleStore`, `InMemoryTripleStore`, `LanceDBTripleStore`, `TextEmbedder`, `AbstractGatewayTextEmbedder`.
   - Source of truth for exports: [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py)
 - Requires Python 3.10+ (see [`pyproject.toml`](pyproject.toml))
 
+## Ecosystem (AbstractFramework)
+
+AbstractMemory is part of the **AbstractFramework** ecosystem:
+- It stores and retrieves durable “memory” as append-only triples (this package).
+- It can *optionally* call an **AbstractGateway** embeddings endpoint for semantic retrieval via `AbstractGatewayTextEmbedder` (no direct AbstractCore/AbstractRuntime dependency).
+
+Evidence:
+- No direct dependency on AbstractCore/AbstractRuntime: [`pyproject.toml`](pyproject.toml)
+- Gateway adapter implementation: [`src/abstractmemory/embeddings.py`](src/abstractmemory/embeddings.py)
+
+```mermaid
+flowchart LR
+  App[Your app / agent] --> AM[AbstractMemory]
+  AM --> IM[InMemoryTripleStore]
+  AM --> LDB[LanceDBTripleStore]
+  LDB --> DISK[(LanceDB on disk)]
+
+  AM -->|embeddings (optional)| GW[AbstractGateway]
+  GW --> AR[AbstractRuntime]
+  GW --> AC[AbstractCore]
+```
+
+Related projects:
+- AbstractFramework: `https://github.com/lpalbou/AbstractFramework`
+- AbstractCore: `https://github.com/lpalbou/abstractcore`
+- AbstractRuntime: `https://github.com/lpalbou/abstractruntime`
+
 ## Install
 
-From PyPI (when published):
-
-```bash
-python -m pip install AbstractMemory
-```
-
-Optional persistent backend + vector search:
-
-```bash
-python -m pip install "AbstractMemory[lancedb]"
-```
-
-Note: the distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
-
-From source (recommended for this monorepo package):
+From source (recommended inside the AbstractFramework monorepo):
 
 ```bash
 python -m pip install -e .
@@ -35,6 +49,17 @@ Optional persistent backend + vector search:
 ```bash
 python -m pip install -e ".[lancedb]"
 ```
+
+PyPI (packaged release):
+
+```bash
+python -m pip install AbstractMemory
+python -m pip install "AbstractMemory[lancedb]"
+```
+
+Notes:
+- The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
+- PyPI releases may not match this monorepo directory exactly (they are currently published from `https://github.com/lpalbou/AbstractMemory`).
 
 ## Quick example
 

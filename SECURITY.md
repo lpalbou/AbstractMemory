@@ -7,8 +7,8 @@ If you discover a security vulnerability, please report it responsibly so we can
 Please **do not** open a public GitHub issue for security reports.
 
 Preferred reporting method (private):
-- Use GitHub’s **“Report a vulnerability”** / **Security Advisory** workflow on the AbstractFramework monorepo:
-  - `https://github.com/lpalbou/abstractframework`
+- Use GitHub’s **“Report a vulnerability”** / **Security Advisory** workflow on the AbstractFramework monorepo (covers AbstractMemory and related packages):
+  - `https://github.com/lpalbou/AbstractFramework`
 
 If private reporting is not available on the repository:
 - Contact the maintainers privately via the repository’s contact channels (e.g. GitHub profile contact).

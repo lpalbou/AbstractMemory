@@ -1,6 +1,6 @@
 # AbstractMemory Documentation
 
-AbstractMemory is a small, dependency-light Python library that provides **append-only, temporal, provenance-aware triple assertions** plus a **deterministic query API**, with optional **vector/semantic retrieval**.
+AbstractMemory is a small, dependency-light Python library that provides **append-only, temporal, provenance-aware triple assertions** plus **deterministic structured queries**, with optional **vector/semantic retrieval**.
 
 ## Start here
 - Getting started: [`getting-started.md`](getting-started.md)
@@ -12,6 +12,7 @@ AbstractMemory is a small, dependency-light Python library that provides **appen
 
 ## Related
 - Package overview: [`README.md`](../README.md)
+- AbstractFramework ecosystem context: [`architecture.md`](architecture.md)
 - Changelog: [`CHANGELOG.md`](../CHANGELOG.md)
 - Contributing: [`CONTRIBUTING.md`](../CONTRIBUTING.md)
 - Security: [`SECURITY.md`](../SECURITY.md)

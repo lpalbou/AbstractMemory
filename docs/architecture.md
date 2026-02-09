@@ -1,6 +1,6 @@
 # AbstractMemory — Architecture (v0 / early)
 
-> Updated: 2026-02-04
+> Updated: 2026-02-09
 
 This document describes **what exists in this repository today** and the boundaries it enforces.
 
@@ -8,7 +8,7 @@ This document describes **what exists in this repository today** and the boundar
 
 What this package *is*:
 - A small library for **append-only, temporal, provenance-aware triple assertions**.
-- A **deterministic query API** over those assertions, with optional vector/semantic retrieval.
+- **Deterministic structured query semantics** over those assertions, with optional vector/semantic retrieval.
 
 What this package is *not* (by design, not implemented here):
 - A text extractor/summarizer (no AbstractCore dependency).
@@ -21,11 +21,36 @@ Evidence (module map):
 - Stores: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 - Embeddings adapter: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py)
 
+## AbstractFramework boundary
+
+AbstractMemory is one component of the **AbstractFramework** ecosystem:
+- It stores/query triples and their temporal/provenance metadata.
+- For semantic retrieval, it can *optionally* call an **AbstractGateway** embeddings endpoint via `AbstractGatewayTextEmbedder`.
+- In a typical deployment, **AbstractRuntime** and **AbstractCore** sit behind the gateway to run models and manage provenance (this package does not depend on them directly).
+
+Evidence:
+- Gateway adapter boundary: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py)
+- No direct AbstractCore/AbstractRuntime dependency: [`pyproject.toml`](../pyproject.toml)
+- Monorepo context (tests keep sibling packages import-stable): [`tests/conftest.py`](../tests/conftest.py)
+
+```mermaid
+flowchart LR
+  App[Your app / agent] --> AM[AbstractMemory]
+  AM -->|optional| GW[AbstractGateway\nEmbeddings API]
+  GW --> AR[AbstractRuntime]
+  GW --> AC[AbstractCore]
+```
+
+Related projects:
+- AbstractFramework: `https://github.com/lpalbou/AbstractFramework`
+- AbstractCore: `https://github.com/lpalbou/abstractcore`
+- AbstractRuntime: `https://github.com/lpalbou/abstractruntime`
+
 ## Component diagram
 
 ```mermaid
 flowchart LR
-  APP[Your app / extractor] --> TA[TripleAssertion\nmodels.py]
+  APP[Your app / agent] --> TA[TripleAssertion\nmodels.py]
   APP --> TQ[TripleQuery\nstore.py]
 
   subgraph AbstractMemory
@@ -34,16 +59,13 @@ flowchart LR
     TQ --> IM
     TQ --> LDB
 
-    TE[TextEmbedder\nembeddings.py] --> IM
-    TE --> LDB
-    AG[AbstractGatewayTextEmbedder\nembeddings.py] --> TE
+    IM --> TE[TextEmbedder\nembeddings.py]
+    LDB --> TE
+    AG[AbstractGatewayTextEmbedder\nembeddings.py] -.implements.-> TE
   end
 
   LDB <--> DISK[(LanceDB tables\non disk)]
   AG <--> GW[AbstractGateway\nEmbeddings API]
-
-  IM --> APP
-  LDB --> APP
 ```
 
 ## Core representation
@@ -93,14 +115,14 @@ Evidence:
 - Store implementation: [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 - Persistence test (reopen and query): [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
 
-## Query semantics (deterministic)
+## Query semantics (structured, deterministic)
 
 See also: [`docs/api.md`](api.md)
 
 `abstractmemory.store.TripleQuery` supports:
 - Exact matching on canonicalized `subject`/`predicate`/`object`
 - Partitioning via `scope` + `owner_id`
-- Time filters: `since` / `until` over `observed_at`
+- Time filters: `since` / `until` over `observed_at` (both inclusive: `>= since`, `<= until`)
 - Validity window filtering: `active_at`
   - include if `(valid_from is None or valid_from <= active_at)` and `(valid_until is None or valid_until > active_at)`
   - `valid_until` is **exclusive** (shared across both stores)
@@ -108,6 +130,10 @@ See also: [`docs/api.md`](api.md)
   - `query_text` → embed then vector search (requires embedder)
   - `query_vector` → caller-supplied vector
   - `min_score` → cosine similarity threshold (implemented by both stores)
+
+Notes on determinism:
+- Structured filters and ordering by `observed_at` are deterministic (given the same stored assertions).
+- Vector search behavior depends on the configured embedder + backend. For similarity-ranked results, ties are not specified.
 
 Important implementation detail (timestamps are strings):
 - Both stores compare/filter timestamps as strings.
@@ -127,7 +153,7 @@ Evidence:
 
 ## Roadmap (non-binding)
 
-Likely next steps (not implemented in this package as of 2026-02-04):
+Likely next steps (not implemented in this package as of 2026-02-09):
 - More backends (e.g. SQLite reference store) while keeping the same `TripleStore` protocol
 - Higher-level ingestion helpers (still likely owned by gateway/runtime, not this package)
 - Schema evolution and compaction strategies for long-lived stores

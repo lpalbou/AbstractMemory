@@ -4,6 +4,8 @@ Thanks for your interest in improving AbstractMemory.
 
 This repository uses a `src/` layout and keeps the public API intentionally small.
 
+AbstractMemory is part of the **AbstractFramework** ecosystem (see [`README.md`](README.md) and [`docs/architecture.md`](docs/architecture.md)).
+
 ## Development setup
 
 Requirements:
@@ -44,8 +46,15 @@ Good first contributions:
 - Update docs when you change public behavior:
   - `README.md` and `docs/getting-started.md` for user-facing usage
   - `docs/api.md` for public API contracts
+  - `docs/architecture.md` when boundaries/diagrams change
   - `CHANGELOG.md` for notable changes
 - If you add a new dependency, keep it optional unless strictly required.
+
+## PR checklist
+
+- `python -m pytest -q` passes locally
+- Docs stay evidence-based (link to code/tests for contracts)
+- Public API changes are reflected in `src/abstractmemory/__init__.py` and `docs/api.md`
 
 ## Security issues
 

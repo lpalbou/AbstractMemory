@@ -19,18 +19,23 @@ Vector search support:
 - `query_text=...` requires an `embedder` (raises `ValueError` otherwise).
 - `query_vector=...` is supported, but only rows with stored vectors participate.
 - Vector query results attach retrieval metadata to `attributes["_retrieval"]` (score + metric).
+  - Embedded text is derived from `subject predicate object` plus selected `attributes` keys; see `_canonical_text(...)` in the store source.
 
 ## LanceDBTripleStore
 
 Source: [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 
 Install:
-- From PyPI (when published): `python -m pip install "AbstractMemory[lancedb]"`
-- From source: `python -m pip install -e ".[lancedb]"`
+- From source (recommended inside the AbstractFramework monorepo): `python -m pip install -e ".[lancedb]"`
+- PyPI (packaged release): `python -m pip install "AbstractMemory[lancedb]"` (may not match this monorepo directory exactly)
 
 What it is:
 - A persistent, local-path LanceDB table storing append-only assertions.
 - Intended as the default durable backend for v0.
+
+Dependency note:
+- `lancedb` is optional; constructing `LanceDBTripleStore` raises an `ImportError` with an install hint when it is missing.
+  - Evidence: [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
 
 Persistence:
 - Data is stored under the provided `uri` (directory path).

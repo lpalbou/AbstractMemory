@@ -1,9 +1,22 @@
-# AbstractMemory (full)
+# AbstractMemory (llms-full)
 
-> Append-only, temporal, provenance-aware triple assertions + deterministic query API, with optional LanceDB persistence and vector/semantic retrieval.
+> Append-only, temporal, provenance-aware triple assertions with deterministic structured queries, plus optional LanceDB persistence and vector/semantic retrieval. Part of the AbstractFramework ecosystem.
 
 This file is intended to be a standalone, copy/pasteable context for agentic coding assistants.
+If you only need an index of entry points, see [llms.txt](llms.txt).
 For the human entry point, see [README.md](README.md). For getting started, see [docs/getting-started.md](docs/getting-started.md).
+
+## Ecosystem (AbstractFramework)
+
+AbstractMemory is one component of the **AbstractFramework** ecosystem:
+- This package stores/query triples and their temporal/provenance metadata.
+- For semantic retrieval, it can optionally call an **AbstractGateway** embeddings endpoint via `AbstractGatewayTextEmbedder`.
+- In a typical deployment, **AbstractRuntime** and **AbstractCore** sit behind the gateway (this package does not depend on them directly).
+
+Evidence:
+- No direct AbstractCore/AbstractRuntime dependency: [pyproject.toml](pyproject.toml)
+- Gateway adapter boundary: [src/abstractmemory/embeddings.py](src/abstractmemory/embeddings.py)
+- Architecture overview: [docs/architecture.md](docs/architecture.md)
 
 ## Docs index
 
@@ -35,14 +48,7 @@ Public API exports are defined in [src/abstractmemory/__init__.py](src/abstractm
 
 Requires Python 3.10+ (see [pyproject.toml](pyproject.toml)).
 
-From PyPI (when published):
-
-```bash
-python -m pip install AbstractMemory
-python -m pip install "AbstractMemory[lancedb]"
-```
-
-From source (recommended for this monorepo package):
+From source (recommended inside the AbstractFramework monorepo):
 
 ```bash
 python -m pip install -e .
@@ -60,7 +66,16 @@ Dev extras (tests):
 python -m pip install -e ".[dev]"
 ```
 
-Note: the distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
+PyPI (packaged release):
+
+```bash
+python -m pip install AbstractMemory
+python -m pip install "AbstractMemory[lancedb]"
+```
+
+Notes:
+- The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
+- PyPI releases may not match this monorepo directory exactly (they are currently published from `https://github.com/lpalbou/AbstractMemory`).
 
 ## Quickstart (in-memory)
 
@@ -115,7 +130,7 @@ Source: [src/abstractmemory/store.py](src/abstractmemory/store.py)
 Structured filters:
 - `subject`, `predicate`, `object` (exact match after canonicalization)
 - `scope`, `owner_id`
-- `since` / `until` filter `observed_at`
+- `since` / `until` filter `observed_at` (`>= since`, `<= until`)
 - `active_at` filters by validity window:
   - include if `(valid_from is None or valid_from <= active_at)` and `(valid_until is None or valid_until > active_at)`
   - end is **exclusive**
@@ -130,6 +145,10 @@ Result shaping:
 - `order`: `"asc" | "desc"` by `observed_at` for non-semantic queries
 - `limit <= 0` means “unbounded” (see [tests/test_triple_store_limits.py](tests/test_triple_store_limits.py)).
 
+Determinism note:
+- Structured filters and non-semantic ordering by `observed_at` are deterministic (given the same stored assertions).
+- Vector search ranking depends on the configured embedder/backend; ties are not specified.
+
 Vector query results:
 - When using `query_text` or `query_vector`, stores attach retrieval metadata to `attributes["_retrieval"]` (cosine score; LanceDB also includes `_distance`).
 
@@ -143,6 +162,9 @@ All stores implement the `TripleStore` protocol (see [src/abstractmemory/store.p
 - `query(q) -> list[TripleAssertion]`
 - `close()`
 
+Note:
+- Assertion ids are generated on `add(...)` and returned, but they are not currently included in query results. If you need stable ids, store them yourself (e.g. in `provenance` or `attributes`).
+
 #### InMemoryTripleStore
 
 Source: [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_store.py)
@@ -150,6 +172,7 @@ Source: [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_sto
 - Dependency-free, stores rows (and optional vectors) in process memory.
 - If constructed with an `embedder`, `add(...)` embeds a canonical text representation per assertion.
 - `query_text` requires an embedder; otherwise raises `ValueError` (see [tests/test_in_memory_query_text_fallback.py](tests/test_in_memory_query_text_fallback.py)).
+  - Embedded text includes `subject predicate object` plus selected `attributes` keys; see `_canonical_text(...)` in [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_store.py).
 
 #### LanceDBTripleStore (optional)
 
@@ -160,6 +183,7 @@ Source: [src/abstractmemory/lancedb_store.py](src/abstractmemory/lancedb_store.p
 - Stores `provenance` and `attributes` as JSON strings plus a canonical `text` column.
 - Vector search uses `metric("cosine")` and attaches retrieval metadata to `attributes["_retrieval"]`.
 - Persistence across reopen is tested in [tests/test_lancedb_triple_store.py](tests/test_lancedb_triple_store.py).
+  - Embedded text includes `subject predicate object` plus selected `attributes` keys; see `_canonical_text(...)` in [src/abstractmemory/lancedb_store.py](src/abstractmemory/lancedb_store.py).
 
 ## Embeddings boundary (no AbstractCore dependency)
 
@@ -167,6 +191,40 @@ Source: [src/abstractmemory/embeddings.py](src/abstractmemory/embeddings.py)
 
 - `TextEmbedder` protocol: `embed_texts(texts) -> list[list[float]]`
 - `AbstractGatewayTextEmbedder`: calls an AbstractGateway embeddings endpoint via HTTP (`POST` JSON `{ "input": [...] }`) and expects an OpenAI-like `data[]` response with `embedding` (and optional `index`).
+
+Example (gateway-managed embeddings):
+
+```python
+import os
+
+from abstractmemory import (
+    AbstractGatewayTextEmbedder,
+    LanceDBTripleStore,
+    TripleAssertion,
+    TripleQuery,
+)
+
+embedder = AbstractGatewayTextEmbedder(
+    base_url="http://localhost:8000",
+    auth_token=os.getenv("ABSTRACTGATEWAY_AUTH_TOKEN"),
+    # endpoint_path defaults to "/api/gateway/embeddings"
+)
+
+store = LanceDBTripleStore("data/kg", embedder=embedder)
+store.add(
+    [
+        TripleAssertion(
+            subject="e:scrooge",
+            predicate="is_a",
+            object="person",
+            scope="global",
+            attributes={"evidence_quote": "Scrooge was a man…"},
+        )
+    ]
+)
+
+hits = store.query(TripleQuery(query_text="scrooge", scope="global", limit=5))
+```
 
 ## Architecture (diagram)
 

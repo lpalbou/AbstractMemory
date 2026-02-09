@@ -9,7 +9,7 @@
 
 ## What is AbstractMemory (and what is it not)?
 
-AbstractMemory is a small Python library for **append-only, temporal, provenance-aware triple assertions** plus a deterministic query API, with optional vector/semantic retrieval.
+AbstractMemory is a small Python library for **append-only, temporal, provenance-aware triple assertions** plus **deterministic structured queries**, with optional vector/semantic retrieval.
 
 It is **not**:
 - A knowledge-graph reasoner (no inference/joins/ontologies in v0)
@@ -17,6 +17,25 @@ It is **not**:
 - A runtime provenance system (it stores provenance pointers, but does not create spans/artifacts)
 
 Evidence: module map in [`docs/architecture.md`](architecture.md) and exports in [`src/abstractmemory/__init__.py`](../src/abstractmemory/__init__.py).
+
+## How does AbstractMemory fit into AbstractFramework?
+
+AbstractMemory is one component in the **AbstractFramework** ecosystem:
+- **AbstractMemory**: storage/query of temporal + provenance-aware triples (this package)
+- **AbstractGateway**: optional HTTP boundary for embeddings (used by `AbstractGatewayTextEmbedder`)
+- **AbstractRuntime** + **AbstractCore**: typically sit behind the gateway to run models and manage provenance
+
+Related projects:
+- AbstractFramework: `https://github.com/lpalbou/AbstractFramework`
+- AbstractCore: `https://github.com/lpalbou/abstractcore`
+- AbstractRuntime: `https://github.com/lpalbou/abstractruntime`
+
+Evidence:
+- Gateway adapter boundary: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py)
+- No direct AbstractCore/AbstractRuntime dependency: [`pyproject.toml`](../pyproject.toml)
+- Monorepo context (tests keep sibling packages import-stable): [`tests/conftest.py`](../tests/conftest.py)
+
+See also: [`docs/architecture.md`](architecture.md) and [`README.md`](../README.md).
 
 ## What is the core data model?
 
@@ -52,7 +71,7 @@ Evidence: `TripleAssertion` and `TripleQuery` fields in [`src/abstractmemory/mod
 ## How are time filters evaluated?
 
 Time fields are stored and compared as **strings**:
-- `since` / `until` compare against `observed_at`
+- `since` / `until` compare against `observed_at` (`>= since`, `<= until`)
 - `active_at` intersects the `(valid_from, valid_until)` window
   - end is **exclusive**: `valid_until > active_at`
 
@@ -86,6 +105,30 @@ Semantic/vector search is opt-in:
 Evidence:
 - Store contracts: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 - Tests: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
+
+## Are queries deterministic?
+
+For **structured** queries, yes: filters are explicit and non-semantic queries are ordered by `observed_at` and then limited.
+
+For **vector** queries:
+- ranking is similarity-based and depends on the configured embedder/backend
+- ties are not specified
+
+Evidence:
+- Ordering/limit contract tests: [`tests/test_triple_store_limits.py`](../tests/test_triple_store_limits.py)
+- Backend-specific notes: [`docs/stores.md`](stores.md)
+
+## What gets embedded for vector search?
+
+On `add(...)`, stores embed a canonical text representation derived from each `TripleAssertion`:
+- always includes `subject predicate object`
+- may include selected `attributes` keys (`subject_type`, `object_type`, `evidence_quote`, `original_context`), with context truncated
+
+On `query(...)` with `query_text=...`, stores embed the query string and run vector search against stored vectors.
+
+Evidence:
+- `_canonical_text(...)` in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py)
+- `_canonical_text(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 
 ## What embedding interface do I need to implement?
 

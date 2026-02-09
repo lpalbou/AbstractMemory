@@ -6,21 +6,7 @@ Requires: Python 3.10+ (see [`pyproject.toml`](../pyproject.toml)).
 
 ## 1) Install
 
-From PyPI (when published):
-
-```bash
-python -m pip install AbstractMemory
-```
-
-Optional persistence + vector search via LanceDB:
-
-```bash
-python -m pip install "AbstractMemory[lancedb]"
-```
-
-Note: the distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
-
-From source (recommended for this monorepo package):
+From source (recommended inside the AbstractFramework monorepo):
 
 ```bash
 python -m pip install -e .
@@ -31,6 +17,17 @@ Optional persistence + vector search via LanceDB:
 ```bash
 python -m pip install -e ".[lancedb]"
 ```
+
+PyPI (packaged release):
+
+```bash
+python -m pip install AbstractMemory
+python -m pip install "AbstractMemory[lancedb]"
+```
+
+Notes:
+- The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
+- PyPI releases may not match this monorepo directory exactly (they are currently published from `https://github.com/lpalbou/AbstractMemory`).
 
 ## 2) Dependency-free store (in-memory)
 
@@ -63,6 +60,13 @@ Evidence:
 
 Tip: canonicalization lowercases `subject`/`predicate`/`object`. If you need to preserve original casing, store it separately (e.g. in `attributes`).
 
+Tip (partitioning):
+- Prefer setting `scope` + `owner_id` for most applications so multiple sessions/runs do not mix.
+  - `scope="session", owner_id="<session-id>"` for per-user/per-conversation memory
+  - `scope="run", owner_id="<run-id>"` for per-execution memory
+  - `scope="global"` for shared memory (no `owner_id`)
+Evidence: `scope`/`owner_id` are part of the store partitioning filters in [`src/abstractmemory/store.py`](../src/abstractmemory/store.py) and are enforced by both store implementations.
+
 ## 3) Persistent store (LanceDB)
 
 ```python
@@ -90,6 +94,49 @@ Vector search is opt-in:
 
 Evidence:
 - `ValueError` contract is tested for both stores: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
+
+## 5) Gateway-managed embeddings (optional)
+
+If you run **AbstractGateway** and want semantic retrieval without depending on AbstractCore directly, use the built-in HTTP adapter:
+
+```python
+import os
+
+from abstractmemory import (
+    AbstractGatewayTextEmbedder,
+    LanceDBTripleStore,
+    TripleAssertion,
+    TripleQuery,
+)
+
+embedder = AbstractGatewayTextEmbedder(
+    base_url="http://localhost:8000",  # set to your gateway base URL
+    auth_token=os.getenv("ABSTRACTGATEWAY_AUTH_TOKEN"),
+    # endpoint_path defaults to "/api/gateway/embeddings"
+)
+
+store = LanceDBTripleStore("data/kg", embedder=embedder)
+store.add(
+    [
+        TripleAssertion(
+            subject="e:scrooge",
+            predicate="is_a",
+            object="person",
+            scope="global",
+            attributes={"evidence_quote": "Scrooge was a man…"},
+        )
+    ]
+)
+
+hits = store.query(TripleQuery(query_text="scrooge", scope="global", limit=5))
+```
+
+Notes:
+- Assertions are embedded from a canonical text representation (see `_canonical_text(...)` in the store implementations). Adding `attributes["evidence_quote"]` / `attributes["original_context"]` can improve retrieval selectivity.
+- You can also implement your own `TextEmbedder`; see [`docs/api.md`](api.md).
+
+Evidence:
+- HTTP adapter: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py)
 
 Next:
 - Stores/backends: [`docs/stores.md`](stores.md)
