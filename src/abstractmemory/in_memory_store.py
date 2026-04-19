@@ -29,7 +29,7 @@ def _canonical_text(a: TripleAssertion) -> str:
     if isinstance(ctx, str) and ctx.strip():
         ctx2 = ctx.strip()
         if len(ctx2) > 400:
-            ctx2 = ctx2[:400] + "…"
+            ctx2 = ctx2[:400] + "…"  #[WARNING:TRUNCATION] bounded canonical-text context preview (full context remains in attributes)
         parts.append(f"context: {ctx2}")
 
     return "\n".join(parts)

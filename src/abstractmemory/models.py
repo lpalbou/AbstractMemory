@@ -6,7 +6,9 @@ from typing import Any, Dict, Optional
 
 
 def utc_now_iso_seconds() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Use microsecond precision to ensure deterministic ordering for rapid successive
+    # assertions (ties at 1s granularity can make "latest wins" folds nondeterministic).
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def canonicalize_term(value: str) -> str:
@@ -47,7 +49,12 @@ class TripleAssertion:
         # Canonicalize KG terms (trim + lower) for stable matching.
         object.__setattr__(self, "subject", canonicalize_term(self.subject))
         object.__setattr__(self, "predicate", canonicalize_term(self.predicate))
-        object.__setattr__(self, "object", canonicalize_term(self.object))
+        attrs = self.attributes if isinstance(self.attributes, dict) else {}
+        if bool(attrs.get("literal")):
+            # Preserve literal objects (case-sensitive) while still trimming whitespace.
+            object.__setattr__(self, "object", str(self.object or "").strip())
+        else:
+            object.__setattr__(self, "object", canonicalize_term(self.object))
 
         # Keep scope canonical (it is part of the partitioning key).
         object.__setattr__(self, "scope", str(self.scope or "").strip().lower() or "run")
