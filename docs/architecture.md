@@ -1,6 +1,6 @@
 # AbstractMemory — Architecture (v0 / early)
 
-> Updated: 2026-02-09
+> Updated: 2026-05-05
 
 This document describes **what exists in this repository today** and the boundaries it enforces.
 
@@ -18,7 +18,7 @@ What this package is *not* (by design, not implemented here):
 Evidence (module map):
 - Data model: [`src/abstractmemory/models.py`](../src/abstractmemory/models.py)
 - Query model + protocol: [`src/abstractmemory/store.py`](../src/abstractmemory/store.py)
-- Stores: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
+- Stores: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 - Embeddings adapter: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py)
 
 ## AbstractFramework boundary
@@ -55,8 +55,10 @@ flowchart LR
 
   subgraph AbstractMemory
     TA --> IM[InMemoryTripleStore\nin_memory_store.py]
+    TA --> SQL[SQLiteTripleStore\nsqlite_store.py]
     TA --> LDB[LanceDBTripleStore\nlancedb_store.py]
     TQ --> IM
+    TQ --> SQL
     TQ --> LDB
 
     IM --> TE[TextEmbedder\nembeddings.py]
@@ -64,6 +66,7 @@ flowchart LR
     AG[AbstractGatewayTextEmbedder\nembeddings.py] -.implements.-> TE
   end
 
+  SQL <--> SQLDB[(SQLite file)]
   LDB <--> DISK[(LanceDB tables\non disk)]
   AG <--> GW[AbstractGateway\nEmbeddings API]
 ```
@@ -102,6 +105,20 @@ Evidence:
 - Store implementation: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py)
 - Contract test: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py)
 
+### SQLite (persistent, structured)
+
+`abstractmemory.sqlite_store.SQLiteTripleStore` stores assertions in a local
+SQLite file using the Python standard library.
+
+Key behavior:
+- Creates the table and indexes during construction.
+- Stores `provenance`/`attributes` as JSON strings plus a canonical `text` column.
+- Rejects `query_text` and `query_vector`; this backend is structured-query only.
+
+Evidence:
+- Store implementation: [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py)
+- Persistence and query tests: [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py)
+
 ### LanceDB (optional, persistent)
 
 `abstractmemory.lancedb_store.LanceDBTripleStore` stores assertions in a local-path LanceDB table.
@@ -125,18 +142,19 @@ See also: [`docs/api.md`](api.md)
 - Time filters: `since` / `until` over `observed_at` (both inclusive: `>= since`, `<= until`)
 - Validity window filtering: `active_at`
   - include if `(valid_from is None or valid_from <= active_at)` and `(valid_until is None or valid_until > active_at)`
-  - `valid_until` is **exclusive** (shared across both stores)
+  - `valid_until` is **exclusive** (shared across all stores)
 - Semantic queries:
-  - `query_text` → embed then vector search (requires embedder)
-  - `query_vector` → caller-supplied vector
-  - `min_score` → cosine similarity threshold (implemented by both stores)
+  - `query_text` -> embed then vector search (requires embedder)
+  - `query_vector` -> caller-supplied vector
+  - `min_score` -> cosine similarity threshold (implemented by vector-capable stores)
+  - `SQLiteTripleStore` rejects semantic/vector queries
 
 Notes on determinism:
 - Structured filters and ordering by `observed_at` are deterministic (given the same stored assertions).
 - Vector search behavior depends on the configured embedder + backend. For similarity-ranked results, ties are not specified.
 
 Important implementation detail (timestamps are strings):
-- Both stores compare/filter timestamps as strings.
+- All stores compare/filter timestamps as strings.
 - Use ISO-8601/RFC-3339 in UTC (e.g. `2026-01-01T00:00:00+00:00`) to keep ordering predictable.
 
 Evidence:
@@ -153,8 +171,8 @@ Evidence:
 
 ## Roadmap (non-binding)
 
-Likely next steps (not implemented in this package as of 2026-02-09):
-- More backends (e.g. SQLite reference store) while keeping the same `TripleStore` protocol
+Likely next steps (not implemented in this package as of 2026-05-05):
+- Backend capability metadata while keeping the same `TripleStore` protocol
 - Higher-level ingestion helpers (still likely owned by gateway/runtime, not this package)
 - Schema evolution and compaction strategies for long-lived stores
 

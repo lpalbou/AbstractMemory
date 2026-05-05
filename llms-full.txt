@@ -1,6 +1,6 @@
 # AbstractMemory (llms-full)
 
-> Append-only, temporal, provenance-aware triple assertions with deterministic structured queries, plus optional LanceDB persistence and vector/semantic retrieval. Part of the AbstractFramework ecosystem.
+> Append-only, temporal, provenance-aware triple assertions with deterministic structured queries, SQLite/LanceDB persistence, and optional vector/semantic retrieval. Part of the AbstractFramework ecosystem.
 
 This file is intended to be a standalone, copy/pasteable context for agentic coding assistants.
 If you only need an index of entry points, see [llms.txt](llms.txt).
@@ -75,7 +75,7 @@ python -m pip install "AbstractMemory[lancedb]"
 
 Notes:
 - The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
-- PyPI releases may not match this monorepo directory exactly (they are currently published from `https://github.com/lpalbou/AbstractMemory`).
+- This checkout is the source of truth for these docs. As of 2026-05-05, PyPI's `AbstractMemory 0.2.3` has a different source layout from this repository and `origin` only has tags through `v0.2.2`; treat that mismatch as release drift until a maintainer republishes/tags from this repo.
 
 ## Quickstart (in-memory)
 
@@ -136,10 +136,11 @@ Structured filters:
   - end is **exclusive**
 
 Semantic/vector retrieval (optional):
-- `query_text` requires a configured embedder (no keyword fallback; stores raise `ValueError`).
+- `query_text` requires a configured embedder in vector-capable stores (no keyword fallback; stores raise `ValueError`).
 - `query_vector` bypasses embedding generation.
 - `vector_column` controls the vector field name (default `vector`).
 - `min_score` is a cosine similarity threshold.
+- `SQLiteTripleStore` is structured-query only and rejects `query_text` and `query_vector`.
 
 Result shaping:
 - `order`: `"asc" | "desc"` by `observed_at` for non-semantic queries
@@ -150,7 +151,7 @@ Determinism note:
 - Vector search ranking depends on the configured embedder/backend; ties are not specified.
 
 Vector query results:
-- When using `query_text` or `query_vector`, stores attach retrieval metadata to `attributes["_retrieval"]` (cosine score; LanceDB also includes `_distance`).
+- When using `query_text` or `query_vector`, vector-capable stores attach retrieval metadata to `attributes["_retrieval"]` (cosine score; LanceDB also includes `_distance`).
 
 Important implementation detail:
 - Timestamps are compared/filtered as strings; prefer RFC-3339/UTC strings like `2026-01-01T00:00:00+00:00`.
@@ -173,6 +174,17 @@ Source: [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_sto
 - If constructed with an `embedder`, `add(...)` embeds a canonical text representation per assertion.
 - `query_text` requires an embedder; otherwise raises `ValueError` (see [tests/test_in_memory_query_text_fallback.py](tests/test_in_memory_query_text_fallback.py)).
   - Embedded text includes `subject predicate object` plus selected `attributes` keys; see `_canonical_text(...)` in [src/abstractmemory/in_memory_store.py](src/abstractmemory/in_memory_store.py).
+
+#### SQLiteTripleStore
+
+Source: [src/abstractmemory/sqlite_store.py](src/abstractmemory/sqlite_store.py)
+
+- Persistent SQLite-backed table stored in a local file.
+- Uses only the Python standard library.
+- Creates schema/indexes during construction.
+- Supports deterministic structured queries and rejects `query_text` / `query_vector`.
+- Stores `provenance` and `attributes` as JSON strings plus canonical `text` for inspection/debugging.
+- Persistence and semantic rejection are tested in [tests/test_sqlite_triple_store.py](tests/test_sqlite_triple_store.py).
 
 #### LanceDBTripleStore (optional)
 
@@ -235,6 +247,7 @@ See the maintained architecture doc with a component diagram:
 
 - Run tests: `python -m pytest -q`
 - LanceDB tests are skipped when `lancedb` is not installed.
+- SQLite tests use the Python standard library and should always run.
 - `tests/conftest.py` bootstraps `sys.path` for monorepo layouts: [tests/conftest.py](tests/conftest.py)
 
 ## Change checklist (when modifying behavior)

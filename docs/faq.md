@@ -58,7 +58,7 @@ If you need to preserve original casing/formatting, store it separately (e.g. `a
 
 No. Stores are append-only in v0: represent changes by **adding a new** `TripleAssertion` with updated fields and fresh provenance.
 
-Evidence: store implementations in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py) and [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py) expose `add(...)` and `query(...)` only.
+Evidence: store implementations in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), and [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py) expose `add(...)` and `query(...)` only.
 
 ## What do `scope` and `owner_id` mean?
 
@@ -78,13 +78,14 @@ Time fields are stored and compared as **strings**:
 Use RFC-3339/ISO-8601 UTC strings (e.g. `2026-01-01T00:00:00+00:00`) to keep comparisons predictable.
 
 Evidence:
-- Query logic: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py) and `_build_where_clause(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
+- Query logic: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), and `_build_where_clause(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 - Query field semantics: [`docs/api.md`](api.md)
 
 ## Which store should I use?
 
 - `InMemoryTripleStore`: dependency-free, volatile (tests/dev or ephemeral agents)
-- `LanceDBTripleStore`: persistent local-path store (durable memory)
+- `SQLiteTripleStore`: dependency-free persistent local file for deterministic structured queries
+- `LanceDBTripleStore`: persistent local-path store with optional vector search
 
 Evidence: store implementations and behavior tests in [`docs/stores.md`](stores.md).
 
@@ -99,12 +100,13 @@ Note: `LanceDBTripleStore` enforces this by fetching all matching rows and sorti
 ## How do I do semantic search?
 
 Semantic/vector search is opt-in:
-- `query_text=...` requires a configured embedder; there is **no keyword fallback** (stores raise `ValueError`)
+- `query_text=...` requires a configured embedder in vector-capable stores; there is **no keyword fallback**
 - `query_vector=...` bypasses embedding generation
+- `SQLiteTripleStore` rejects semantic/vector queries; use in-memory or LanceDB with vectors for semantic search
 
 Evidence:
-- Store contracts: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
-- Tests: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
+- Store contracts: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
+- Tests: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py), [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py)
 
 ## Are queries deterministic?
 
@@ -120,14 +122,18 @@ Evidence:
 
 ## What gets embedded for vector search?
 
-On `add(...)`, stores embed a canonical text representation derived from each `TripleAssertion`:
+On `add(...)`, vector-capable stores embed a canonical text representation derived from each `TripleAssertion`:
 - always includes `subject predicate object`
 - may include selected `attributes` keys (`subject_type`, `object_type`, `evidence_quote`, `original_context`), with context truncated
 
-On `query(...)` with `query_text=...`, stores embed the query string and run vector search against stored vectors.
+On `query(...)` with `query_text=...`, vector-capable stores embed the query string and run vector search against stored vectors.
+
+`SQLiteTripleStore` stores the same canonical `text` for inspection/debugging,
+but does not embed or search it.
 
 Evidence:
 - `_canonical_text(...)` in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py)
+- `_canonical_text(...)` in [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py)
 - `_canonical_text(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 
 ## What embedding interface do I need to implement?
@@ -154,6 +160,14 @@ On results, stores attach retrieval metadata to `TripleAssertion.attributes["_re
 - LanceDB: cosine `score`, `distance` (from LanceDB `_distance`), + `metric`
 
 Evidence: vector query code paths in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py) and [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py).
+
+## How do I inspect the SQLite data on disk?
+
+Data is stored in the file path passed to `SQLiteTripleStore`. You can inspect it
+with any SQLite client. The table includes canonical triple columns plus
+`provenance_json`, `attributes_json`, and `text`.
+
+Evidence: [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py) and [`docs/stores.md`](stores.md).
 
 ## How do I inspect the LanceDB data on disk?
 

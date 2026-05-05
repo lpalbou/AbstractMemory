@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Docs: clarify AbstractFramework ecosystem positioning, update PyPI install wording, and add a gateway-managed embeddings example.
+- Docs: align README/API/store/FAQ/agent context with the exported `SQLiteTripleStore` and clarify semantic-query support by backend.
+- Docs: document current release-channel drift between this source tree, PyPI, and remote tags.
+
+### Added
+- Planned backlog items for semantics-aligned memory records, SQLite backend hardening, bounded graph traversal, recall traces, lineage, deterministic anchors, and read-only observer contracts.
+
+### Fixed
+- Test configuration now declares the local `basic` marker.
+- `LanceDBTripleStore` avoids the deprecated LanceDB `table_names()` API when `list_tables()` is available.
 
 ## 0.0.2 - 2026-02-04
 

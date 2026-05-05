@@ -5,9 +5,10 @@ AbstractMemory is a small Python library for **append-only, temporal, provenance
 ## Status
 - This package is early (pre-1.0): the API is intentionally small, and details may evolve.
 - Current repo version: `0.0.2` (see [`pyproject.toml`](pyproject.toml)).
-- Implemented today (public API): `TripleAssertion`, `TripleQuery`, `TripleStore`, `InMemoryTripleStore`, `LanceDBTripleStore`, `TextEmbedder`, `AbstractGatewayTextEmbedder`.
+- Implemented today (public API): `TripleAssertion`, `TripleQuery`, `TripleStore`, `InMemoryTripleStore`, `SQLiteTripleStore`, `LanceDBTripleStore`, `TextEmbedder`, `AbstractGatewayTextEmbedder`.
   - Source of truth for exports: [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py)
 - Requires Python 3.10+ (see [`pyproject.toml`](pyproject.toml))
+- Release-channel note: this checkout is the source of truth for this documentation. As of 2026-05-05, PyPI's `AbstractMemory 0.2.3` has a different source layout from this repository and `origin` only has tags through `v0.2.2`; treat that mismatch as release drift until a maintainer republishes/tags from this repo.
 
 ## Ecosystem (AbstractFramework)
 
@@ -23,7 +24,9 @@ Evidence:
 flowchart LR
   App[Your app / agent] --> AM[AbstractMemory]
   AM --> IM[InMemoryTripleStore]
+  AM --> SQL[SQLiteTripleStore]
   AM --> LDB[LanceDBTripleStore]
+  SQL --> SQLITE[(SQLite file)]
   LDB --> DISK[(LanceDB on disk)]
 
   AM -->|embeddings (optional)| GW[AbstractGateway]
@@ -59,7 +62,7 @@ python -m pip install "AbstractMemory[lancedb]"
 
 Notes:
 - The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
-- PyPI releases may not match this monorepo directory exactly (they are currently published from `https://github.com/lpalbou/AbstractMemory`).
+- PyPI releases may not match this repository checkout exactly; see the release-channel note above.
 
 ## Quick example
 
@@ -106,6 +109,6 @@ assert hits[0].object == "christmas"  # terms are canonicalized (trim + lowercas
 - **Triples-first** representation with temporal fields (`observed_at`, `valid_from`, `valid_until`).
   - Implemented in `TripleAssertion`: [`src/abstractmemory/models.py`](src/abstractmemory/models.py)
 - **Append-only**: represent updates by adding a new assertion with fresh provenance.
-  - Implemented by both stores: [`src/abstractmemory/in_memory_store.py`](src/abstractmemory/in_memory_store.py), [`src/abstractmemory/lancedb_store.py`](src/abstractmemory/lancedb_store.py)
+  - Implemented by all stores: [`src/abstractmemory/in_memory_store.py`](src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](src/abstractmemory/sqlite_store.py), [`src/abstractmemory/lancedb_store.py`](src/abstractmemory/lancedb_store.py)
 - **No direct AbstractCore dependency**: embeddings can be obtained via an AbstractGateway HTTP API.
   - Implemented by `AbstractGatewayTextEmbedder`: [`src/abstractmemory/embeddings.py`](src/abstractmemory/embeddings.py)

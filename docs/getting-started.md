@@ -27,7 +27,7 @@ python -m pip install "AbstractMemory[lancedb]"
 
 Notes:
 - The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.
-- PyPI releases may not match this monorepo directory exactly (they are currently published from `https://github.com/lpalbou/AbstractMemory`).
+- This checkout is the source of truth for these docs. As of 2026-05-05, PyPI's `AbstractMemory 0.2.3` has a different source layout from this repository and `origin` only has tags through `v0.2.2`; treat that mismatch as release drift until a maintainer republishes/tags from this repo.
 
 ## 2) Dependency-free store (in-memory)
 
@@ -65,9 +65,29 @@ Tip (partitioning):
   - `scope="session", owner_id="<session-id>"` for per-user/per-conversation memory
   - `scope="run", owner_id="<run-id>"` for per-execution memory
   - `scope="global"` for shared memory (no `owner_id`)
-Evidence: `scope`/`owner_id` are part of the store partitioning filters in [`src/abstractmemory/store.py`](../src/abstractmemory/store.py) and are enforced by both store implementations.
+Evidence: `scope`/`owner_id` are part of the store partitioning filters in [`src/abstractmemory/store.py`](../src/abstractmemory/store.py) and are enforced by all store implementations.
 
-## 3) Persistent store (LanceDB)
+## 3) Persistent structured store (SQLite)
+
+SQLite uses only the Python standard library and supports deterministic
+structured queries, but it does not support semantic/vector search.
+
+```python
+from pathlib import Path
+
+from abstractmemory import SQLiteTripleStore, TripleAssertion, TripleQuery
+
+store = SQLiteTripleStore(Path("data/kg.sqlite"))
+store.add([TripleAssertion(subject="e:scrooge", predicate="is_a", object="person", scope="global")])
+
+out = store.query(TripleQuery(scope="global", limit=10))
+store.close()
+```
+
+Evidence:
+- Persistence and query behavior: [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), tests in [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py)
+
+## 4) Persistent vector-capable store (LanceDB)
 
 ```python
 from pathlib import Path
@@ -84,18 +104,19 @@ store.close()
 Evidence:
 - Persistence across reopen: [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py), tests in [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
 
-## 4) Semantic/vector queries (optional)
+## 5) Semantic/vector queries (optional)
 
 Vector search is opt-in:
 - `query_text=...` requires a configured `embedder`
 - `query_vector=...` bypasses embedding generation
-- There is **no keyword fallback** when `query_text` is set (stores raise a `ValueError`)
-- Vector queries require that assertions were stored with vectors (i.e. the store was created with an `embedder` and used consistently for writes/reads).
+- There is **no keyword fallback** when `query_text` is set (`InMemoryTripleStore` and `LanceDBTripleStore` raise `ValueError` without an embedder).
+- `SQLiteTripleStore` rejects `query_text` and `query_vector`; it is structured-query only.
+- Vector queries require that assertions were stored with vectors (i.e. the in-memory or LanceDB store was created with an `embedder` and used consistently for writes/reads).
 
 Evidence:
-- `ValueError` contract is tested for both stores: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
+- `ValueError` contracts are tested in [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py), and [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py)
 
-## 5) Gateway-managed embeddings (optional)
+## 6) Gateway-managed embeddings (optional)
 
 If you run **AbstractGateway** and want semantic retrieval without depending on AbstractCore directly, use the built-in HTTP adapter:
 
@@ -132,7 +153,7 @@ hits = store.query(TripleQuery(query_text="scrooge", scope="global", limit=5))
 ```
 
 Notes:
-- Assertions are embedded from a canonical text representation (see `_canonical_text(...)` in the store implementations). Adding `attributes["evidence_quote"]` / `attributes["original_context"]` can improve retrieval selectivity.
+- Vector-capable stores embed assertions from a canonical text representation (see `_canonical_text(...)` in the in-memory and LanceDB implementations). Adding `attributes["evidence_quote"]` / `attributes["original_context"]` can improve retrieval selectivity.
 - You can also implement your own `TextEmbedder`; see [`docs/api.md`](api.md).
 
 Evidence:

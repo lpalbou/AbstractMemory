@@ -96,6 +96,18 @@ def _loads_json(raw: object) -> dict:
         return {}
 
 
+def _list_lancedb_tables(db: Any) -> set[str]:
+    list_tables = getattr(db, "list_tables", None)
+    if callable(list_tables):
+        return {str(name) for name in list_tables()}
+
+    table_names = getattr(db, "table_names", None)
+    if callable(table_names):
+        return {str(name) for name in table_names()}
+
+    return set()
+
+
 class LanceDBTripleStore:
     """LanceDB-backed append-only triple store with optional vector search.
 
@@ -120,8 +132,7 @@ class LanceDBTripleStore:
 
         self._table = None
         try:
-            # `table_names()` is deprecated upstream but is stable and sufficient for local stores.
-            if self._table_name in set(self._db.table_names()):
+            if self._table_name in _list_lancedb_tables(self._db):
                 self._table = self._db.open_table(self._table_name)
         except Exception:
             self._table = None

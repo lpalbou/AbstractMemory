@@ -13,7 +13,7 @@ All public exports are defined in [`src/abstractmemory/__init__.py`](../src/abst
 - Data model: `TripleAssertion`
 - Query model: `TripleQuery`
 - Store interface: `TripleStore` (typing protocol)
-- Stores: `InMemoryTripleStore`, `LanceDBTripleStore`
+- Stores: `InMemoryTripleStore`, `SQLiteTripleStore`, `LanceDBTripleStore`
 - Embeddings: `TextEmbedder` (protocol), `AbstractGatewayTextEmbedder`
 
 ## `TripleAssertion`
@@ -59,12 +59,16 @@ Semantic/vector filters (optional):
 - `vector_column`: column name to use (default `"vector"`)
 - `min_score`: cosine similarity threshold
 
+Backend note:
+- `InMemoryTripleStore` and `LanceDBTripleStore` implement semantic/vector queries when vectors are available.
+- `SQLiteTripleStore` is structured-query only and raises `ValueError` for `query_text` or `query_vector`.
+
 Result shaping:
 - `limit`: `<= 0` means “unbounded” (see tests in [`tests/test_triple_store_limits.py`](../tests/test_triple_store_limits.py))
 - `order`: `"asc" | "desc"` (by `observed_at` for non-semantic queries)
 
 Vector query results:
-- When using `query_text` or `query_vector`, stores attach retrieval metadata to `TripleAssertion.attributes["_retrieval"]`.
+- When using `query_text` or `query_vector`, vector-capable stores attach retrieval metadata to `TripleAssertion.attributes["_retrieval"]`.
   - In-memory: `{ "score": <cosine>, "metric": "cosine" }`
   - LanceDB: `{ "score": <cosine>, "distance": <_distance>, "metric": "cosine" }`
 
@@ -79,12 +83,13 @@ Minimal store interface:
 
 Notes:
 - Assertion ids are generated on `add(...)` and returned as strings; they are not currently part of `TripleAssertion` query results. If you need stable ids, store them yourself (e.g. in `provenance` or `attributes`).
-- For `query_text`, both stores raise `ValueError` when no embedder is configured (no keyword fallback).
+- For `query_text`, vector-capable stores raise `ValueError` when no embedder is configured (no keyword fallback). `SQLiteTripleStore` raises because semantic/vector queries are not supported.
 
 ## Stores
 
 Implementation sources:
 - In-memory: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py)
+- SQLite: [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py)
 - LanceDB: [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
 
 See [`docs/stores.md`](stores.md) for behavior differences and persistence details.
