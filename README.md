@@ -22,16 +22,16 @@ Evidence:
 
 ```mermaid
 flowchart LR
-  App[Your app / agent] --> AM[AbstractMemory]
-  AM --> IM[InMemoryTripleStore]
-  AM --> SQL[SQLiteTripleStore]
-  AM --> LDB[LanceDBTripleStore]
-  SQL --> SQLITE[(SQLite file)]
-  LDB --> DISK[(LanceDB on disk)]
+  APP["Your app or agent"] --> AM["AbstractMemory"]
+  AM --> IM["InMemoryTripleStore"]
+  AM --> SQL["SQLiteTripleStore"]
+  AM --> LDB["LanceDBTripleStore"]
+  SQL --> SQLITE[("SQLite file")]
+  LDB --> DISK[("LanceDB on disk")]
 
-  AM -->|embeddings (optional)| GW[AbstractGateway]
-  GW --> AR[AbstractRuntime]
-  GW --> AC[AbstractCore]
+  AM -- "optional embeddings" --> GW["AbstractGateway"]
+  GW --> AR["AbstractRuntime"]
+  GW --> AC["AbstractCore"]
 ```
 
 Related projects:

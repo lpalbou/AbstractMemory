@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs: document current release-channel drift between this source tree, PyPI, and remote tags.
 
 ### Added
-- Planned backlog items for semantics-aligned memory records, SQLite backend hardening, bounded graph traversal, recall traces, lineage, deterministic anchors, and read-only observer contracts.
+- Planned backlog overview and standalone items for semantics-aligned memory records, SQLite compatibility/store capabilities, bounded graph traversal, recall traces, lineage, deterministic anchors, and read-only observer contracts.
 
 ### Fixed
 - Test configuration now declares the local `basic` marker.

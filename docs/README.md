@@ -9,7 +9,7 @@ AbstractMemory is a small, dependency-light Python library that provides **appen
 - Stores/backends: [`stores.md`](stores.md)
 - API reference: [`api.md`](api.md)
 - Development: [`development.md`](development.md)
-- Backlog: [`backlog/planned/`](backlog/planned/)
+- Backlog: [`backlog/overview.md`](backlog/overview.md)
 
 ## Related
 - Package overview: [`README.md`](../README.md)

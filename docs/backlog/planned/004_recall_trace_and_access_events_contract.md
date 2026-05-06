@@ -1,69 +1,195 @@
-# 004 - Recall Trace And Access Events Contract
+# Planned: Recall trace and access events contract
 
-**Status**: Planned  
-**Date**: 2026-05-05  
-**Priority**: Medium  
-**Components**: abstractmemory data contracts, AbstractRuntime/Gateway integration
+## Metadata
 
-## Summary
+- Created: 2026-05-05
+- Status: Planned
+- Completed: N/A
+- Priority: Medium
+- Components: AbstractMemory data contracts, Runtime/Gateway/Observer integration guidance
 
-Define storage-neutral contracts for recall traces and memory access events so
-hosts can audit why memory was searched, expanded, selected, or skipped while
-keeping prompt selection owned by Runtime/Agent layers.
+## Context
 
-## Design Signal
+Memory recall is more than a query result. A host often needs to know why a
+memory search happened, which scopes were searched, which candidates were
+visited, why traversal stopped, and which results became active context.
 
-Recall observability is stronger when hosts can store:
+AbstractMemory should support audit-friendly recall telemetry as a contract,
+while leaving active prompt selection and recall policy to higher packages.
 
-- probe traces with query fingerprints, searched scopes, candidate ids, visited
-  ids, expansion budgets, remaining tokens, status, and stop reasons;
-- active-memory snapshots recording what became prompt-visible for a turn;
-- access events for candidate listing, showing, active selection, expansion,
-  edge traversal, probe-report citation, auto-memory, operator pinning, and
-  refocus.
+## Current code reality
 
-The important reusable concept is not "put active memory in AbstractMemory"; it
-is "make recall influence auditable and query-scoped."
+- Store queries currently return only `TripleAssertion` objects.
+- Query results do not include assertion ids unless callers store ids in
+  provenance/attributes themselves.
+- There is no `RecallTrace`, `MemoryAccessEvent`, or event store type.
+- There is no active-memory snapshot model in AbstractMemory.
+- The framework ADRs distinguish durable memory from active context; Runtime or
+  host packages own prompt-visible selection.
 
-## ADR Constraints
+Re-check whether planned item 002 has added capabilities or item 003 has added
+graph walk result metadata before implementing this contract.
 
-- ADR-0007: active context is a view, not the durable source.
-- ADR-0009: recall is provenance-first and graph-ready.
-- Memory recall levels require warnings, effort metadata, budgets, and no silent
-  downgrade.
-- ADR-0016: tool/model behavior remains outside memory storage.
+## Problem
 
-## Proposed Shape
+Without trace contracts, hosts may implement recall observability differently:
 
-Add docs and optional dataclasses for host-owned recall telemetry:
+- one package logs only the query text;
+- another logs selected assertions but not skipped candidates;
+- another stores access history as a mutation of the assertion itself;
+- observer UIs cannot explain why memory influenced a turn.
 
-- `RecallTrace`: query, normalized fingerprint, recall level, scope policy,
-  searched scopes, candidate assertion ids, visited ids, selected ids, budgets,
-  warnings, stop reason, status, and provenance.
-- `MemoryAccessEvent`: assertion id or edge/path id, access kind, scope, query
-  fingerprint, trace id, turn/run id, weight, timestamp, and provenance.
+That makes recall hard to debug and can blur the line between durable memory,
+derived attention metadata, and active prompt context.
 
-These records may be stored by Runtime/Gateway or by an optional
-AbstractMemory-side event store. The key is that normal `TripleStore.query(...)`
-does not mutate memory or secretly mark anything prompt-active.
+## What we want to do
 
-## In Scope
+Define storage-neutral JSON-serializable contracts for recall traces and memory
+access events. These contracts should be usable by Runtime/Gateway/Flow without
+making ordinary `TripleStore.query(...)` mutate memory or select active context.
 
-- Contract docs and Python dataclasses/types.
-- Optional append-only event store abstraction if a concrete user appears.
-- Tests for JSON serialization, stable ordering, and no mutation of assertions.
-- Guidance on how Runtime/Gateway should attach trace ids to recall operations.
+## Why
 
-## Out Of Scope
+Auditable recall is central to safe memory. It should be possible to answer:
 
-- Active-memory prompt packing.
-- Attention ranking implementation.
-- UI observer implementation.
-- Mandatory event writes for ordinary library users.
+- what was the normalized recall need?
+- which scopes and backends were searched?
+- what candidates were considered?
+- what graph paths were expanded?
+- why did recall stop?
+- which records, if any, became active context?
 
-## Acceptance Criteria
+## Requirements
 
-- Recall traces can represent `urgent`, `standard`, and `deep` recall metadata.
-- Broad/deep recall can report explicit partial results and warnings.
-- Access telemetry is append-only and does not change triple truth.
-- Documentation says exactly which layer owns writes to these records.
+- Keep recall trace writing optional.
+- Do not mutate `TripleAssertion` truth when a memory is accessed.
+- Do not make ordinary `TripleStore.query(...)` write access events.
+- Represent searched scopes explicitly; avoid a bare `global=true` flag.
+- Record recall effort/level when supplied by a host.
+- Record candidate-set fingerprints for reproducibility.
+- Record budgets and stop reasons:
+  - max candidates;
+  - max hops;
+  - max tokens or token estimate;
+  - timeout/deadline;
+  - enough evidence;
+  - low confidence;
+  - operator stop.
+- Record warnings and partial-result flags.
+- Link access events to trace ids when available.
+- Keep contracts JSON-compatible and stable enough for audit export.
+
+## Suggested implementation
+
+Add dataclasses or TypedDicts in a small module such as
+`src/abstractmemory/trace.py`:
+
+```python
+@dataclass(frozen=True)
+class RecallTrace:
+    trace_id: str
+    query: str
+    query_fingerprint: str
+    recall_level: str | None
+    searched_scopes: tuple[dict[str, str], ...]
+    candidate_ids: tuple[str, ...]
+    selected_ids: tuple[str, ...]
+    visited_terms: tuple[str, ...]
+    budgets: dict[str, int | float | str]
+    stop_reason: str
+    partial: bool
+    warnings: tuple[str, ...]
+    provenance: dict[str, object]
+```
+
+```python
+@dataclass(frozen=True)
+class MemoryAccessEvent:
+    event_id: str
+    trace_id: str | None
+    assertion_id: str | None
+    access_kind: str
+    scope: str | None
+    owner_id: str | None
+    observed_at: str
+    provenance: dict[str, object]
+```
+
+Keep the first pass as data contracts plus serialization helpers. Add a concrete
+event store only if a host package needs AbstractMemory to persist these records
+directly.
+
+## Scope
+
+- Contract docs for recall traces and access events.
+- JSON serialization/deserialization helpers.
+- Tests for stable serialization, ordering, and no assertion mutation.
+- Guidance showing which layer owns writes:
+  - AbstractMemory: contract and optional storage helper.
+  - Runtime/Gateway/Flow: recall policy, trace creation, active context.
+  - Observer: read-only rendering.
+
+## Non-goals
+
+- No active prompt packing.
+- No automatic attention ranking.
+- No hidden access logging in `query(...)`.
+- No UI implementation.
+- No requirement that every AbstractMemory user write traces.
+
+## Dependencies and related tasks
+
+- AbstractFramework central ADRs:
+  - `0004-observability-strategy.md`
+  - `0007-active-context-and-memory-provenance.md`
+  - `0009-connected-memory-recall-and-provenance.md`
+  - `0016-tool-calling-pipeline-and-responsibility-boundaries.md`
+- Related planned work:
+  - `002_sqlite_database_compatibility_and_store_capabilities.md`
+  - `003_bounded_graph_traversal_over_triples.md`
+  - `007_read_only_memory_observer_contract.md`
+
+## Expected outcomes
+
+- Higher packages can log recall decisions in a consistent shape.
+- Access events remain append-only telemetry, not truth mutation.
+- Observer/audit tools can explain recall without knowing every host's private
+  log format.
+- AbstractMemory remains usable without telemetry.
+
+## Validation
+
+A-level:
+
+- Unit tests for JSON round-trip of trace and access event records.
+- Unit tests that stable fingerprints are deterministic for the same inputs.
+- Run `python -m pytest -q`.
+
+B-level:
+
+- Tests covering partial recall, warnings, and stop reasons.
+- Tests linking a graph-walk result from item 003 into a recall trace if that
+  item has landed.
+- Docs examples showing active context is referenced, not duplicated.
+
+C-level:
+
+- Optional integration fixture that simulates a host recall operation and emits:
+  query, candidates, traversal steps, selected ids, and access events.
+- Audit/export sample that distinguishes durable memory from active selection.
+
+## Progress checklist
+
+- [ ] Re-read ADRs on active context, recall, and observability.
+- [ ] Decide whether this task is contracts-only or includes optional storage.
+- [ ] Define dataclasses/TypedDicts and serialization helpers.
+- [ ] Add tests for JSON stability and no mutation.
+- [ ] Document ownership boundaries by package.
+- [ ] Update observer/read-only backlog item if the trace shape changes.
+
+## Guidance for the implementing agent
+
+Be precise about ownership. AbstractMemory can define and optionally persist
+recall telemetry, but it must not decide that a memory is prompt-visible. That
+decision belongs to the host/runtime layer and should be recorded as a reference
+in trace data, not hidden inside the store query path.

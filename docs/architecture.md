@@ -35,10 +35,10 @@ Evidence:
 
 ```mermaid
 flowchart LR
-  App[Your app / agent] --> AM[AbstractMemory]
-  AM -->|optional| GW[AbstractGateway\nEmbeddings API]
-  GW --> AR[AbstractRuntime]
-  GW --> AC[AbstractCore]
+  APP["Your app or agent"] --> AM["AbstractMemory"]
+  AM -- "optional embeddings" --> GW["AbstractGateway Embeddings API"]
+  GW --> AR["AbstractRuntime"]
+  GW --> AC["AbstractCore"]
 ```
 
 Related projects:
@@ -50,25 +50,25 @@ Related projects:
 
 ```mermaid
 flowchart LR
-  APP[Your app / agent] --> TA[TripleAssertion\nmodels.py]
-  APP --> TQ[TripleQuery\nstore.py]
+  APP["Your app or agent"] --> TA["TripleAssertion models.py"]
+  APP --> TQ["TripleQuery store.py"]
 
   subgraph AbstractMemory
-    TA --> IM[InMemoryTripleStore\nin_memory_store.py]
-    TA --> SQL[SQLiteTripleStore\nsqlite_store.py]
-    TA --> LDB[LanceDBTripleStore\nlancedb_store.py]
+    TA --> IM["InMemoryTripleStore in_memory_store.py"]
+    TA --> SQL["SQLiteTripleStore sqlite_store.py"]
+    TA --> LDB["LanceDBTripleStore lancedb_store.py"]
     TQ --> IM
     TQ --> SQL
     TQ --> LDB
 
-    IM --> TE[TextEmbedder\nembeddings.py]
+    IM --> TE["TextEmbedder embeddings.py"]
     LDB --> TE
-    AG[AbstractGatewayTextEmbedder\nembeddings.py] -.implements.-> TE
+    AG["AbstractGatewayTextEmbedder embeddings.py"] -. "implements" .-> TE
   end
 
-  SQL <--> SQLDB[(SQLite file)]
-  LDB <--> DISK[(LanceDB tables\non disk)]
-  AG <--> GW[AbstractGateway\nEmbeddings API]
+  SQL <--> SQLDB[("SQLite file")]
+  LDB <--> DISK[("LanceDB tables on disk")]
+  AG <--> GW["AbstractGateway Embeddings API"]
 ```
 
 ## Core representation

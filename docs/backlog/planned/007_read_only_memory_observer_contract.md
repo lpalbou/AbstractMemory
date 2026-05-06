@@ -1,65 +1,169 @@
-# 007 - Read-Only Memory Observer Contract
+# Planned: Read-only memory observer contract
 
-**Status**: Planned  
-**Date**: 2026-05-05  
-**Priority**: Low  
-**Components**: abstractmemory docs/API, AbstractObserver/Gateway integration
+## Metadata
 
-## Summary
+- Created: 2026-05-05
+- Status: Planned
+- Completed: N/A
+- Priority: Low
+- Components: AbstractMemory inspector API/docs, Observer/Gateway integration guidance
 
-Define a read-only inspection contract for AbstractMemory stores so observer UIs
-can inspect durable triples, lineage, scopes, and recall traces without becoming
-writers or policy owners.
+## Context
 
-## Design Signal
+Observer tools should be able to inspect durable memory stores without becoming
+writers or recall-policy owners. They need a stable read-only shape for recent
+assertions, scopes, provenance, source lineage, graph neighborhoods, and recall
+trace records when hosts provide them.
 
-Observer tools are easier to keep safe when they can open memory stores in
-read-only mode and render assertions, neighborhoods, scope bindings, payload
-previews, recall traces, and access events without owning write policy.
+## Current code reality
 
-AbstractFramework already has `@abstractframework/monitor-active-memory` and
-AbstractObserver. A narrow read-only contract would let those tools inspect
-memory consistently without coupling them to a specific backend schema.
+- Store APIs expose `add`, `query`, and `close`.
+- There is no read-only snapshot/inspector API.
+- SQLite can be inspected manually with SQLite tools, but there is no stable
+  package-level view shape.
+- In-memory and LanceDB have different private storage details.
+- Recall traces/access events do not exist yet; planned item 004 defines the
+  contract.
+- Capability metadata does not exist yet; planned item 002 covers it.
 
-## ADR Constraints
+Re-check items 002, 003, 004, and 005 before implementation. This contract
+should reuse their result shapes rather than invent parallel observer models.
 
-- ADR-0004/0007: observability should preserve provenance and avoid mutating
-  state.
-- ADR-0001: UI/observer packages compose with memory; memory does not import
-  them.
-- ADR-0019: inspection APIs need deterministic test fixtures.
+## Problem
 
-## Proposed Shape
+Without a read-only observer contract:
 
-Define optional read-only snapshot/export methods:
+- UI/observer packages may learn each backend's private schema;
+- inspection code may accidentally become writer code;
+- unsupported views may silently omit data;
+- graph/lineage/recall views may diverge by store.
 
-- list stores and capabilities;
-- list recent assertions by scope/owner/time;
-- list assertion neighborhoods for graph views;
-- expose provenance/attributes without rewriting payloads;
-- expose recall/access trace records if a host stores them;
-- return warnings when a backend cannot supply a requested view.
+That would make memory harder to debug and would couple AbstractObserver or
+Gateway code too tightly to one backend.
 
-For SQLite, prefer query-only connections or deterministic JSON export. For
-LanceDB/InMemory, provide best-effort snapshots with clear capability metadata.
+## What we want to do
 
-## In Scope
+Define an explicit read-only snapshot/inspection shape that observer packages
+can consume. The first implementation can be a helper/export API rather than a
+live event stream.
 
-- A read-only snapshot data shape documented in AbstractMemory.
-- Optional helper/export methods on stores or a separate inspector module.
-- Basic fixtures that observer packages can reuse.
+## Why
 
-## Out Of Scope
+Memory needs trust. Users and developers should be able to inspect what exists,
+where it came from, and how it connects without triggering writes or active
+context changes.
 
-- Building the observer UI in this package.
-- Mutating memory from observer views.
-- Prompt selection or active-memory policy.
-- Live event streaming.
+## Requirements
 
-## Acceptance Criteria
+- Snapshot APIs must be explicitly read-only.
+- Snapshot calls must not mutate assertions, access counters, or active context.
+- Unsupported views must return clear warnings/capability flags.
+- Snapshot shape should include:
+  - store capabilities;
+  - assertion records;
+  - scope/owner summaries;
+  - provenance and attributes;
+  - lineage/source ids when present;
+  - graph neighborhood paths when item 003 is available;
+  - recall/access traces when item 004 is available.
+- Avoid exposing backend-private table details as the public observer contract.
+- Preserve deterministic ordering for tests and UI diffs.
+- Keep observer packages as consumers; AbstractMemory must not import UI code.
 
-- Observer packages can render a small memory graph without knowing each store's
-  private table layout.
-- Snapshot APIs are explicitly read-only.
-- Unsupported views return clear warnings rather than silently dropping data.
-- Tests cover at least SQLite and in-memory snapshots.
+## Suggested implementation
+
+Add an inspector module such as `src/abstractmemory/inspect.py`:
+
+```python
+@dataclass(frozen=True)
+class MemorySnapshot:
+    capabilities: StoreCapabilities
+    assertions: tuple[TripleAssertion, ...]
+    scopes: tuple[ScopeSummary, ...]
+    warnings: tuple[str, ...]
+```
+
+Possible helper functions:
+
+- `snapshot_store(store, query=None, limit=...)`
+- `snapshot_scope_summary(store)`
+- `snapshot_neighborhood(store, seed, ...)` using item 003 when available
+- `snapshot_lineage(store, assertion_id)` using item 005 conventions when
+  available
+
+For SQLite, optionally support opening a path in read-only mode if that can be
+done portably. For in-memory and LanceDB, return best-effort snapshots using
+public query APIs and capability warnings.
+
+## Scope
+
+- Read-only snapshot shape.
+- Helper APIs built on current store/query contracts.
+- Deterministic tests for in-memory and SQLite.
+- Optional LanceDB tests when installed.
+- Documentation for observer integration boundaries.
+
+## Non-goals
+
+- No observer UI implementation.
+- No live streaming/event subscription.
+- No write or edit methods.
+- No active prompt selection.
+- No backend-private schema guarantee.
+
+## Dependencies and related tasks
+
+- AbstractFramework central ADRs:
+  - `0001-layered-architecture.md`
+  - `0004-observability-strategy.md`
+  - `0007-active-context-and-memory-provenance.md`
+  - `0019-testing-strategy-and-levels.md`
+- Related planned work:
+  - `002_sqlite_database_compatibility_and_store_capabilities.md`
+  - `003_bounded_graph_traversal_over_triples.md`
+  - `004_recall_trace_and_access_events_contract.md`
+  - `005_source_linked_summaries_and_derived_assertion_lineage.md`
+
+## Expected outcomes
+
+- Observer/Gateway packages can render memory without knowing backend internals.
+- Snapshot results are deterministic and warning-rich.
+- Memory inspection remains separate from memory mutation.
+- The same UI concepts can work for in-memory, SQLite, and LanceDB stores with
+  capability-specific degradation.
+
+## Validation
+
+A-level:
+
+- Unit tests for in-memory snapshot determinism.
+- Unit tests for SQLite snapshot determinism.
+- Tests that snapshot helpers do not mutate store contents.
+- Run `python -m pytest -q`.
+
+B-level:
+
+- Tests for unsupported view warnings.
+- Tests for scope/owner summary output.
+- Tests for lineage fields when metadata exists.
+
+C-level:
+
+- Optional LanceDB snapshot test when installed.
+- Integrate graph-neighborhood snapshots after item 003 lands.
+- Integrate recall-trace snapshots after item 004 lands.
+
+## Progress checklist
+
+- [ ] Re-check capability, traversal, trace, and lineage planned items.
+- [ ] Define snapshot dataclasses.
+- [ ] Implement snapshot helper using public query APIs.
+- [ ] Add deterministic ordering and warning behavior.
+- [ ] Add in-memory and SQLite tests.
+- [ ] Document observer boundaries and unsupported-view behavior.
+
+## Guidance for the implementing agent
+
+Do not let inspection turn into control. If a feature would edit memory,
+select prompt context, or create access events, it belongs in a separate writer
+or host-layer task. This item is read-only on purpose.
