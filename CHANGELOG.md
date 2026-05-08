@@ -7,13 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+*No unreleased changes.*
+
+## 0.2.4 - 2026-05-08
+
+### Added
+- Added install-profile compatibility extras:
+  `AbstractMemory[apple]`, `AbstractMemory[gpu]`,
+  `AbstractMemory[all-apple]`, and `AbstractMemory[all-gpu]`.
+- Planned backlog overview and standalone items for semantics-aligned memory records, SQLite compatibility/store capabilities, bounded graph traversal, recall traces, lineage, deterministic anchors, and read-only observer contracts.
+
 ### Changed
+- `AbstractMemory[all-apple]` and `AbstractMemory[all-gpu]` now install the
+  LanceDB-backed vector-capable store dependency, matching the existing
+  `lancedb`/`all` profile behavior.
+- `AbstractMemory[apple]` and `AbstractMemory[gpu]` remain no-op aliases
+  because Memory itself has no hardware-specific runtime engine.
 - Docs: clarify AbstractFramework ecosystem positioning, update PyPI install wording, and add a gateway-managed embeddings example.
 - Docs: align README/API/store/FAQ/agent context with the exported `SQLiteTripleStore` and clarify semantic-query support by backend.
 - Docs: document current release-channel drift between this source tree, PyPI, and remote tags.
-
-### Added
-- Planned backlog overview and standalone items for semantics-aligned memory records, SQLite compatibility/store capabilities, bounded graph traversal, recall traces, lineage, deterministic anchors, and read-only observer contracts.
 
 ### Fixed
 - Test configuration now declares the local `basic` marker.

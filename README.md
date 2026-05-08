@@ -4,7 +4,7 @@ AbstractMemory is a small Python library for **append-only, temporal, provenance
 
 ## Status
 - This package is early (pre-1.0): the API is intentionally small, and details may evolve.
-- Current repo version: `0.0.2` (see [`pyproject.toml`](pyproject.toml)).
+- Current repo version: `0.2.4` (see [`pyproject.toml`](pyproject.toml)).
 - Implemented today (public API): `TripleAssertion`, `TripleQuery`, `TripleStore`, `InMemoryTripleStore`, `SQLiteTripleStore`, `LanceDBTripleStore`, `TextEmbedder`, `AbstractGatewayTextEmbedder`.
   - Source of truth for exports: [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py)
 - Requires Python 3.10+ (see [`pyproject.toml`](pyproject.toml))
@@ -59,6 +59,11 @@ PyPI (packaged release):
 python -m pip install AbstractMemory
 python -m pip install "AbstractMemory[lancedb]"
 ```
+
+Framework hardware profile aliases are also available:
+`AbstractMemory[apple]` and `AbstractMemory[gpu]` are no-op compatibility
+extras; `AbstractMemory[all-apple]` and `AbstractMemory[all-gpu]` install the
+LanceDB backend for durable vector-capable recall.
 
 Notes:
 - The distribution name is `AbstractMemory` (pip is case-insensitive). The import name is `abstractmemory`.

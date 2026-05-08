@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "AbstractMemory"
-version = "0.0.2"
+version = "0.2.4"
 description = "AbstractMemory: temporal, provenance-aware semantic memory primitives for AbstractFramework."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,14 +32,22 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+apple = []
+gpu = []
 dev = [
   "pytest>=7.0.0",
 ]
 lancedb = [
   "lancedb",
 ]
+all-apple = [
+  "lancedb",
+]
+all-gpu = [
+  "lancedb",
+]
 all = [
-  "AbstractMemory[lancedb]",
+  "lancedb",
 ]
 
 [project.urls]
