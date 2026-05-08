@@ -99,7 +99,11 @@ def _loads_json(raw: object) -> dict:
 def _list_lancedb_tables(db: Any) -> set[str]:
     list_tables = getattr(db, "list_tables", None)
     if callable(list_tables):
-        return {str(name) for name in list_tables()}
+        result = list_tables()
+        tables = getattr(result, "tables", None)
+        if tables is not None:
+            return {str(name) for name in tables}
+        return {str(name) for name in result}
 
     table_names = getattr(db, "table_names", None)
     if callable(table_names):

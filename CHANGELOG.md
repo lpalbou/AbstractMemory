@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 *No unreleased changes.*
 
+## [0.2.6] - 2026-05-09
+
+### Changed
+- The `test` optional dependency now installs `lancedb` so release CI exercises
+  the persisted LanceDB store contract instead of skipping it.
+
+### Fixed
+- `LanceDBTripleStore` now recognizes the current LanceDB `list_tables()`
+  response shape, restoring persisted table reopen/query behavior.
+
 ## [0.2.5] - 2026-05-08
 
 ### Added
