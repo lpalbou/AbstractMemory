@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a reproducible AbstractMemory bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Include enough detail to reproduce the store, query, embedding, or packaging behavior.
+  - type: input
+    id: version
+    attributes:
+      label: AbstractMemory version
+      description: Output of `python -c "from importlib.metadata import version; print(version('AbstractMemory'))"`
+      placeholder: "0.2.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Store or area
+      options:
+        - in-memory store
+        - sqlite store
+        - lancedb store
+        - embeddings
+        - query/model contract
+        - packaging/install
+        - documentation
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the incorrect behavior, including exact errors or unexpected query results.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Include commands, Python snippets, store backend, query inputs, and installed extras.
+      placeholder: |
+        1. Create a SQLiteTripleStore with ...
+        2. Add assertions ...
+        3. Query with ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, installed extras, backend, and relevant package versions.
+      placeholder: |
+        macOS 15, Python 3.12
+        pip install "AbstractMemory[all-apple]"
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Logs or artifacts
+      description: Attach logs, store schema details, query payloads, or related files.
+    validations:
+      required: false

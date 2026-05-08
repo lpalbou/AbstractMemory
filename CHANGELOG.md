@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 *No unreleased changes.*
 
+## [0.2.5] - 2026-05-08
+
+### Added
+- Added GitHub Actions CI for Python 3.10 through 3.12 with pytest and package
+  build checks.
+- Added a trusted-publishing release workflow for tagged or manually dispatched
+  releases, including version/changelog validation, distribution artifacts,
+  PyPI publication, and GitHub Release creation.
+- Added an AbstractMemory GitHub bug report template.
+- Added a `test` optional dependency extra for CI and release validation.
+
 ## 0.2.4 - 2026-05-08
 
 ### Added
