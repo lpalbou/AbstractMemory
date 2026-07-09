@@ -2,175 +2,96 @@
 
 ## Where should I start?
 
-- Installation + first examples: [`docs/getting-started.md`](getting-started.md)
-- Concepts and boundaries: [`docs/architecture.md`](architecture.md)
-- Public API contracts: [`docs/api.md`](api.md)
-- Store behavior: [`docs/stores.md`](stores.md)
+- Installation + first examples: [`getting-started.md`](getting-started.md)
+- Concepts and invariants: [`architecture.md`](architecture.md)
+- The cognitive model: [`memory-system.md`](memory-system.md)
+- Public API contracts: [`api.md`](api.md)
+- Store behavior: [`stores.md`](stores.md)
 
 ## What is AbstractMemory (and what is it not)?
 
-AbstractMemory is a small Python library for **append-only, temporal, provenance-aware triple assertions** plus **deterministic structured queries**, with optional vector/semantic retrieval.
+AbstractMemory is a Python library for durable, append-only agent memory: temporal, provenance-aware triple assertions with deterministic structured queries and optional vector retrieval (layer 1), plus a `MemorySystem` facade that composes them with an append-only journal into a usage-weighted memory graph — typed records, stimulus-driven reconstruction, attention, identity, valence, diary conventions, consolidation, and a replay stream (layer 2).
 
 It is **not**:
-- A knowledge-graph reasoner (no inference/joins/ontologies in v0)
-- A text extraction/summarization library (no AbstractCore dependency)
-- A runtime provenance system (it stores provenance pointers, but does not create spans/artifacts)
 
-Evidence: module map in [`docs/architecture.md`](architecture.md) and exports in [`src/abstractmemory/__init__.py`](../src/abstractmemory/__init__.py).
+- A knowledge-graph reasoner (no inference, joins, or ontologies).
+- A text extraction/summarization library (no LLM calls anywhere in the package).
+- A runtime or an agent host: it owns memory mechanics; hosts decide when to recall, what enters prompts, and who may write.
 
 ## How does AbstractMemory fit into AbstractFramework?
 
-AbstractMemory is one component in the **AbstractFramework** ecosystem:
-- **AbstractMemory**: storage/query of temporal + provenance-aware triples (this package)
-- **AbstractGateway**: optional HTTP boundary for embeddings (used by `AbstractGatewayTextEmbedder`)
-- **AbstractRuntime** + **AbstractCore**: typically sit behind the gateway to run models and manage provenance
+- **AbstractMemory**: the memory substrate (this package) — no dependency on the other packages.
+- **AbstractRuntime**: orchestrates when memory is consulted and committed (per turn) and owns host-side surfaces such as the diary book.
+- **AbstractGateway**: hosts entity homes, serves the replay stream over HTTP, and can provide embeddings via `AbstractGatewayTextEmbedder`.
 
-Related projects:
-- AbstractFramework: `https://github.com/lpalbou/AbstractFramework`
-- AbstractCore: `https://github.com/lpalbou/abstractcore`
-- AbstractRuntime: `https://github.com/lpalbou/abstractruntime`
-
-Evidence:
-- Gateway adapter boundary: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py)
-- No direct AbstractCore/AbstractRuntime dependency: [`pyproject.toml`](../pyproject.toml)
-- Monorepo context (tests keep sibling packages import-stable): [`tests/conftest.py`](../tests/conftest.py)
-
-See also: [`docs/architecture.md`](architecture.md) and [`README.md`](../README.md).
+Related projects: `https://github.com/lpalbou/abstractframework`, `https://github.com/lpalbou/abstractcore`, `https://github.com/lpalbou/abstractruntime`.
 
 ## What is the core data model?
 
-`TripleAssertion` is the single write primitive:
-`(subject, predicate, object)` plus `scope`, `owner_id`, time fields, and metadata dicts (`provenance`, `attributes`).
-
-Evidence: [`src/abstractmemory/models.py`](../src/abstractmemory/models.py) and the API summary in [`docs/api.md`](api.md).
+At layer 1, `TripleAssertion` is the single write primitive: `(subject, predicate, object)` plus `scope`, `owner_id`, time fields, and metadata dicts (`provenance`, `attributes`). Stores stamp `assertion_id` on every query result. At layer 2, typed memory records are encoded over the same substrate: one digest assertion per record (the record's graph id is the assertion's subject) plus one assertion per edge.
 
 ## Why are `subject` / `predicate` / `object` lowercased?
 
-Canonicalization (trim + lowercase) is part of the matching contract to avoid missed matches due to casing drift.
-
-Evidence:
-- Canonicalization implementation: `canonicalize_term(...)` and `TripleAssertion.__post_init__` in [`src/abstractmemory/models.py`](../src/abstractmemory/models.py)
-- Contract test: [`tests/test_term_canonicalization.py`](../tests/test_term_canonicalization.py)
-
-If you need to preserve original casing/formatting, store it separately (e.g. `attributes={"raw_subject": "Alice"}`).
+Canonicalization (trim + lowercase) is part of the matching contract: it prevents missed matches when the same term arrives with different casing or whitespace. To preserve original casing, store it separately (for example `attributes={"raw_subject": "Alice"}`), or set `attributes={"literal": True}` to keep the `object` case-sensitive — typed records use this for their digest text.
 
 ## Does AbstractMemory support updates or deletes?
 
-No. Stores are append-only in v0: represent changes by **adding a new** `TripleAssertion` with updated fields and fresh provenance.
+There is no update or delete API, by design:
 
-Evidence: store implementations in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), and [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py) expose `add(...)` and `query(...)` only.
+- At layer 1, represent changes by adding a new assertion with fresh provenance.
+- At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract or supersede with replacements) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
+- Forgetting is decay of retrieval strength plus closures and silencing. The substrate is lossless; there is no compaction.
 
 ## What do `scope` and `owner_id` mean?
 
-They partition data for multi-tenant or multi-run usage:
-- `scope`: `"run" | "session" | "global"`
-- `owner_id`: optional identifier within the selected scope (e.g. session id)
-
-Evidence: `TripleAssertion` and `TripleQuery` fields in [`src/abstractmemory/models.py`](../src/abstractmemory/models.py) and [`src/abstractmemory/store.py`](../src/abstractmemory/store.py).
+They partition data. `scope` is a free-form label (lowercased); `owner_id` is an identifier within it. Common conventions: `"session"` + session id, `"run"` + run id, `"global"` for shared memory, and the entity-home ladder `"self"` / `"diary"` / `"life"` + entity id. At layer 2, `"global"` is a broad scope by default: searching it in `reconstruct` requires an explicit `escalation_reason`.
 
 ## How are time filters evaluated?
 
-Time fields are stored and compared as **strings**:
-- `since` / `until` compare against `observed_at` (`>= since`, `<= until`)
-- `active_at` intersects the `(valid_from, valid_until)` window
-  - end is **exclusive**: `valid_until > active_at`
-
-Use RFC-3339/ISO-8601 UTC strings (e.g. `2026-01-01T00:00:00+00:00`) to keep comparisons predictable.
-
-Evidence:
-- Query logic: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), and `_build_where_clause(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
-- Query field semantics: [`docs/api.md`](api.md)
+Time fields are stored and compared as **strings**: `since`/`until` compare `observed_at` (`>= since`, `<= until`); `active_at` intersects the `(valid_from, valid_until)` window with an exclusive end. Use RFC-3339/ISO-8601 UTC strings (e.g. `2026-01-01T00:00:00+00:00`) to keep comparisons predictable.
 
 ## Which store should I use?
 
-- `InMemoryTripleStore`: dependency-free, volatile (tests/dev or ephemeral agents)
-- `SQLiteTripleStore`: dependency-free persistent local file for deterministic structured queries
-- `LanceDBTripleStore`: persistent local-path store with optional vector search
+- `InMemoryTripleStore`: dependency-free, volatile — tests, development, ephemeral agents.
+- `SQLiteTripleStore`: dependency-free persistent single file with structured queries **and** native vector search (construct with an embedder) — the recommended durable default; a store+journal pair can share one file.
+- `LanceDBTripleStore`: persistent vector-capable backend on LanceDB's storage format (optional dependency).
 
-Evidence: store implementations and behavior tests in [`docs/stores.md`](stores.md).
-
-## Does `order` apply before `limit`?
-
-Yes for **non-semantic** queries: results are ordered by `observed_at` and then limited.
-
-Evidence: ordering tests in [`tests/test_triple_store_limits.py`](../tests/test_triple_store_limits.py).
-
-Note: `LanceDBTripleStore` enforces this by fetching all matching rows and sorting in Python (no `order_by` API on the query builder used here). For large tables, filter aggressively by `scope`/`owner_id` and time bounds.
+See [`stores.md`](stores.md) for details.
 
 ## How do I do semantic search?
 
-Semantic/vector search is opt-in:
-- `query_text=...` requires a configured embedder in vector-capable stores; there is **no keyword fallback**
-- `query_vector=...` bypasses embedding generation
-- `SQLiteTripleStore` rejects semantic/vector queries; use in-memory or LanceDB with vectors for semantic search
+Vector search is opt-in and works the same across all three stores:
 
-Evidence:
-- Store contracts: [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py), [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py), [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
-- Tests: [`tests/test_in_memory_query_text_fallback.py`](../tests/test_in_memory_query_text_fallback.py), [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py), [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py)
+- `query_text=...` requires a configured embedder (a `ValueError` is raised otherwise; there is no keyword fallback).
+- `query_vector=...` bypasses embedding generation.
+- Only rows written with vectors participate; `min_score` applies a cosine threshold; results carry `attributes["_retrieval"]`.
 
 ## Are queries deterministic?
 
-For **structured** queries, yes: filters are explicit and non-semantic queries are ordered by `observed_at` and then limited.
+Structured queries: yes — filters are explicit, and non-semantic results are ordered by `observed_at` then limited. Vector queries rank by similarity; ties are not specified. Layer-2 reconstruction is deterministic given the same journal state: every result carries `as_of_seq`, and anchoring `Stimulus(as_of=...)` reproduces it.
 
-For **vector** queries:
-- ranking is similarity-based and depends on the configured embedder/backend
-- ties are not specified
+## Do reads strengthen memory?
 
-Evidence:
-- Ordering/limit contract tests: [`tests/test_triple_store_limits.py`](../tests/test_triple_store_limits.py)
-- Backend-specific notes: [`docs/stores.md`](stores.md)
+No. Reconstruction, inspection, replay, the structural report, and the entity card are pure reads. `commit_selection` is the only strengthening path, and it deposits only for records admitted by the stimulus (records rendered from the identity core or from short-term standing are presence, not use). See [`memory-system.md`](memory-system.md).
 
 ## What gets embedded for vector search?
 
-On `add(...)`, vector-capable stores embed a canonical text representation derived from each `TripleAssertion`:
-- always includes `subject predicate object`
-- may include selected `attributes` keys (`subject_type`, `object_type`, `evidence_quote`, `original_context`), with context truncated
-
-On `query(...)` with `query_text=...`, vector-capable stores embed the query string and run vector search against stored vectors.
-
-`SQLiteTripleStore` stores the same canonical `text` for inspection/debugging,
-but does not embed or search it.
-
-Evidence:
-- `_canonical_text(...)` in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py)
-- `_canonical_text(...)` in [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py)
-- `_canonical_text(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py)
+On `add(...)`, vector-capable stores embed each assertion's canonical text (`canonical_text(assertion)`): the triple terms plus selected attributes, with digest-bearing records rendered around their digest text. On `query(...)` with `query_text=...`, the query string is embedded and ranked against stored vectors. Edge assertions are never embedded.
 
 ## What embedding interface do I need to implement?
 
-Implement the `TextEmbedder` protocol:
-
-- `embed_texts(texts: Sequence[str]) -> list[list[float]]`
-
-Evidence: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py).
-
-## How does `AbstractGatewayTextEmbedder` work?
-
-`AbstractGatewayTextEmbedder` is a thin HTTP client:
-- `POST` JSON `{ "input": [ ... ] }` to `base_url + endpoint_path` (default `endpoint_path="/api/gateway/embeddings"`)
-- Expects a response with a `data` list containing `embedding` arrays (and optionally `index` for stable ordering)
-- Supports Bearer auth via the `auth_token` constructor parameter
-
-Evidence: [`src/abstractmemory/embeddings.py`](../src/abstractmemory/embeddings.py).
+The `TextEmbedder` protocol: `embed_texts(texts: Sequence[str]) -> list[list[float]]`. Two implementations ship with the package: `OpenAICompatTextEmbedder` (any OpenAI-compatible `/embeddings` endpoint, e.g. LM Studio or Ollama) and `AbstractGatewayTextEmbedder` (an AbstractGateway deployment; default path `/api/gateway/embeddings`, Bearer auth via `auth_token`).
 
 ## Where does vector retrieval metadata appear?
 
-On results, stores attach retrieval metadata to `TripleAssertion.attributes["_retrieval"]`:
-- In-memory: cosine `score` + `metric`
-- LanceDB: cosine `score`, `distance` (from LanceDB `_distance`), + `metric`
+On results, stores attach retrieval metadata to `TripleAssertion.attributes["_retrieval"]`: cosine `score` + `metric` (LanceDB additionally reports `distance`).
 
-Evidence: vector query code paths in [`src/abstractmemory/in_memory_store.py`](../src/abstractmemory/in_memory_store.py) and [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py).
+## How do I inspect the data on disk?
 
-## How do I inspect the SQLite data on disk?
+- SQLite: open the file with any SQLite client. The assertions table includes the canonical triple columns plus `provenance_json`, `attributes_json`, `text`, and `embedding`; the journal's sidecar tables live in the same file when you pass the same path to `SQLiteJournal`.
+- LanceDB: open the `uri` path with LanceDB and inspect the table.
+- For a whole entity home, prefer the read-only workflow in [`operator.md`](operator.md) — identity core, wake reasons, gradation, replay stream, and the identity card, all pure reads.
 
-Data is stored in the file path passed to `SQLiteTripleStore`. You can inspect it
-with any SQLite client. The table includes canonical triple columns plus
-`provenance_json`, `attributes_json`, and `text`.
+## Can I replay the past?
 
-Evidence: [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_store.py) and [`docs/stores.md`](stores.md).
-
-## How do I inspect the LanceDB data on disk?
-
-Data is stored under the `uri` path passed to `LanceDBTripleStore`. You can open it with LanceDB and inspect the table.
-
-Evidence: `LanceDBTripleStore.__init__` and `add(...)` in [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py) describe the connection and stored columns (also summarized in [`docs/stores.md`](stores.md)).
+Yes. The journal assigns a monotonic `seq` to every record; `export_replay(since_seq=..., until_seq=...)` streams verbatim history, and `as_of`/`at_seq` parameters on reads (`reconstruct`, `gradation`, `activation`, `entity_card`) fold state to any anchor. One documented limit: triple-store truth is read current (assertions have no seq axis), so store rows added after an anchor still enter candidate gathering; replay is exact while store contents are unchanged.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Protocol
+from typing import Iterable, List, Optional, Protocol, Tuple
 
 from .models import TripleAssertion, canonicalize_term
 
@@ -13,6 +13,11 @@ class TripleQuery:
     object: Optional[str] = None
     scope: Optional[str] = None  # run|session|global
     owner_id: Optional[str] = None  # owner identifier within the selected scope
+
+    # Exact id lookup (backlog 0009). When set, only assertions whose
+    # assertion_id is in this tuple are returned; other term filters still apply.
+    # Id lookups intentionally bypass closure/visibility folds (audit completeness).
+    assertion_ids: Optional[Tuple[str, ...]] = None
 
     since: Optional[str] = None  # observed_at >= since
     until: Optional[str] = None  # observed_at <= until
@@ -30,6 +35,15 @@ class TripleQuery:
     order: str = "desc"  # asc|desc by observed_at
 
     def __post_init__(self) -> None:
+        # Normalize id filter: drop empties, keep stable order, tuple-ify.
+        if self.assertion_ids is not None:
+            ids = tuple(
+                s.strip()
+                for s in (self.assertion_ids or ())
+                if isinstance(s, str) and s.strip()
+            )
+            object.__setattr__(self, "assertion_ids", ids if ids else None)
+
         # Canonicalize KG terms once (trim + lower; stable exact match).
         if isinstance(self.subject, str):
             s = canonicalize_term(self.subject)

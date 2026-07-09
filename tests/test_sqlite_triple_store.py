@@ -74,9 +74,12 @@ def test_sqlite_triple_store_active_at_window(tmp_path: Path) -> None:
     store.close()
 
 
-def test_sqlite_triple_store_rejects_semantic_queries(tmp_path: Path) -> None:
+def test_sqlite_query_text_requires_embedder_no_fallback(tmp_path: Path) -> None:
+    """Native vectors (a2a 0003): query_text without a configured embedder
+    raises the SAME error as the InMemory reference — never a silent
+    keyword fallback. (query_vector works embedder-less: it is precomputed.)"""
     store = SQLiteTripleStore(tmp_path / "kg.sqlite")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="query_text requires a configured embedder"):
         _ = store.query(TripleQuery(query_text="hello", scope="global"))
     store.close()
 

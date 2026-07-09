@@ -1,8 +1,11 @@
 # Stores / Backends
 
-AbstractMemory currently provides three append-only triple stores:
-- `InMemoryTripleStore` (dependency-free, volatile)
-- `SQLiteTripleStore` (stdlib, persistent, structured-query only)
+AbstractMemory provides three append-only triple stores:
+- `InMemoryTripleStore` (dependency-free, volatile, vector-capable)
+- `SQLiteTripleStore` (stdlib, persistent, vector-capable — the recommended
+  single-file pairing for durable homes: construct with an embedder so rows
+  embed on write; vectorless rows are a labeled degradation, not the
+  default posture)
 - `LanceDBTripleStore` (optional dependency, persistent, vector-capable)
 
 Public exports: [`src/abstractmemory/__init__.py`](../src/abstractmemory/__init__.py)
@@ -28,23 +31,36 @@ Source: [`src/abstractmemory/sqlite_store.py`](../src/abstractmemory/sqlite_stor
 
 What it is:
 - A persistent SQLite-backed implementation using the Python standard library.
-- Intended for durable local structured queries when vector search is not needed.
-- Creates the table and indexes during construction.
+- The durable single-file store: structured queries AND native vector
+  search in one file. Creates the table and indexes during construction;
+  files created before the vector column existed upgrade in place
+  (`ALTER TABLE` adds the `embedding` column on open — no migration step).
 
-Semantic/vector support:
-- `query_text=...` and `query_vector=...` are intentionally unsupported and raise `ValueError`.
-- SQLite still stores a canonical `text` column for inspection/debugging; it is not used for keyword fallback.
+Semantic/vector support (mirrors the InMemory reference semantics exactly):
+- Construct with `embedder=` and `add(...)` embeds each assertion's
+  canonical text (edge assertions never embed) and persists the vector in
+  the same file. An embedder failure aborts the add with zero rows written.
+- `query_text=...` requires the embedder (raises the same `ValueError` as
+  InMemory — no keyword fallback); `query_vector=...` works directly.
+- Cosine ranking runs in Python over the SQL-filtered candidates (shared
+  `vector_scoring.py` — both stores rank identically). The scan is linear,
+  comfortable at single-home scale; ANN indexing is on the design backlog.
+- Rows added while no embedder was configured stay vectorless: vector
+  queries skip them and layer-2 recall labels the degradation
+  (`#FALLBACK`). Re-embedding backfill is on the design backlog.
 
 Persistence:
-- Data is stored in the provided SQLite file path.
-- Behavior is covered by [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py).
+- Data (including vectors) is stored in the provided SQLite file path.
+- Behavior is covered by [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py)
+  and the cross-store parity suite [`tests/test_store_vectors.py`](../tests/test_store_vectors.py).
 
-Stored columns (v0):
+Stored columns:
 - `assertion_id` (uuid)
 - `subject`, `predicate`, `object`, `scope`, `owner_id`
 - `observed_at`, `valid_from`, `valid_until`, `confidence`
 - `provenance_json`, `attributes_json` (serialized dicts)
-- `text` (canonical text for inspection/debugging)
+- `text` (canonical text, kept inspectable)
+- `embedding` (JSON-encoded float list; NULL for vectorless rows)
 
 ## LanceDBTripleStore
 
@@ -56,7 +72,8 @@ Install:
 
 What it is:
 - A persistent, local-path LanceDB table storing append-only assertions.
-- Intended as the durable vector-capable backend for v0.
+- A durable vector-capable backend with native vector indexing; choose it
+  when you want LanceDB's storage format instead of a single SQLite file.
 
 Dependency note:
 - `lancedb` is optional; constructing `LanceDBTripleStore` raises an `ImportError` with an install hint when it is missing.
@@ -71,7 +88,7 @@ Stored columns (v0):
 - `subject`, `predicate`, `object`, `scope`, `owner_id`
 - `observed_at`, `valid_from`, `valid_until`, `confidence`
 - `provenance_json`, `attributes_json` (serialized dicts)
-- `text` (canonical text used for embedding/debugging)
+- `text` (canonical text used for embedding, kept inspectable)
 - optional vector column (default: `vector`) when `embedder` is configured
 
 Query mechanics:
@@ -99,9 +116,10 @@ Ordering + limit semantics:
   - Covered in [`tests/test_triple_store_limits.py`](../tests/test_triple_store_limits.py) and [`tests/test_sqlite_triple_store.py`](../tests/test_sqlite_triple_store.py).
   - Note: `LanceDBTripleStore` enforces this by fetching all matching rows then sorting in Python (no `order_by` on LanceDB query builders as used here). See [`src/abstractmemory/lancedb_store.py`](../src/abstractmemory/lancedb_store.py).
 
-Vector column consistency (`InMemoryTripleStore` and `LanceDBTripleStore`):
+Vector consistency (all vector-capable stores):
 - To use `query_text` / `query_vector`, assertions must have been written with vectors (store constructed with an `embedder`).
-- If you override `vector_column`, use the same name consistently for writes and queries.
+- Keep one embedding model per store: vectors from different models are not comparable, and the store does not enforce this.
+- If you override `vector_column` (`InMemoryTripleStore` / `LanceDBTripleStore`), use the same name consistently for writes and queries; `SQLiteTripleStore` stores vectors in its `embedding` column.
 
 ## Next
 

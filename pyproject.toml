@@ -60,6 +60,8 @@ all = [
 [tool.pytest.ini_options]
 markers = [
   "basic: smoke tests that exercise the default local API",
+  "lmstudio: integration tests that need a local LMStudio (OpenAI-compatible) server with an embedding model; auto-skipped when unreachable",
+  "lmstudio_llm: lmstudio tests that additionally call the local chat model as a judge; skipped on timeout",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -45,7 +45,15 @@ class TripleAssertion:
     provenance: Dict[str, Any] = field(default_factory=dict)
     attributes: Dict[str, Any] = field(default_factory=dict)
 
+    # Read-side identity (seam contract, backlog 0009): populated by stores on
+    # query results; optional on writes (deterministic ids / import flows may
+    # supply their own). Excluded from canonicalization; None omitted in to_dict.
+    assertion_id: Optional[str] = None
+
     def __post_init__(self) -> None:
+        if isinstance(self.assertion_id, str):
+            aid = self.assertion_id.strip()
+            object.__setattr__(self, "assertion_id", aid if aid else None)
         # Canonicalize KG terms (trim + lower) for stable matching.
         object.__setattr__(self, "subject", canonicalize_term(self.subject))
         object.__setattr__(self, "predicate", canonicalize_term(self.predicate))
@@ -73,6 +81,7 @@ class TripleAssertion:
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
+            "assertion_id": self.assertion_id,
             "subject": self.subject,
             "predicate": self.predicate,
             "object": self.object,
@@ -130,4 +139,5 @@ class TripleAssertion:
             confidence=confidence,
             provenance=dict(provenance),
             attributes=dict(attributes),
+            assertion_id=data.get("assertion_id") if isinstance(data.get("assertion_id"), str) else None,
         )

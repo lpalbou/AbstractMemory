@@ -1,0 +1,128 @@
+{
+ "as_of_seq": 4,
+ "budget_spent": {
+  "candidates_considered": 4,
+  "edges_visited": 1,
+  "handles": 3,
+  "max_edges": 100,
+  "shelf_size": 3,
+  "stm_handles": 1,
+  "stm_tokens_used": 6,
+  "token_budget": 200,
+  "tokens_used": 23
+ },
+ "dropped": [
+  {
+   "reason": "below_shelf",
+   "record_id": "g-tea",
+   "score": 0.0
+  }
+ ],
+ "edges": [
+  {
+   "predicate": "co_used",
+   "source": "walked",
+   "source_id": "g-report",
+   "strength_label": "trail",
+   "target_id": "g-hot",
+   "trail_activation": 4.0
+  }
+ ],
+ "handles": [
+  {
+   "activation": {
+    "base_level": 7.2727272727272725,
+    "spread": 0.58,
+    "total": 7.852727272727273
+   },
+   "admission": "stm",
+   "binding": "indexed+inactive",
+   "cues": [
+    "spread: via co_used from g-report",
+    "selected +7.3"
+   ],
+   "digest": "dave reads old books",
+   "kind": "memory",
+   "owner_id": "s1",
+   "payload_tiers": [
+    "digest"
+   ],
+   "provenance": {
+    "global_count": 1,
+    "observed_at": "2026-07-05T10:04:00.000000+00:00"
+   },
+   "record_id": "g-hot",
+   "relevance": {},
+   "scope": "session",
+   "title": "dave reads old books",
+   "token_estimate": 6
+  },
+  {
+   "activation": {
+    "base_level": 7.619047619047619,
+    "spread": 0.0,
+    "total": 7.619047619047619
+   },
+   "admission": "both",
+   "binding": "indexed+inactive",
+   "cues": [
+    "keyword: matched fusion, energy, report (3/3)",
+    "selected +7.6"
+   ],
+   "digest": "alice wrote fusion energy report",
+   "kind": "memory",
+   "owner_id": "s1",
+   "payload_tiers": [
+    "digest"
+   ],
+   "provenance": {
+    "global_count": 1,
+    "observed_at": "2026-07-05T10:01:00.000000+00:00"
+   },
+   "record_id": "g-report",
+   "relevance": {
+    "keyword": 1.0
+   },
+   "scope": "session",
+   "title": "alice wrote fusion energy report",
+   "token_estimate": 9
+  },
+  {
+   "activation": {
+    "base_level": 0.0,
+    "spread": 0.0,
+    "total": 0.0
+   },
+   "admission": "stimulus",
+   "binding": "indexed+inactive",
+   "cues": [
+    "keyword: matched fusion (1/3)"
+   ],
+   "digest": "bob drafted fusion reactor plan",
+   "kind": "memory",
+   "owner_id": "s1",
+   "payload_tiers": [
+    "digest"
+   ],
+   "provenance": {
+    "global_count": 0,
+    "observed_at": "2026-07-05T10:03:00.000000+00:00"
+   },
+   "record_id": "g-plan",
+   "relevance": {
+    "keyword": 0.3333333333333333
+   },
+   "scope": "session",
+   "title": "bob drafted fusion reactor plan",
+   "token_estimate": 8
+  }
+ ],
+ "selector_route": "heuristic",
+ "stop_reason": "enough",
+ "trace_id": "t-golden-read",
+ "view": "working_set",
+ "warnings": [
+  "#FALLBACK: vector channel unavailable: query_text requires a configured embedder (vector search); keyword fallback is disabled",
+  "#FALLBACK: keyword channel v1 = token scan (FTS5 lands with 0019)"
+ ]
+}

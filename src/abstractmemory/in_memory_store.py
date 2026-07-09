@@ -1,57 +1,40 @@
 from __future__ import annotations
 
-import math
+import threading
 import uuid
 from typing import Any, Iterable, List, Optional, Sequence
 
 from .embeddings import TextEmbedder
 from .models import TripleAssertion, normalize_term
 from .store import TripleQuery
+# Shared scoring (one definition for all stores — see vector_scoring.py);
+# the _cosine alias keeps this module's established internal name.
+from .vector_scoring import cosine as _cosine, rank_by_cosine
 
 
-def _canonical_text(a: TripleAssertion) -> str:
-    base = f"{a.subject} {a.predicate} {a.object}".strip()
-    attrs = a.attributes if isinstance(a.attributes, dict) else {}
-
-    parts: list[str] = [base]
-    st = attrs.get("subject_type")
-    ot = attrs.get("object_type")
-    if isinstance(st, str) and st.strip():
-        parts.append(f"subject_type: {st.strip()}")
-    if isinstance(ot, str) and ot.strip():
-        parts.append(f"object_type: {ot.strip()}")
-
-    eq = attrs.get("evidence_quote")
-    if isinstance(eq, str) and eq.strip():
-        parts.append(f"evidence: {eq.strip()}")
-
-    ctx = attrs.get("original_context")
-    if isinstance(ctx, str) and ctx.strip():
-        ctx2 = ctx.strip()
-        if len(ctx2) > 400:
-            ctx2 = ctx2[:400] + "…"  #[WARNING:TRUNCATION] bounded canonical-text context preview (full context remains in attributes)
-        parts.append(f"context: {ctx2}")
-
-    return "\n".join(parts)
+# Single source of truth for the embedding/keyword text (canonical_text.py
+# v2: clean record digests); the alias keeps this module's established name
+# and the golden parity tests meaningful.
+from .canonical_text import canonical_text as _canonical_text  # noqa: E402
+from .canonical_text import is_record_edge as _is_record_edge  # noqa: E402
 
 
-def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
-    # Defensive: handle empty vectors.
-    if not a or not b:
-        return 0.0
-    n = min(len(a), len(b))
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for i in range(n):
-        ax = float(a[i])
-        bx = float(b[i])
-        dot += ax * bx
-        na += ax * ax
-        nb += bx * bx
-    if na <= 0.0 or nb <= 0.0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
+def _result_copy(a: TripleAssertion, assertion_id: Any, *, attributes: dict[str, Any] | None = None) -> TripleAssertion:
+    """Rebuild an assertion for query results: fresh dicts + read-side identity."""
+    return TripleAssertion(
+        subject=a.subject,
+        predicate=a.predicate,
+        object=a.object,
+        scope=a.scope,
+        owner_id=a.owner_id,
+        observed_at=a.observed_at,
+        valid_from=a.valid_from,
+        valid_until=a.valid_until,
+        confidence=a.confidence,
+        provenance=dict(a.provenance),
+        attributes=attributes if attributes is not None else dict(a.attributes),
+        assertion_id=str(assertion_id) if isinstance(assertion_id, str) and assertion_id else None,
+    )
 
 
 class InMemoryTripleStore:
@@ -61,6 +44,9 @@ class InMemoryTripleStore:
     - Intended for tests/dev and hosts without LanceDB installed.
     - Append-only: updates are represented as new assertions.
     - Vector search is optional and stores vectors in-memory only.
+    - Thread-safe (0013): one RLock guards add/query, and add() skips rows
+      whose assertion_id already exists (store-level id idempotency —
+      matches SQLiteTripleStore's INSERT OR IGNORE semantics).
     """
 
     def __init__(
@@ -72,8 +58,22 @@ class InMemoryTripleStore:
         self._embedder = embedder
         self._vector_column = str(vector_column or "vector")
         self._rows: list[dict[str, Any]] = []
+        self._ids: set[str] = set()
+        self._lock = threading.RLock()
 
     def close(self) -> None:
+        return None
+
+    def stored_vector(self, assertion_id: str) -> Optional[List[float]]:
+        """The persisted embedding for one row, or None (vectorless /
+        unknown). Read surface for consolidation's vector bridge signal —
+        never used by recall itself (the vector channel queries by cosine)."""
+        rid = str(assertion_id or "").strip()
+        with self._lock:
+            for r in self._rows:
+                if r.get("assertion_id") == rid:
+                    v = r.get(self._vector_column)
+                    return list(v) if isinstance(v, list) else None
         return None
 
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
@@ -81,18 +81,29 @@ class InMemoryTripleStore:
         if not pending:
             return []
 
-        vectors: Optional[List[List[float]]] = None
+        vectors: Optional[dict[int, List[float]]] = None
         if self._embedder is not None:
-            vectors = self._embedder.embed_texts([_canonical_text(a) for a in pending])
+            # Edge assertions are graph structure, never embedded (realistic
+            # fix): embedding "ex:a supports ex:b" wastes embed calls and let
+            # edges consume vector fetch slots before rejection.
+            embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _is_record_edge(a)]
+            if embeddable:
+                embedded = self._embedder.embed_texts([t for _, t in embeddable])
+                vectors = {i: v for (i, _), v in zip(embeddable, embedded)}
 
         ids: list[str] = []
-        for i, a in enumerate(pending):
-            assertion_id = str(uuid.uuid4())
-            ids.append(assertion_id)
-            row: dict[str, Any] = {"assertion_id": assertion_id, "assertion": a}
-            if vectors is not None and i < len(vectors):
-                row[self._vector_column] = vectors[i]
-            self._rows.append(row)
+        with self._lock:
+            for i, a in enumerate(pending):
+                # Honor caller-supplied ids (deterministic/import flows); default uuid4.
+                assertion_id = a.assertion_id or str(uuid.uuid4())
+                ids.append(assertion_id)
+                if assertion_id in self._ids:
+                    continue  # store-level id idempotency (parity with OR IGNORE)
+                self._ids.add(assertion_id)
+                row: dict[str, Any] = {"assertion_id": assertion_id, "assertion": a}
+                if vectors is not None and i in vectors:
+                    row[self._vector_column] = vectors[i]
+                self._rows.append(row)
         return ids
 
     def query(self, q: TripleQuery) -> List[TripleAssertion]:
@@ -126,10 +137,14 @@ class InMemoryTripleStore:
                     return False
             return True
 
-        rows = [r for r in self._rows if isinstance(r, dict) and isinstance(r.get("assertion"), TripleAssertion)]
+        with self._lock:  # snapshot under the lock; scoring below is lock-free
+            rows = [r for r in self._rows if isinstance(r, dict) and isinstance(r.get("assertion"), TripleAssertion)]
         filtered: list[dict[str, Any]] = []
+        id_filter = set(q.assertion_ids) if q.assertion_ids else None
         for r in rows:
             a = r["assertion"]
+            if id_filter is not None and r.get("assertion_id") not in id_filter:
+                continue
             if _match(a):
                 filtered.append(r)
 
@@ -142,45 +157,23 @@ class InMemoryTripleStore:
             query_vector = self._embedder.embed_texts([q.query_text])[0]
 
         if query_vector is not None:
-            ranked: list[tuple[float, TripleAssertion]] = []
-            for r in filtered:
-                v = r.get(q.vector_column or self._vector_column)
-                if not isinstance(v, list):
-                    continue
-                try:
-                    score = _cosine(query_vector, v)
-                except Exception:
-                    score = 0.0
-                if q.min_score is not None and score < float(q.min_score):
-                    continue
-                ranked.append((score, r["assertion"]))
-            ranked.sort(key=lambda t: t[0], reverse=True)
+            column = q.vector_column or self._vector_column
+            ranked = rank_by_cosine(query_vector, filtered, lambda r: r.get(column),
+                                    min_score=q.min_score, limit=limit)
 
             out: list[TripleAssertion] = []
-            for score, a in (ranked if limit is None else ranked[:limit]):
+            for score, r in ranked:
+                a = r["assertion"]
                 attrs = dict(a.attributes) if isinstance(a.attributes, dict) else {}
                 retrieval = attrs.get("_retrieval") if isinstance(attrs.get("_retrieval"), dict) else {}
                 retrieval2 = dict(retrieval)
                 retrieval2["score"] = float(score)
                 retrieval2.setdefault("metric", "cosine")
                 attrs["_retrieval"] = retrieval2
-                out.append(
-                    TripleAssertion(
-                        subject=a.subject,
-                        predicate=a.predicate,
-                        object=a.object,
-                        scope=a.scope,
-                        owner_id=a.owner_id,
-                        observed_at=a.observed_at,
-                        valid_from=a.valid_from,
-                        valid_until=a.valid_until,
-                        confidence=a.confidence,
-                        provenance=dict(a.provenance),
-                        attributes=attrs,
-                    )
-                )
+                out.append(_result_copy(a, r.get("assertion_id"), attributes=attrs))
             return out
 
-        out: list[TripleAssertion] = [r["assertion"] for r in filtered]
-        out.sort(key=lambda a: a.observed_at or "", reverse=(str(q.order).lower() != "asc"))
-        return out if limit is None else out[:limit]
+        ordered = sorted(filtered, key=lambda r: r["assertion"].observed_at or "", reverse=(str(q.order).lower() != "asc"))
+        sliced = ordered if limit is None else ordered[:limit]
+        # Rebuild results (never alias store internals) and attach read-side identity.
+        return [_result_copy(r["assertion"], r.get("assertion_id")) for r in sliced]

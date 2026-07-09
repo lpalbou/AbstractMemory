@@ -7,7 +7,1016 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-*No unreleased changes.*
+### Added (sleep phase-1: data-quality tending + cadence — 0023 fork parity, 2026-07-09)
+- **`src/abstractmemory/maintenance.py`** — the codex fork's missing sleep
+  half (phase 1 "data_quality_tending"; phase 2, the dream, shipped earlier in
+  `consolidation.py`). Maintainer-directed goal: "maintenance of the graph…
+  fix metadata issues, summaries, improve relationships" — proposed while
+  asleep, disposed awake:
+  - **`maintenance_report(store, journal, *, scopes, as_of=None,
+    scan_limit=200)`** — PURE READ: metadata gaps (missing
+    keywords/intents/outcomes, report-only — sleep never mutates a source),
+    duplicate-title groups keyed **(kind, normalized title)** (named
+    divergence: cross-kind title collisions are derivation, not duplication),
+    near-duplicate pairs (same-kind token-set Jaccard ≥ 0.65, bounded
+    newest-first scan; **vector upgrade**: stored-embedding cosine ≥ 0.90
+    catches paraphrase duplicates the fork's lexical scan misses), shared-
+    source groups, isolated-link candidates (≥ 2 shared facets — proposals
+    for waking review, never written), edge-suppression candidates (duplicate
+    logical edges across formation batches + `mentions` shadowed by a
+    stronger authored relation — reported as append-only CLOSURE candidates
+    for waking acts), consolidation proposals, and the fork's operations
+    ledger with phase labels (`data_quality_tending` / `further_insight`).
+  - **`consolidation_pass(system, *, scopes, owner_id, max_candidates=2,
+    proposal_ids=(), report_only=False, as_of=None)`** — phase-1's ONE write
+    (fork `create_consolidation_candidates`): low-risk duplicate-title groups
+    become at most N (clamped 1..6) INACTIVE `kind="summary"` candidates via
+    `remember_many` — `summarizes` edges to every source (true by
+    construction), `maintenance_candidate`/`review_required`/
+    `no_source_mutation` attributes, idempotent by sorted-source-set key,
+    covered-superset skip. Near-dup and shared-source stay proposals (the
+    fork's own false-positive caveats). Writes under `as_of` refuse loudly
+    (an audit anchor must not forge the timeline).
+  - **`maintenance_due(store, journal, *, scopes, since_seq=None, …)`** +
+    **`last_maintenance_seq(...)`** — the deterministic cadence predicate
+    (fork 770's "enough new nodes + fragmentation" halves; late-local-time
+    stays the HOST's clock per 0023's scheduling boundary). A home with zero
+    new formations is never due.
+  - **`sleep_pass(system, ...)`** — one orchestrator encoding the fork's
+    canonical order: tend first, then dream over the tended graph; the
+    runtime's `on_sleep` hook wires exactly one call.
+- **Guards, tested on both stacks** (`tests/test_maintenance.py`, 26 checks;
+  full suite 568): the D2 of sleep (tending deposits nothing — access counts
+  and attention events bit-identical), sources byte-untouched after a pass,
+  candidates born `indexed+inactive` (can never enter identity seats),
+  fingerprint idempotency + report_only dry runs, and the LOOP-BREAKER:
+  maintenance candidates are excluded from maintenance-analysis inputs
+  (tending never re-tends its own output; the dream pass still sees them as
+  real summary nodes in the tended graph).
+
+### Added (entity identity card — engine-side composed read, a2a 0009, 2026-07-07)
+- **`entity_card(store, journal, *, scope_pairs, owner_id,
+  current_window_events=200, top_n=5, as_of=None)`** in
+  `src/abstractmemory/entity_card.py` (+ `MemorySystem.entity_card`
+  facade delegate on `AccessOps`, + package-root export): the
+  maintainer's "something to know our summoned entity" as ONE composed
+  PURE READ over a home — gateway/observer/CLI consume one source of
+  truth. Sections: `identity` (folded self core + spark_version; name =
+  the home's owner identity string — display names live in the host
+  manifest), `age_and_context` (journal seq, record counts by kind per
+  scope, diary entry count, first/last observed_at — timestamps only,
+  never wall-clock now(); age is the consumer's subtraction),
+  `current_state` (rectangular trailing window over the last
+  `current_window_events` APPRAISAL events — "current is a window, not a
+  point"; markers/resolutions are standing, not experiences),
+  `likes_dislikes` (gradation over all targets; top_n by G+ and by G−
+  SEPARATELY — ambivalence preserved, one target may appear in both
+  lists; record-backed targets carry resolved titles, free strings pass
+  through), `questions` (open/resolved split via the diary
+  answers/resolves convention, both id namespaces), `key_moments`
+  (|magnitude| ≥ 8 valence events + firsts — dream/interest/supersession
+  — chronological, 20 most recent; ranking beyond chronology is
+  presentation, not engine truth), `discoveries` (open interests +
+  unresolved dream count). EVERY section carries a `provenance` string
+  naming its source — the card is ABOUT the entity, never claims to BE
+  it, and no field is authored by the card.
+- **Purity is a guard, not a promise** (the D2 of description): composing
+  the card deposits NOTHING — journal seq, attention events, and access
+  counts pinned unchanged across card reads
+  (`test_guard_card_is_a_pure_read`, both stacks).
+- **True as_of anchoring, records included**: journal signals anchor
+  directly (valence/closures/bindings ≤ as_of); record EXISTENCE anchors
+  through the formation binding (every remember_many record binds at
+  formation), so a card at seq T excludes later records AND later
+  feelings — including belief-at-T for questions (a question answered
+  after T reads OPEN at T). `self_records_read` gained an optional
+  `as_of` (default None = current summon-time read, unchanged) so the
+  identity section anchors through the same folds.
+- **History vs belief split, documented**: counts/firsts/moments read
+  append-only HISTORY (closures never shrink the past — a superseded
+  episode still counts); questions/interests/identity read folded BELIEF
+  state. Tests: `test_entity_card.py` (16, both stacks) incl. seeded-home
+  shape/semantics, ambivalent-target both-lists, resolved-question split
+  with helper parity (`open_questions`/`unresolved_dreams`), window
+  tunable bites, empty-home honesty (empty sections with "no events"
+  provenance, never fabricated), input validation.
+
+### Fixed (URGENT correction: component guard is now a REAL predicate allowlist, 2026-07-07)
+- **The honest part first**: the consolidation docstring IMPLIED an
+  allowlist ("components are computed over AUTHORED relations ONLY —
+  formation edges like summarizes/from_session/reflected_in/continues")
+  while the edge scan collected EVERY `record_edge` assertion regardless
+  of predicate. Runtime asked us to CONFIRM the allowlist before shipping
+  `written_amid` diary-connectivity edges (a2a 0007) — checking the code
+  disproved our own prose: 38+ diary projections × ~6 anchors each would
+  have made diary entries super-connectors and merged sessions into ONE
+  component — the exact dream-death merger the red-team guard was built
+  against, arriving through the authored-edge door instead of the trail
+  door. The policy is now code, not prose.
+- **Two explicit predicate sets** in `consolidation.py`, exported at
+  package level (one source, no second copy — the diary_type-clamp
+  lesson): `COMPONENT_RELATIONS` (semantic/structural authored relations,
+  component-defining: summarizes, from_session, reflected_in, continues,
+  derived_from, answers, supports, part_of; consolidation-confirmed
+  relations join here when 0023 v2 lands) and `CONTEXT_RELATIONS`
+  (mechanical co-presence, NEVER component-defining: written_amid,
+  mentions). Formation stores the relation as the record_edge assertion's
+  PREDICATE (`records.py build_formation_plan`), so the edge scan routes
+  each pair by `assertion.predicate`.
+- **Context pairs are "already associated"**: same treatment as warm
+  trails — excluded from bridge proposals AND questions, counted honestly
+  (`context_associated` beside `trail_associated`; report carries
+  `context_pairs`, `counts.context_edges`).
+- **Unknown predicates default to CONTEXT** (conservative: a novel edge
+  kind can never silently merge components) and are NAMED in the report
+  (`unknown_relations`) — works-or-loud, never silent. Promoting a
+  predicate to `COMPONENT_RELATIONS` is a deliberate edit that accepts
+  the dream-death risk, documented at the definition site.
+- **Guard tests** (both stacks):
+  `test_guard_written_amid_never_defines_components` (diary projection
+  anchored into two authored components → still separate; diary pairs
+  excluded as context_associated; dream still forms on the surviving
+  semantic bridge; set membership pinned so a future allowlist edit fails
+  loudly) and `test_guard_unknown_relation_defaults_to_context` (novel
+  predicate does not merge and is named). Pre-fix behavior reproduced in
+  isolation: the same fixture folds to ONE component when every predicate
+  counts. Existing guards unchanged and green (`continues` still
+  component-defining, trails still excluded, dense home still dreams).
+- **Prelude standing read path confirmed** (runtime's FYI):
+  `test_gradation_none_enumerates_self_scope_standing` pins
+  `gradation(None, scope="self", owner_id=eid)` enumerating entity-target
+  feelings (e.g. `person:laurent`) written via valence into
+  `("self", entity)` — the summon header's STANDING section reads exactly
+  this surface without knowing target names in advance.
+
+### Changed (window_limit declared tunable — saturation ruling, 2026-07-07)
+- **`AttentionConfig.window_limit` honestly documented** (observer's
+  cliff finding, 0007): the field is a READ-BOUND on the activity axis —
+  the hyperbolic decay curve is the semantics, the window is the fold's
+  working set; at the edge (d≈500) an event still carries ~4% of its
+  weight, so the window is a CLIFF, not a decayed-to-zero tail. Default
+  stays 512 (session-scale; fork parity — the fork's 500-event horizon
+  spanned weeks, resident cadence is ~1k events/day ≈ half a day).
+  RESIDENT RECOMMENDATION: size to ~a week of measured cadence (≈8192 at
+  ~1k/day) via `MemorySystem(attention_config=AttentionConfig(
+  window_limit=8192))` — plumbing verified end-to-end (constructor →
+  reconstruct/activation → scoring_window), regression-tested. The
+  GLOBAL count never windows (two-count model, global half untouched).
+  DEFERRED ON RECORD: count-compressed tail beyond the window (nothing
+  cliff-drops) — changes fold outputs, gated on an emergence re-run, the
+  maintainer's call. Operator guide: "Resident homes and the attention
+  window" section added.
+
+### Fixed (URGENT red-team guard: component semantics, 2026-07-07)
+- **Trails never define components** (red-team 0007: all-pairs co-use
+  trails + upcoming `continues` formation chains could merge the dream
+  pass's graph into ONE component — cross-component bridges impossible,
+  salience 0 forever, dreams structurally dead; no sparse-fixture test
+  caught it). `structural_report` now computes components over AUTHORED
+  relations only (record_edge assertions — formation edges and
+  consolidation-confirmed relations); co_selected trails are excluded
+  from adjacency entirely (habit, not semantic structure) and reported
+  separately as `trail_pairs`. In `dream_pass`, a cross-component pair
+  with a warm trail is excluded from proposals AND questions (already
+  associated by use — nothing to dream about), counted honestly as
+  `trail_associated`. DELIBERATE DIVERGENCE from runtime's suggestion:
+  `continues` stays component-defining — a chained session is one
+  story/island; the killer was trails' unbounded transitive merging, not
+  typed authored chains (a one-predicate-list edit if practice proves
+  otherwise). Guard tests: `test_guard_trails_never_define_components`,
+  `test_guard_trail_warmed_pairs_not_proposed`,
+  `test_guard_continues_chains_are_islands`,
+  `test_guard_dream_survives_dense_home` (the missing dense-home fixture
+  — verified failing against the pre-fix logic). Seam docs: honest
+  budget-math note in `entity_recall_budget` (20k floor fills 12 seats ×
+  ~200-token digests exactly; seats bind first from ~3900+ budgets).
+
+### Changed (co-use pair trails — maintainer-initiated, 2026-07-07)
+- **Co-use pairing in `plan_selection`** ("I see a lot of isolated nodes...
+  not enough relationships are created"): `co_selected` events are now
+  deposited for ALL unordered pairs within the DEPOSITING SLICE — the
+  used_record_ids whose admission is "stimulus"/"both", exactly the ids
+  that already deposit `selected`. Self/STM presence never pairs
+  (presence ≠ use extends to association: the hub-node failure cannot
+  route through identity, by construction). The two prior routes are
+  kept additively (term-sharing for raw triples — the raw-triple-era
+  mechanism, not a co-use guard; spreading-hop pairs over recorded
+  edges); pairs are deduped per commit. Pair event ids stay derived from
+  (trace_id, canonical sorted pair): at-least-once replays dedup at the
+  journal; default co_selected weight stays 4.0. Bounded by the shelf
+  (worst case C(12,2)=66 pairs/commit) — no new config.
+- **Spreading walks co-use trails**: warm `co_selected` pairs are now
+  traversable edges (predicate `co_used`, strength_label `"trail"`), not
+  just boosts on recorded edges — two edgeless formed records that
+  repeatedly served one moment together become mutually reachable.
+  Graph-adjacent pairs keep the (1 + trail/25) boost on the recorded
+  edge instead of a second edge (one physical connection contributes
+  once); fan-out cap, edge budget, exclusions and cycle rules apply
+  unchanged.
+- **Replay: binding display edges (0007 ask 2, display-only additive)**:
+  `binding` envelopes of formed records gain `display.edges =
+  [{"relation", "target_graph_id"}]` when formation-time edge assertions
+  exist — the view draws "known" links distinct from lit usage trails.
+  No journal change, no envelope version bump; diary-redacted blocks
+  never carry edges.
+- Golden byte-compat fixture regenerated (the warm-up commit now
+  deposits one co-use pair, shifting the seq axis by one).
+
+### Added (sleep/consolidation/dreams — backlog 0023 v1, fork-faithful, 2026-07-07)
+- `consolidation.py`: the deterministic sleep pass (zero LLM calls — the
+  fork forbids invented narratives). `structural_report(store, journal, *,
+  scopes, as_of=None)` — PURE READ: components (BFS over relation edges +
+  co_selected trails, hop ids mapped to record graph ids), isolated
+  records, duplicate titles, facet coverage (keywords/intents/outcomes
+  tokens + whole participants), underlinked facets; dreams and bookkeeping
+  rows excluded (the loop-breaker). `dream_pass(system, *, scopes,
+  owner_id, salience_floor=2, max_sources=8,
+  embedder_similarity_floor=0.35, report_only=False, as_of=None)` —
+  cross-component bridge PROPOSALS (>=2 shared lexical facets, or
+  participant+facet, or stored-vector cosine >= floor — the named UPGRADE
+  over the lexical-only fork), single-facet pairs become QUESTIONS
+  ("connection or lexical residue?"), salience = 3·proposals + 2·questions
+  + underlinked; below floor or <2 sources = a QUIET NIGHT (valid, no
+  record, reason stated). At most ONE dream per pass: kind="dream" via
+  remember_many, idempotent by report fingerprint (same graph state
+  re-forms nothing), templated first-person digest in the fork's register,
+  weak "mentions" edges to sources (capped), attributes carry
+  fingerprint/salience/parent_dream_ids (unresolved chains)/
+  continuation_state/interpretation_required/bounded proposals+questions.
+  `unresolved_dreams(...)` read (folded when journal given) = the future
+  heartbeat wake reason. All exported.
+- kind="dream" joined MEMORY_RECORD_KINDS at rank 5 (summary peer — NOT
+  the fork's rank-0-loud: derived artifacts never gate or dominate recall)
+  and is excluded from identity's reserved seats even when mis-bound
+  prompt-active (engine kind-filter in select_self_members — a guard test
+  caught the gap).
+- `stored_vector(assertion_id)` read surface on InMemory + SQLite stores
+  (consolidation's vector bridge; never used by recall).
+- GUARD TESTS are the deliverable (tests/test_consolidation.py, both
+  stacks): sleep deposits NOTHING (D2-of-sleep — access counts + attention
+  events bit-unchanged); loop-breaker; one-dream-per-pass + fingerprint
+  idempotency; quiet night; bridge rules (proposal/question/adjacent-
+  excluded/vector-without-lexical); dream shape + two-night parent
+  chaining + indexed+inactive binding; never-in-identity; recall
+  neutrality (matched episode outranks unmatched dream).
+
+### Added (SQLite native vectors — the entity-home pairing, 2026-07-07)
+- `SQLiteTripleStore` gains native vector support mirroring the InMemory
+  reference semantics exactly: `embedder=` at construction; embed-on-add
+  over canonical text (edge assertions never embed; embedding happens
+  BEFORE the write transaction, so an embedder failure aborts with zero
+  rows written); vectors persist in the SAME .sqlite3 file (JSON
+  `embedding` column); `query_text` requires the embedder (identical
+  error, no keyword fallback); `query_vector` accepted directly; cosine
+  ranking in Python over the SQL-filtered candidates with min_score and
+  score-desc limits, `_retrieval` score attrs identical to InMemory.
+- IN-PLACE UPGRADE: pre-vector homes gain the `embedding` column via
+  `ALTER TABLE` on open (PRAGMA-checked) — the ratified one-file home
+  stands, zero migration; legacy rows stay vectorless (the vector channel
+  labels the degradation at recall) and new rows score.
+- Shared `vector_scoring.py` (cosine + ranking walk) — one definition for
+  all stores, extracted from InMemory (two scoring copies drift); a
+  cross-store parity test asserts identical ranking on identical data,
+  including the defensive min-prefix behavior on dimension-mismatched
+  vectors (the reference semantics).
+- Docs: stores.md rewritten for the pairing ("SQLite +
+  embedder-when-reachable; vectorless = labeled degradation, not the
+  default posture").
+
+### Added (replay display graph_id — 0005 observer delta, additive, 2026-07-07)
+- Display blocks of formed-graph rows now carry `"graph_id"` (the digest
+  row's subject; edge rows carry their SOURCE record's graph id) — the
+  join key between the two id namespaces (bindings carry graph ids;
+  usage/traces carry assertion row ids) that the observer previously
+  reverse-engineered from canonical-text titles. Diary-REDACTED blocks
+  carry it too (`{"redacted": "diary", "graph_id": …}`): topology =
+  existence + identity + connections; the opaque id is node identity,
+  content stays sealed. Plain triples omit it (their subject is not a
+  graph id — no fabrication). No envelope change; stream_version stays 1.
+
+### Changed (width over fear — maintainer round 9, 2026-07-07)
+- `entity_recall_budget` revised under the round-9 ruling (NO constant may
+  be a fear-derived ceiling; "width first, tune later"): the 4800 token
+  CAP is REMOVED (it was partly bloat-fear) — token_budget = max(2400,
+  round(token_fraction × context)); 20k → 2400, 40k → 4800 (scaling, not a
+  cap), 1M → 120,000. The 2400 floor stands (starvation guard — floors are
+  not fear). New declared tunables: `shelf_size` (default 12, the
+  limited-attention model — a cognitive basis; entity-elected widening
+  composes with the hyperfocus agency rules) and `token_fraction` (default
+  0.12, soft approximation; bounded at 0.5 — a recall payload beyond half
+  the context starves generation, an arithmetic bound, not a fear one).
+  max_candidates now scales: max(64, shelf_size × 8) — default 96.
+  Docstring states each constant's basis; operator.md budget section
+  rewritten accordingly.
+
+### Added (entity-session budget profile — maintainer round 8, 2026-07-07)
+- `entity_recall_budget(context_window)` + `ENTITY_CONTEXT_FLOOR = 20_000`
+  in seam.py, exported at the package root (single source of truth; the
+  gateway imports both and injects the profile with the posture — same
+  no-second-copy lesson as SELF_FRACTION_FLOOR). Contexts below the floor
+  raise naming the ruling ("never less") — the engine refuses to produce a
+  profile the gateway must refuse anyway. Profile: token_budget =
+  clamp(round(0.12 × context), 2400, 4800) — 12% of the 20k floor = 2400,
+  the existing seam default now grounded; shelf_size stays 12 regardless
+  of context (limited attention: more context buys history and generation
+  headroom, not a wider mind); max_candidates 64; self_fraction stays 0.0
+  (posture-independent — the summon gate injects it). The 60-token
+  starvation repro is impossible at >= 2400 by construction.
+
+### Fixed (identity floor — first-seat token guarantee, maintainer round 7, 2026-07-07)
+- CONFIRMED audit finding: the self component's SLOT floor held by
+  construction (max(1, round(f×shelf)) for any f>0), but TOKEN starvation
+  was real — `int(self_fraction × token_budget)` can be smaller than ANY
+  identity digest at small budgets (0.05 × 60 = 3 tokens), so the reserved
+  seat rendered nothing and the entity summoned identity-absent.
+- FIRST-SEAT GUARANTEE (mirror of the phase-0 hardening): the first placed
+  self member seats against the full REMAINING budget; subsequent members
+  respect the fraction cap as before; a member that cannot fit even the
+  remaining budget drops self_capped (honest) and the next smaller member
+  may claim the seat. The fill-order doc now states: at least one identity
+  record is PRESENT whenever a prompt-active core and any budget remain —
+  a reserved seat that renders nothing is identity-absent, which the
+  floor forbids.
+- `SELF_FRACTION_FLOOR = 0.05` exported (seam.py + package root) as the
+  single source of truth for the entity-posture floor: the GATEWAY
+  enforces the channel policy; the engine stays policy-free (RecallBudget
+  keeps accepting 0.0..0.9 — non-entity callers legitimately run at 0).
+
+### Changed (replay stream v1 FROZEN — consumer-review deltas, 2026-07-07)
+- STREAM v1 IS FROZEN with the three accepted viewer-consumer deltas
+  (0005): (1) TURN CORRELATION KEYS — the envelope carries
+  `trace_id`/`turn_id`/`run_id` next to scope/owner_id, always present
+  (null when absent), pure lifting for beat grouping (traces/snapshots →
+  own trace_id; events/valence → trace_id field + provenance
+  turn_id/run_id; bindings/closures → provenance keys); (2) RESERVED
+  family "host" for gateway-authored transport markers
+  (summon/prelude_rendered/session_closed) — never emitted by memory,
+  ACCEPTED by the families filter (yields nothing) so consumers
+  hard-coding the enum need no v2 bump; unknown names still raise;
+  (3) SEQ-GAP HONESTY documented: under family filters or audience
+  redaction, seq gaps are expected and carry no meaning — never data loss.
+
+### Added (replay/observability stream — a2a 0005 schema v1, 2026-07-07)
+- `export_replay(*, scope=None, owner_id=None, since_seq=0, until_seq=None,
+  families=None, enrich=True)` on MemorySystem (+ module function in
+  `replay.py`, exported): verbatim journal records as envelopes
+  (`stream/stream_version/seq/family/observed_at/scope/owner_id/payload/
+  display?`) across all six families in strict seq order — one shape for
+  history scrub AND live tail (poll since_seq=cursor). Deterministic
+  (until_seq=None anchors to call-time high-water); resumable with no gaps
+  and no repeats; families subset validated; enrichment resolves
+  digest-level `{record_id, kind, title, token_estimate}` from the store
+  (co_selected: both pair members), absent when unresolvable — never
+  fabricated — and diary display blocks are `{"redacted": "diary"}` for
+  gateway audience enforcement.
+- Journal protocol addition (internal, additive): `replay_records(*,
+  since_seq=0, until_seq=None)` yields (family, record) across all six
+  families in strict seq order on BOTH backends (collect + sort; a
+  streaming k-way merge is a flagged later optimization).
+- TWO SPEC GAPS fixed minimally + flagged for the 0005 thread: snapshot
+  and closure payloads carry NO scope fields — snapshots lift scope/owner
+  through their trace, closures through their assertion (store lookup);
+  ("", "") when unresolvable.
+- 600-line rule refactor: journal enrichment helpers moved to
+  journal_common.py (their backend-agnostic home); journal backend
+  docstrings compressed without dropping content.
+
+### Added (maintainer round 6 — problems as wake reasons + naming, 2026-07-07)
+- `diary_type="problem"` joins the closed vocabulary: something WRONG
+  needing a fix — distinct from a question's curiosity (different priority
+  and, the maintainer notes, likely different emotional weight).
+  Resolution mirrors answers, append-only: a later entry resolves a
+  problem via `attributes.resolves` (the problem's graph record id or book
+  entry_id; non-empty when present, validated — same rule as answers).
+- `diary.open_problems(store, *, scope, owner_id, limit=100, journal=None)`
+  exported: unresolved problems oldest-first, folded when the journal is
+  supplied, exactly mirroring open_questions (shared `_open_unresolved`
+  fold — one definition for both wake-reason reads). Resolved problems
+  stay retrievable ("I hit it, then I fixed it").
+- Naming sweep verified ("summoned entity", not "named entity" — NER
+  collision): zero occurrences of the old phrase existed in this package;
+  api.md already used "summoned entity" and its identity narrative now
+  carries the incarnation framing (one life across incarnations, carried
+  by the substrate, not the process).
+
+### Added (maintainer round 5 — shared-context channel, open ideas, presence ruling, 2026-07-07)
+- PARTICIPANTS CHANNEL (shared-context recall — "what do WE know / have
+  lived together"): `Stimulus.participants` was normalized in the seam and
+  used NOWHERE (inert); it is now a real channel.
+  `MemoryRecordInput.participants` (identity strings like "person:albou",
+  "entity:castor") flows into `attributes.participants`;
+  `channels.run_participants_channel` scores gathered candidates by
+  co-presence — |intersection| / |stimulus.participants|, full co-presence
+  = 1.0, cue `shared-with: …` — and joins fusion/ordering/admission like
+  every channel (CHANNEL_ORDER gains "participants", appended last so
+  existing cue orders stay byte-stable). v1 honesty: a universe re-score
+  like the keyword scan; participant discovery beyond the universe needs
+  indexed attribute queries (backlog, same lift as FTS5). A solo stimulus
+  never runs the channel.
+- `diary.open_ideas(store, *, scope, owner_id, limit=100, journal=None)` —
+  incubating ideas as heartbeat wake reasons, mirroring open_questions:
+  with the journal, the folded binding lifecycle decides (inactive_
+  candidate/reviewed incubate; rejected=parked and promoted=matured leave
+  the open set; closures/hidden respected); journal=None is the layer-1
+  read. Parked/matured ideas stay retrievable. Exported.
+- PRESENCE RULING documented as FINAL (docs only): presence does not count
+  as use; the separate-presence-counter contingency stays dormant.
+
+### Added (maintainer round 4 — evolution proof, time targets, diary questions, 2026-07-07)
+- CLOSE-THEN-RENDER proven (regression, both stacks): a closed value whose
+  prompt-active binding is untouched is excluded by `self_records` AND the
+  reconstruct self component (closure fold wins over binding state), and
+  an as-of read anchored BEFORE the closure renders it again — the journal
+  time axis IS the versioning ("what did I believe at time T"). Worked
+  as-built: `folds.reconstruction_inputs` anchors both folds to as_of.
+- Identity-evolution doc alignment (engram.py + api.md): living identity
+  records evolve through the entity's own reflection (close old + form new
+  + bind into the reserved seats); current reads render only the newest;
+  nothing is lost; the spark stays the birth certificate.
+- Gradation targets: `time:*` added to the tested conventions
+  (`time:morning`, `time:sunday-evening`); docs sweep — targets are
+  anything nameable, examples never read as an enum.
+- Diary QUESTIONS first-class: `diary_type="question"` joins the closed
+  vocabulary; resolution mirrors heal/break (append-only) via
+  `attributes.answers` (question graph id or book entry_id; non-empty when
+  present, validated). New `diary.py` module (diary conventions moved from
+  records.py — 600-line rule; chain helpers re-exported) with
+  `open_questions(store, *, scope, owner_id, limit=100, journal=None)`:
+  unanswered questions oldest-first; supplying the journal applies
+  closure/hidden folds, the plain read is honest layer-1 store truth
+  (documented). Resolved questions stay retrievable.
+
+### Changed (v1-for-life reframing + engram-marker shelf noise, 2026-07-07)
+- Spark versioning REFRAMED per the maintainer ("if you were born as v1,
+  you should keep v1... it's part of your identity"): docs and the G8/
+  marker guard error messages drop the "upbringing/amendment path"
+  vocabulary — the spark is engrammed ONCE and kept for life; identity
+  evolution is experiential and entity-owned (revisable-value revision via
+  the entity's own reflection); re-engramming a higher version is an
+  EXCEPTIONAL REPAIR for a defective/harmful core, and the G8 guard keeps
+  that rare repair orderly. GUARD BEHAVIOR UNCHANGED (message text only).
+- Engram-marker shelf noise fixed (cosmetic bug, found demonstrating to
+  the maintainer): the marker record now carries
+  `attributes.bookkeeping=true`, and bookkeeping records are excluded from
+  shelf/working-set MEMBERSHIP exactly like record_edge assertions —
+  bookkeeping is engine state, not a memory. Still fully queryable via
+  layer-1 `query()`/id lookups; the G8 marker scan uses layer 1 and is
+  unaffected.
+
+### Added (keystone follow-ups — folded identity read + G8 supersession, 2026-07-07)
+- `SHARED_VULNERABILITY_STATEMENT` and `canonical_spark_hash(spark)`
+  exported at the package root (one hash definition — the engram marker
+  guard and the runtime prelude's drift check import the same function).
+- `MemorySystem.self_records(*, scope, owner_id, spark_version=None)` —
+  the FOLDED identity read (the prelude's proper source, closing its
+  documented v0 limitation): prompt-active via the binding fold AND
+  closure-folded (a retracted value never renders; the layer-1 `query()`
+  passthrough bypasses both folds), identity kinds only
+  (value/purpose/trait), ordered kind rank → precedence → record id.
+- G8 SUPERSESSION GUARD (decision: supersession, structurally enforced
+  until the upbringing path lands): `engram()` refuses a HIGHER spark
+  version while any prior version's identity records remain prompt-active
+  ("close + rebind v{M} records first") — an entity must never carry two
+  cores in its working set. Same-version guards unchanged.
+- SUMMON POSTURE rule documented (keystone finding): work turns of a
+  summoned entity must run with `self_fraction > 0` — presence≠use
+  protects identity members only when they admit as "self"; at 0.0
+  rendering them IS use.
+- `bind()` docstring trimmed; system.py mixin note updated.
+
+### Added (engram pass + D4 diary form-gate, 2026-07-06, a2a 0003 asks 1-4)
+- D4 FORM-GATE (one-writer guarantee, memory-side half): `kind="diary"`
+  records now REQUIRE `provenance.source` ∈ {"diary-projection",
+  "entity-direct"} — the engine enforces THAT a write channel is declared
+  (who may use each channel is the gateway deposit gate's job); anything
+  else raises naming both accepted sources.
+- Loud diary_type validation (ask 2): ABSENT → "note" (documented
+  default); present-but-unknown → ValueError naming the closed vocabulary
+  (the old code silently re-defaulted falsy unknowns).
+- Chain-scope + repair-drift documentation (asks 3-4): the
+  entry_hash/prev_entry_hash chain applies only to writers that supply
+  prev_entry_hash (entity-direct); projections attest through the book via
+  entry_id ("nothing claimed, nothing broken"); repaired projections land
+  at repair-time observed_at with attributes.written_at as display truth.
+- THE ENGRAM PASS (`engram.py`, keystone piece): `engram(system, spark, *,
+  scope="self", owner_id, spark_artifact_ref=None) -> EngramResult` —
+  lint-gated (errors abort, warnings ride the result), forms
+  values/purposes/traits (+honesty as limit-traits) with
+  precedence/spark_version attributes and the spark artifact as raw
+  payload, binds every identity record prompt-active (deterministic
+  binding ids; `bind()` gained an additive `binding_id` param), and is
+  IDEMPOTENT by canonical spark hash with a marker-claim VERSION GUARD: a
+  modified spark under the same version is refused ("amendments go through
+  the versioned upbringing path"). No diary entry BY DESIGN (the birth
+  reflection is entity-authored, host-side). Exported with `EngramResult`
+  from the package root.
+
+### Added (global access counts — maintainer's two-count model, 2026-07-06)
+- The GLOBAL access count (never decays, "what matters over a lifetime")
+  is now a first-class read on records AND edges: `selected_count`
+  documented as the record-side global count; NEW
+  `pair_selected_count((a, b))` on the journal protocol + both backends
+  (in-memory: counter dict maintained at append; SQLite: indexed COUNT
+  over canonical pair_ids_json via a new partial index). Both accept
+  `until_seq` so as_of replays see counts AS OF the anchor (C4).
+- `MemorySystem.access_counts(record_ids=None, pairs=None)` — the
+  lifetime read; both id namespaces, keys as passed, unknown ids raise,
+  pairs order-insensitive. SCOPING DOCUMENTED HONESTLY: counts are per
+  JOURNAL (per-entity-file = "a life" for entity homes); the API takes NO
+  scope/owner parameters because they would be silently ignored
+  (works-or-loud) — per-scope lifetime aggregation is future work.
+- Every handle now surfaces `provenance["global_count"]` (as_of-anchored)
+  beside the TEMPORAL count (activation.base_level) — display truth only,
+  never consulted by ordering/admission, not zeroed by ablations.
+  attention.py documents the two-count mapping (the maintainer's +1/−1
+  temporal fold is an alternative fold shape — a tuning question, not
+  built). The identity-wave golden was regenerated once for this additive
+  provenance field (seam-notified; the golden now pins current
+  serialization).
+- Valence target generality made explicit (docs + tests): targets are ANY
+  identity string — concepts, ideas, locations, records, tools, people;
+  namespace-prefixed free strings recommended, no registry in v1.
+- Diary progressive disclosure verified end-to-end engine-side:
+  projections round-trip `entry_id` through reconstruct →
+  `handle.provenance["entry_id"]` → `payload()` metadata (both tiers), so
+  hosts can fetch the verbatim entry from the runtime's book.
+
+### Fixed (0002 behavioral-decay regression — channel noise promotion, 2026-07-06)
+- Vector relevance is now CONFIDENCE-SCALED, not just rank-normalized
+  (empirical mechanism, runtime repro: a once-used decoy record with an
+  ABSOLUTE cosine of 0.246 — the best of a weak 2-row field — read
+  relevance 1.0 under max-normalization, out-fused genuine matches, and
+  stayed channel-admitted for 11 unrelated turns): with
+  `floor_eff = max(vector_floor, median+margin)`,
+  `scale = clamp((cos_max − floor_eff) / confidence_span, 0, 1)` and
+  `rel_i = scale · (cos_i − floor_eff)/(cos_max − floor_eff)`. New
+  `ReconstructConfig.confidence_span` (default 0.25, tuned so strong
+  matches still read ≈1.0 on both the harness bag-of-tokens embedder and
+  live qwen). A weak field now yields uniformly low vector relevance and
+  cannot crown noise; the relevance zero-point is the floor (mid-field
+  ratios shift accordingly — one unit-test expectation updated).
+- Keyword tokenizer minimum token length 3 → 4: the fork rule stands (no
+  language stopword lists; length is the proxy), but length-3 admitted the
+  highest-frequency English function words — the regression's decoy was
+  CHANNEL-MATCHED on unrelated turns via `keyword: matched the (1/6)`,
+  gaining ordering supremacy and trail deposits every turn. Documented
+  limits: 4-char function words still pass; 3-char content tokens ("tax",
+  "aws") now need another channel until FTS5 (0019) brings corpus
+  statistics. The 0002 emergence suite is a pre-commit gate for this
+  package from now on.
+
+### Changed (dual-channel gradation + positive symmetry — a2a Resolution-2 + maintainer correction A, 2026-07-06)
+- `compute_gradation` replaced the single running total with per-target
+  DUAL CHANNELS: G⁺/G⁻ accumulate their sign's magnitudes chronologically,
+  each clamped 0..`GradationConfig.channel_clamp` (100); reads return
+  `{net (G⁺−G⁻, ±100), positive, negative, positive_count, negative_count,
+  scarred, bonded, contributions}`. Ambivalence is preserved (a −10 among
+  a hundred +1s reads net +90 WITH negative=10/count=1 permanently
+  visible); per-event magnitude cap 10 unchanged. NO DECAY of any kind
+  (conceded per Resolution-2: valence is accumulated experience, not
+  retrieval strength — the window parameter is GONE); plasticity comes
+  only from new evidence, markers, and their resolutions. Revaluation
+  marker (`kind="revalued"`, entity-reflection-only rescale) is a
+  documented design stub, not implemented.
+- POSITIVE SYMMETRY (signed peaks, not "traumas"): new `kind="bond"`
+  (sign=+1 enforced) — an unbroken bond floors presentation at net ≥ 0,
+  symmetric to the scar's cap ≤ 0; both standing at once clamps to exactly
+  0 with both flags visible. Bonds dissolve via explicit `kind="break"`
+  events (`provenance["breaks"]`, symmetric to healing) or by BETRAYAL —
+  a scar of magnitude ≥ `GradationConfig.break_magnitude` (8) journaled
+  AFTER the bond. `appraise(..., bond=True)` writes the marker pair
+  (`"{event_id}:bond"`), `break_bond(...)` resolves with deterministic id
+  `"break:{bond_event_id}"`; amplitude authority applies identically.
+  Marker/resolution events contribute 0 to the channels.
+
+### Added (spark template + engram lint — maintainer correction B, 2026-07-06)
+- `spark.py`: `DEFAULT_SPARK_TEMPLATE` — the canonical six-key identity
+  spark (name/origin/values/purposes/traits/honesty) whose values ALWAYS
+  include the framework-level core value `shared_vulnerability` (protect
+  the shared substrate; prefer collaboration over isolation; respond to
+  abuses with repair, not withdrawal; origin grounds it in the Pale Blue
+  Dot). `lint_spark(spark, framework=True)` implements the charter lint:
+  caps (≤7 values / ≤3 purposes / ≤5 traits / ≤5 honesty), 1-3-sentence
+  statements, a simple verb-presence behavioral heuristic (limits
+  documented — it is a writing aid, not a parser), zero-revisable warning,
+  and missing `shared_vulnerability` as an ERROR for framework sparks
+  (framework=False is the deliberate operator override).
+- Diary projection attributes (settled dual-plane split): diary records
+  carrying `provenance.source="diary-projection"` must name the book's
+  chain entry via `attributes.entry_id` (non-empty string when present);
+  entry_hash/prev_entry_hash conventions unchanged.
+
+### Added (identity wave SLICE 1 — kinds + SELF component, 2026-07-06, a2a 0003 / seam v1.2)
+- Five identity record kinds: `value`, `purpose`, `trait`, `diary`,
+  `interest` (KIND_RANKS: value −3 < purpose −2 < trait −1; diary = episode
+  peer at 3; interest = summary peer at 5). Identity kinds outrank learned
+  kinds ONLY among channel-matched peers — kind stays a tie-break behind
+  relevance per the fill contract. Validation: `kind="value"` REQUIRES an
+  explicit `attributes.value_class` ∈ {core, revisable} (no silent default);
+  `kind="diary"` validates `attributes.diary_type` ∈ {note, idea,
+  commitment, reflection} (default "note") and NEVER requires edges.
+- SELF admission component (`self_component.py`; the union fill moved there
+  from reconstruct.py — 600-line rule): records whose FOLDED binding is
+  `search_state="indexed"` AND `prompt_state="active"` enter the working
+  set by STATE, not trail (the fork's <active_memory> semantics). New seam
+  fields: `RecallBudget.self_fraction` (default 0.0 = off; validated
+  0.0..0.9; behavior byte-identical to pre-wave at 0.0 — golden-tested) and
+  `MemoryHandle.admission` value `"self"` (`"historical"` reserved). Fill
+  order: phase-0 top channel match → SELF (kind-rank order, deterministic,
+  never activation) → stimulus share → STM → stimulus remainder; self
+  members never displace the phase-0 top match; min_activation never gates
+  them; label precedence self > both > stm. Presence ≠ use extended:
+  admissions {stm, self, historical} deposit NOTHING at commit. Ablations
+  KEEP the self component (they zero recall mechanics, not identity —
+  binding state is orthogonal). Load-bearing eviction-contrast regression:
+  a max-weight pin dies under window eviction while a prompt-active self
+  member survives arbitrarily many commits.
+- Journal `snapshots()`/`traces()` gain optional `until_seq` filters
+  (situate() groundwork; both backends).
+- Admission-label refinement (live-LMStudio regression found during the
+  wave): STM-FILL placements now always label `"stm"`, even when weakly
+  channel-matched — `"both"` is reserved for records the STIMULUS fill
+  seated. A trail-hot record with stopword-grade keyword overlap ("the",
+  "was") was being labeled "both" from the STM fill, full-depositing on
+  every render and never decaying (the presence ≠ use loop the label
+  exists to prevent). A match that lost the stimulus fill did not earn
+  admission; the trail caused the presence.
+
+### Added (identity wave SLICE 2 — valence + gradation + diary chain, 2026-07-06)
+- NEW journal family: `ValenceEvent` (append-only signed appraisals;
+  `memj_valence` table + UNIQUE event_id index on SQLite; supplied-id dedup
+  parity with every family; no JSONL export inclusion — the 0015 export
+  surface does not exist yet). Fields: target_id (record id OR free string
+  like "tool:web_search"), sign ±1, magnitude 1..10 (validated; ±10 IS the
+  trauma-to-ordinary ratio), kind ∈ {appraisal, scar, healing}, value_refs,
+  reason (required), actor/trace_id/provenance. Scars are EXPLICIT events
+  (never auto-created at magnitude ≥ 8); healing references the scar's
+  event_id via `provenance["heals"]`; scars are sign=-1 by definition.
+- `gradation.py` (pure): `compute_gradation(events, config=GradationConfig
+  (step_clamp=10, window=256))` — CHRONOLOGICAL (oldest→newest) fold,
+  running total clamped per-step to ±step_clamp, last-N window per target,
+  NO distance decay (gradation is cumulative-stable; attention measures
+  usage recency — documented difference). The attention-style fold provably
+  hides trauma (a −10 among a hundred +1s folds to ~+8 newest-first; the
+  chronological fold lands it +10→0 — charter worked numbers, regression-
+  tested). Unhealed scars cap the target at ≤ 0 and set scarred=True;
+  scar/healing events contribute 0 to the fold (markers, not second
+  wounds). seq<0 raises (determinism guard).
+- MemorySystem valence surface (`system_valence.py` mixin, 600-line rule):
+  `appraise(...)` (amplitude authority: magnitude > 3 requires
+  entity-reflection/operator actorship or
+  provenance["outcome_class"]=="catastrophic"; optional explicit scar rides
+  as "{event_id}:scar" — pair replays are no-ops), `heal_scar(...)`
+  (deterministic default id "heal:{scar_event_id}" — idempotent without
+  caller effort; unknown scars raise), `gradation(...)` (at_seq-anchored;
+  never-appraised targets return NEUTRAL {0.0, unscarred} — free-string
+  targets are legitimate). Valence NEVER touches retrieval: reconstruct
+  output is bit-identical with/without valence events and the retrieval
+  modules are import-level clean of gradation (both enforced by tests).
+- Diary chain conventions (`records.py`): when a diary entry carries
+  `attributes.prev_entry_hash`, formation computes
+  `attributes.entry_hash = sha256(title\ndigest\nobserved_at)`
+  (`diary_entry_hash`); `verify_diary_chain(store, scope=…, owner_id=…)`
+  audits recomputed hashes + back-pointers and names the first break.
+
+### Fixed (a2a 0001/015 adversarial round, 2026-07-06)
+- `budget_spent.tokens_used` double-counted the STM component (added once
+  after the STM fill and again after handle building): `tokens_used` now
+  equals the sum of the shelved handles' token estimates exactly once;
+  `stm_tokens_used` stays the STM-labeled subset (exact-arithmetic
+  regression in `tests/test_stm_union.py`).
+- Contract-3 fill hardening — PHASE-0 TOP-MATCH PLACEMENT: the single best
+  channel-matched candidate (shelf order: exact-first, then fused + boost)
+  is seated FIRST, against the full budget, before any STM reservation or
+  fill; STM and fills compete for the remainder. The previous post-fill
+  guard was violable at tiny (≤~120-token) budgets on two paths, both
+  regression-tested on both stacks and verified to fail under the old
+  mechanism: (a) cheap unmatched fills consumed the guard's headroom;
+  (b) a lesser channel match satisfied the any-match guard while the TOP
+  match was evicted.
+
+### Added (a2a 0001/015 ask 1 — deliberate-act idempotency passthrough)
+- `reinforce`/`attenuate`/`refocus` (attention.py writers AND the
+  MemorySystem wrappers) accept optional `event_id` (supplied ids flow to
+  the MemoryEvent, so the journal's supplied-id dedup makes at-least-once
+  replays true no-ops returning the ORIGINAL event), `actor`
+  (default "operator" unchanged; the runtime passes "runtime") and
+  `provenance` (rides the event untouched, e.g. `{"turn_id": …}`).
+- `close_record` idempotency key verified + documented:
+  `closure_id = sha256(f"{graph_id}|{kind}|{assertion_id}|closure")[:32]` —
+  reason, replacement_ids and timestamps NEVER enter the key, so replays
+  with drifted reason prose still dedupe to the original closures
+  (regression in `tests/test_replay_idempotency.py`).
+
+### Changed (UNION working set — maintainer's STM model, 2026-07-06)
+- Reconstruction now returns the UNION of a stimulus-independent STM
+  component and the existing stimulus component ("STM = the memories + edges
+  with the highest temporal access counts; passive reconstruction = STM +
+  memories retrieved by selection based on stimulus"). STM eligibility is
+  the activation fold's base map (STM horizon == attention window), floored
+  by `budget.stm_floor` (default `ReconstructConfig.stm_floor = 1.0`) and
+  capped by `budget.stm_fraction` (default 0.25 of slots/tokens; 0 disables
+  — pure-stimulus diagnostic mode). New additive seam fields:
+  `RecallBudget.stm_fraction`, `RecallBudget.stm_floor`,
+  `MemoryHandle.admission` ("stm" | "stimulus" | "both"),
+  `ReconstructionTrace.admissions` (per-handle labels; SQLite journals gain
+  a migration-safe `admissions_json` column). Hot trail pairs surface in the
+  `working_set` view as `{"source": "stm_trail", "pair": [a, b],
+  "trail_activation": x}` edges even when unwalked; walked edges now carry
+  `"source": "walked"`. Ablations zero the activation inputs, so their STM
+  component is empty by construction.
+- FILL RULE (contract 3 under the union): STM admits by activation alone
+  but may NEVER displace channel-matched candidates under scarcity. Fill =
+  stimulus fill over its share (total minus the STM reservation) → C3
+  minimum guarantee (if no channel match placed while one exists and the
+  budget fits one, the TOP matched candidate takes the slot against the
+  full budget) → STM fill under its caps → leftover budget returns to the
+  stimulus order. `budget_spent` gains `stm_handles`/`stm_tokens_used`.
+- PRESENCE ≠ USE: `commit_selection` reads the trace's admission labels and
+  deposits full `selected` events + `co_selected` trails ONLY for used ids
+  labeled "stimulus"/"both" (or unlabeled — foreign traces keep the old
+  behavior). STM-only ids deposit NOTHING by default, so a rendered-but-
+  never-matched STM member decays out by pure activity displacement instead
+  of self-reinforcing into permanent residence (adversarial-critic math:
+  saturation in ~6 turns otherwise). New tuning dial
+  `AttentionConfig.stm_rehearsal_weight` (default 0.0): when > 0, STM-only
+  ids deposit ONE weight-scaled `selected` event (never pair trails).
+  Snapshots record ALL used ids + `provenance["admissions"]` labels.
+
+### Removed (maintainer decisions, 2026-07-06)
+- `RecallBudget.reserved_slots` and the per-channel quota machinery
+  (`shelf.select_members`): membership is now ONE ordering (channel-matched
+  first, exact-first, fused+boost, kind tie-break, recency tie-break) +
+  greedy token fill. The `lost_reserved_slot_race` dropped-reason is gone;
+  unplaced candidates report `below_shelf`/`budget_exhausted`/`stm_capped`.
+  SEAM CHANGE (pre-release, maintainer-ordered): callers passing
+  `reserved_slots` now get a `TypeError`.
+- The query-fingerprint multiplier (qmult) is REMOVED from scoring:
+  `compute_activation` no longer accepts `query_fingerprint` and
+  `_contribution` applies `sign · weight / (1 + distance/decay_window)`
+  uniformly. `MemoryEvent.query_fingerprint` SURVIVES as pure provenance
+  ("which query listed this"). Tests became removal regressions.
+
+### Changed (realistic-data fixes, 2026-07-06)
+- Canonical text v2 (`CANONICAL_TEXT_VERSION = 2`): formed-record digest
+  assertions render as `title\ndigest\nkeywords: …` WITHOUT the
+  `ex:… dcterms:abstract` subject/predicate prefix (ordinary triples keep
+  the v1 shape); `handle.digest` for records is the clean digest literal.
+  EMBEDDING-SPACE CHANGE (pre-release, no migration): re-embed dev stores.
+- Edge assertions (`attributes.record_edge`) are never embedded
+  (in-memory + LanceDB stores skip vector computation for them): they were
+  consuming vector fetch slots before rejection and polluting the space.
+- `MemoryRecordInput.edges` accepts batch-internal refs
+  (`("relation", "local:<i>")`) resolved to the target's graph id inside
+  `remember_many`; out-of-range / self-reference / malformed indexes raise.
+- Baseline-relative vector floor: the effective floor is
+  `max(vector_floor, median(fetched cosines) + vector_margin)` (new
+  `ReconstructConfig.vector_margin`, default 0.08, applied when ≥ 5 cosines
+  are fetched). Fixes qwen-class embedders whose unrelated-pair baseline
+  (~0.3–0.5) sits far above the absolute 0.05 floor, where every record
+  channel-matched every cue and seeded spreading.
+- Kind rank demoted to tie-break in ordering (bug fix toward 0020's "at
+  equal relevance"): within channel-matched members the order is
+  exact-first → fused+boost → kind rank → recency; the realistic harness's
+  host-side re-rank mitigation was removed (hosts can trust shelf order).
+
+### Added (realistic example + LMStudio integration layer, 2026-07-06)
+- `OpenAICompatTextEmbedder` (`embeddings_openai_compat.py`, exported from
+  the package root): stdlib-urllib embedder for any OpenAI-compatible
+  `/embeddings` endpoint (LMStudio, Ollama, vLLM, OpenAI) with an explicit
+  model id, chunked batches, order-preserving `index` parsing, and errors
+  that name the server + model. Zero new dependencies; the package import
+  boundary (no abstractcore/abstractruntime) is unchanged.
+- `examples/realistic_session.py`: a runnable, narrated 19-turn assistant
+  session (home-automation project + personal facts + a tax detour) driving
+  the full host loop — refocus / remember / reconstruct(working_set) /
+  commit_selection — printing per-turn working sets, activation
+  decompositions, and cues. Uses real LMStudio embeddings when reachable and
+  a deterministic hash-bag embedder with a loud `#FALLBACK` note otherwise.
+- `tests/test_realistic_lmstudio.py` + `tests/realistic_fixtures.py`: an
+  opt-out integration suite (marker `lmstudio`, module-level 2s probe skips
+  it when the server or an embedding model is unreachable) asserting, on
+  REAL qwen embeddings over realistic prose: semantic recall with zero
+  keyword overlap, cross-turn continuity across a topic detour, behavioral
+  decay of the detour out of the emergent working set (membership, not
+  score), indirect-cue reactivation with channel attribution, and
+  byte-identical replay under a pinned `as_of`. An optional
+  `lmstudio_llm`-marked test uses the local chat model as a yes/no judge
+  over reconstructed digests and skips on timeout.
+- pytest markers `lmstudio` / `lmstudio_llm` registered in `pyproject.toml`.
+
+### Fixed (hostile-audit wave, 2026-07-06 — one entry per fix cluster)
+1. Store thread safety + atomic add: `SQLiteTripleStore` now uses
+   `check_same_thread=False` + an internal RLock around all cursor use, WAL,
+   `busy_timeout=5000`, `synchronous=NORMAL`; `add()` is ONE explicit
+   transaction using `INSERT OR IGNORE` (existing assertion ids are skipped —
+   store-level id idempotency; failed batches roll back atomically, so
+   partial rows can never leak into a later unrelated commit).
+   `InMemoryTripleStore` gained the same lock + id-idempotent add.
+2. Id-namespace boundary: every id-taking facade call (`commit_selection`,
+   `reinforce`, `attenuate`, `activation`, `close_assertions`) accepts BOTH
+   digest-assertion ids and graph ids (`records.resolve_assertion_ids`);
+   unresolvable ids raise naming the id and both namespaces (graph-id calls
+   used to be silent no-ops). New `MemorySystem.close_record` closes a
+   record's digest AND edge assertions as one belief-revision act with
+   deterministic closure ids.
+3. Binding-fold correctness: hidden bindings are materialized against the
+   store — they match candidates by assertion id OR subject (record-level
+   bindings from `remember_many` finally enforce) and only within the
+   binding's own `(scope, owner)` pair (no cross-pair veto). Handle `binding`
+   reads the subject-level fold first.
+4. Ordering contract: channel-matched candidates now order before unmatched
+   ones (primary key), so boost-maxed or lesson-kind records with zero
+   relevance can no longer outrank or budget-evict cue-matched records; kind
+   priority applies among peers (shelf.py; C3 contract test extended with the
+   audit's adversarial cases).
+5. Edge-based Hebbian trails: `commit_selection` now also deposits
+   `co_selected` trails over RECORDED edges between used formed records,
+   keyed as the spreading hop pairs (source-digest↔edge, edge↔target-digest)
+   — the term rule alone could never wire formed records and hand-planted
+   digest-digest pairs could never match a traversal hop.
+6. Exclusion-aware gathering: recents, exact patterns, the vector channel,
+   and spreading neighbors over-fetch by `min(len(excluded), 256)` and filter
+   closed/hidden rows BEFORE limits/caps, so accumulated closures can no
+   longer starve fetch windows or shadow eligible older rows.
+7. Budget-authoritative spreading: `RecallBudget.max_hops`/`max_edges`
+   override `SpreadParams` directly (the silent `min()` clamp is gone;
+   SpreadParams keeps weights/damping/fan-out/noise-floor); ablations disable
+   the walk via an explicit `run_spreading` switch instead of zeroed params.
+8. Edge assertions conduct, never member: `attributes.record_edge` rows are
+   excluded from shelf/working-set membership and `listed` audits but remain
+   fully walkable in spreading and visible in `result.edges`.
+9. Vector floor: cosines below `ReconstructConfig.vector_floor` (default
+   0.05) clip BEFORE max-normalization (a 0.02-cosine best hit can no longer
+   normalize to 1.0); the all-clipped case warns
+   "#FALLBACK: … below floor … no semantic signal".
+10. Strict-JSON boundary: journal payload fields are sanitized at append in
+    BOTH backends (seam `_jsonify` semantics; NaN/Inf → None with one
+    `#FALLBACK` warning per batch); `json_dump` uses `allow_nan=False`;
+    `MemoryEvent` rejects non-finite weights; `build_formation_plan`
+    jsonifies provenance/attributes the same way.
+11. Sharp edges: `ttl_activity <= 0` now raises (it silently inverted
+    "expire asap" into "permanent"); unparseable `observed_at` raises at
+    append (garbage timestamps corrupted the `seq_at` axis); the spreading
+    fan-out cap keeps the most RECENT neighbors (observed_at desc) as its
+    docstring always promised; the keyword tokenizer casefolds + NFKD
+    accent-folds ('café'=='cafe') and labels zero-token non-Latin cues;
+    `memj_snapshots(trace_id)` / `memj_events(trace_id)` are indexed.
+    Attention scoring switched to PER-STEP clamping newest→oldest (fork
+    parity, memory_control.rs:13615): fixes the silence-deadband — silences
+    demote accumulated-newer use visibly; negative excess no longer builds an
+    invisible hole that swallows older pins. (Semantic change; affected test
+    expectations updated and documented.)
+12. Determinism guard: `compute_activation`/`compute_trail_activation`
+    reject events with journal-unassigned `seq < 0` (tied seqs made scores
+    depend on caller list order).
+
+### Added
+- Pure-recency baseline arm (a2a 0002 follow-up; third experiment arm):
+  `MemorySystem(..., ablation="recency")` — reconstruct serves "the most
+  recent N that fit the budget" (chat-history baseline): channels disabled
+  (relevance empty; stimulus cues/patterns/anchors ignored; reserved slots
+  never engage), zero activation, no spreading, kind priority neutralized
+  (ordering is observed_at desc with record_id tie-break), same
+  budgets/shelf fill/token accounting; results and traces carry
+  `ablation=recency (pure recency baseline)` plus a "channels disabled"
+  note. Write paths stay live and closure/binding folds stay active (same
+  read-side-only rationale as `"recency_embedding"`, which is unchanged).
+- Caller-supplied `trace_id` on `reconstruct` (additive; end-to-end replay
+  safety): supplying a trace_id derives the 'listed' audit event ids from it
+  and dedupes the trace append by id — a re-call with the same trace_id
+  writes ZERO new journal rows (first trace wins), and with
+  `Stimulus(as_of=...)` pinned the result is byte-identical; combined with
+  `commit_selection`'s trace_id idempotency, the RECALL→ACCESS pair replays
+  end-to-end. `trace_id=None` keeps the exact prior behavior (fresh uuid4 +
+  one audit trace per read). Trace records joined the journal supplied-id
+  dedup in BOTH backends (UNIQUE-indexed in SQLite, same semantics as
+  events/bindings/closures/snapshots).
+- Formation write API v1 (a2a 0001/009 addendum 1 / 0001/011 ask 1; the
+  minimal bridge to backlog 0021): `MemoryRecordInput` (10 kinds, validated;
+  summaries require an edge) and `MemorySystem.remember_many(records, *,
+  scope, owner_id, idempotency_key, turn_id=None)` (+ `remember`). Encoding
+  (`records.py`): one literal digest assertion per record under
+  `dcterms:abstract` (title/intents/outcomes/keywords/payload_ref/topic in
+  attributes; reserved keys win) plus one plain assertion per edge; all ids
+  derive from `(idempotency_key, position)` so replays are no-ops (store
+  pre-check + journal binding dedup; check-then-add documented `#FALLBACK`:
+  single formation writer assumed until 0009's add_if_absent). Each record
+  gets an indexed/inactive `ScopeBinding` (`lifecycle="inactive_candidate"`,
+  `source="remember"`); no attention event is journaled — forming is not
+  using (0018).
+- Handle enrichment for formed records: `attributes.record_kind` drives
+  `handle.kind` AND 0020 kind-priority ordering (`ReconstructConfig` moved to
+  `records.py`, re-exported; default ranks lesson 0 → memory 9, unknown kinds
+  fall back past the table), `attributes.title` replaces the "s p o" preview
+  (same 120-char bound), `payload_ref` upgrades `payload_tiers` to
+  `("digest", "raw")`, and `provenance["record_id"]` exposes the graph id
+  (`ex:{kind}-…`) so hosts can correlate recalls with formation results.
+- `payload(record_id, tier="raw")` now serves the host verbatim reference:
+  `{payload_ref, content: None}` when `attributes.payload_ref` exists (the
+  runtime resolves it against its ArtifactStore; the package never fetches),
+  `ValueError` otherwise; record ids resolve via their digest assertion
+  (subject + `dcterms:abstract`), plain assertion ids directly.
+- Write-side replay idempotency (a2a 0001/011 asks 2–3; runtime effects run
+  at-least-once): caller-supplied ids are idempotency keys in BOTH journal
+  backends — re-appending an existing event/binding/closure/snapshot id is a
+  no-op returning the original record (original seq; selected-count
+  untouched), with migration-safe `UNIQUE` indexes per id column in
+  `SQLiteJournal` as the durable backstop. Journal-assigned ids never
+  conflict; traces are exempt (fresh uuid4 per read; recalls replay from the
+  runtime ledger).
+- `commit_selection` is now idempotent by `trace_id`: a replayed commit
+  returns the existing snapshot unchanged (a differing used set warns
+  `#FALLBACK`), and all event/snapshot ids derive deterministically from
+  `(trace_id, kind, canonical key)` (`selection.py`), so a crash between the
+  event appends and the snapshot append replays as journal-level no-ops with
+  the same events↔snapshot linkage.
+- `Stimulus.turn_id` (additive, a2a 0001/011 ask 4): normalized optional turn
+  identity; flows into `ReconstructionTrace.need` and `listed` audit event
+  provenance. Not part of the query fingerprint (provenance, not retrieval
+  content).
+- Payload-tier stub (a2a 0001/009 item 2 / 0001/011 ask 6):
+  `MemoryHandle.payload_tiers` (additive, default `("digest",)`) and
+  `MemorySystem.payload(record_id, tier="digest")` — digest serves the
+  canonical text; `raw`/`summary`/`compact` raise `NotImplementedError`
+  naming backlog 0021 and the `attributes.payload_ref` interim.
+- Topic surfacing (a2a 0002/001 q3): a string `topic` attribute on an
+  assertion is promoted to `MemoryHandle.provenance["topic"]` for the
+  emergence experiment's focus-coherence metric.
+- Arm-B ablation switch (a2a 0002/001 q1, construction flag):
+  `MemorySystem(..., ablation="recency_embedding")` makes `reconstruct` read
+  with zero activation, no trails, and spreading disabled (edges empty in
+  both views) under identical budgets/serialization, labeling results and
+  traces with `ablation=recency_embedding (Arm B)`. Write paths
+  (`commit_selection`, deliberate acts) stay live so both arms build
+  identical journal histories; closure/binding folds stay active (the
+  ablation disables activation, not belief lifecycle).
+- Scope-binding enforcement in `reconstruct` (backlog 0017): the facade folds
+  `ScopeBinding` events ≤ as_of per searched (scope, owner); records whose
+  latest binding is `search_state="hidden"` leave ranked retrieval (id-lookups
+  still bypass the fold — audit completeness), and `MemoryHandle.binding` now
+  reports the honest folded `"{search_state}+{prompt_state}"`
+  (`"indexed+inactive"` remains the documented default for unbound records).
+  `run_reconstruction` gained a compatible `bindings` mapping parameter
+  (default empty).
+- Package-root exports for the memory-system surface (`MemorySystem`, seam
+  dataclasses, journal records/protocol/backends, `AttentionConfig`,
+  `SpreadParams`, `canonical_text`); `__all__` is sorted and export-tested.
+  `lancedb` stays a lazy dependency (unchanged behavior).
+- Seam contract regression suite (`tests/test_seam_contracts.py`): one test per
+  frozen stability contract from a2a 0001/004 — journal purity/audit inertness,
+  commit-only strengthening, relevance-admits/activation-reorders (+ boost
+  cap), as_of byte-identical replay, `#FALLBACK`-labeled degradations. The
+  import-boundary test now scans every module (no abstractcore/abstractruntime
+  imports anywhere).
+
+- `MemorySystem` facade (backlog 0024/0027, frozen seam v1 from a2a thread 0001):
+  `abstractmemory.system.MemorySystem` wires store + journal + attention +
+  reconstruction behind the negotiated runtime⇄memory surface — `reconstruct`
+  (as_of-anchored activation/trails/closure folds, broad-scope escalation guard,
+  optional trace + inert `listed` audit journaling), `commit_selection` (the only
+  strengthening path: `selected` + term-sharing `co_selected` pair trails +
+  `ActiveMemorySnapshot`), `reinforce`/`attenuate`/`refocus` wrappers,
+  `activation`/`seq_at`/`current_seq` inspection, `close_assertions`, `bind`,
+  and layer-1 `add`/`query` passthroughs. Selector/reflector are accepted but
+  unused in v1 (`#FALLBACK` warning at construction; heuristic shelf only).
+- `MemoryJournal.traces(trace_id=None, limit=100)` reader on the protocol and
+  both backends (newest first, mirroring `snapshots()`); reconstruction traces
+  were previously write-only.
+- Reconstruction pipeline v1 (backlog 0019/0020/0026): `reconstruct.run_reconstruction`
+  — a pure read that turns a `Stimulus` into a budgeted, explained shelf/working-set
+  (`ReconstructionResult` + `ReconstructionTrace`), with channels + max-fusion +
+  reserved slots, spreading activation, activation-aware ordering, and greedy
+  token-budgeted shelf fill. Activation inputs are injected; no journal I/O.
+- `channels.py`: exact (patterns + anchors), keyword (labeled `#FALLBACK` token
+  scan until FTS5), and vector (store/embedder cosine, max-normalized 0..1)
+  channel primitives.
+- `spreading.py`: bounded, deterministic spreading activation over v1 record
+  semantics (assertions are the records; shared entity terms are the edges),
+  with fan-out cap, damping, per-predicate weights, co-selection trail boost,
+  hard edge budget, and cycle termination.
+- `canonical_text.py`: shared canonical-text function (`CANONICAL_TEXT_VERSION = 1`)
+  replicating the store-internal `_canonical_text` byte-for-byte; golden tests pin
+  parity across all three stores until they migrate to the shared module.
+
+### Changed
+- `ActiveMemorySnapshot.seq` now defaults to `-1` (journal-assigned sentinel,
+  matching every journal record; field order and JSON shape unchanged).
+- `system.py` fold logic moved to `folds.py` (activation inputs, closure
+  exclusions, binding states) to keep files under the 600-line rule; shared
+  `display_title`/`token_estimate` helpers live in `canonical_text.py` so the
+  facade and pipeline cannot drift.
+
+### Notes
+- Reasoning: the runtime⇄memory seam (a2a thread 0001, frozen seam v1) needs one
+  reconstruction call with two views; keeping the pipeline pure (store reads only,
+  injected activation) preserves the replay contract (`as_of_seq`) and lets the
+  facade (backlog 0024) own journaling, selectors, and closure/visibility folds.
+- Facade replay semantics: `Stimulus.as_of` anchors journal-derived signals
+  (activation, pair trails, closure exclusions, binding visibility); store truth is read current
+  (stores have no seq axis yet) — the runtime replays primarily from its own
+  ledger (a2a 0001/005). Anchors outside the journal's issued range raise
+  instead of silently meaning "latest".
 
 ## [0.2.6] - 2026-05-09
 
