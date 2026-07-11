@@ -62,7 +62,7 @@ The diary has two planes. The *book* (the verbatim words) lives host-side in a h
 
 Conventions the engine enforces and reads:
 
-- `kind="diary"` formation requires a declared write channel (`provenance.source`: `diary-projection` or `entity-direct`) — the diary has one writer per plane.
+- `kind="diary"` formation requires a declared write channel (`provenance.source`: `diary-projection` or `owner-direct`) — the diary has one writer per plane.
 - `diary_type` ∈ {note, idea, commitment, reflection, question, problem}. Questions and problems are first-class autonomy drivers: a question is curiosity; a problem is something wrong that needs fixing.
 - Resolution is append-only: a later entry references a question via `attributes.answers` or a problem via `attributes.resolves` (graph id or book entry id). `open_questions` / `open_problems` / `open_ideas` list what still stands — typical wake reasons for a scheduled entity.
 - Entity-direct entries can carry a content hash chain (`prev_entry_hash`/`entry_hash`); `verify_diary_chain` audits it and names the first break. Projections attest through the book instead — nothing claimed, nothing broken.

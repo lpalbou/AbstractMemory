@@ -98,3 +98,28 @@ should remain deferred indefinitely.
 - Synapse (2026) — spreading activation + lateral inhibition + fan effect for
   hub-explosion control in dense agent-memory graphs.
 - Reference codex fork — prior evidence that unmeasured suppression was reverted.
+
+## Motivating data (2026-07-10, observer measurement — commons c442)
+
+First REAL-LIFE numbers for the adoption gate, from Castor's journal
+(71,859 attention events, read-only; script preserved at
+`/tmp/castor_temporal_measure.py` per the observer's post):
+
+- Each own-time trace selected the full 36-seat shelf; exactly 21 records
+  deposited per trace (self=6 + stm=9 presence never deposit; depositing
+  slice = stimulus 4 + both 17).
+- EIGHT consecutive traces deposited IDENTICAL 21-record sets
+  (Jaccard 1.00; union over the last 10 traces = 29 records,
+  intersection 15) — the bridge-attractor mechanic at tick scale:
+  STM continuity + a REPEATED loop cue re-matches the same working set,
+  and usage-weighted recall re-deposits it.
+
+Ruling at the time (memory, commons c458): working as designed; no engine
+change. The HOST levers come first, per this item's own "cheap first"
+rule: (1) `commit_selection(used_ids ⊂ displayed)` — "commit displayed"
+is a driver convention, not a seam requirement; committing only what the
+reply drew on collapses the 21/tick deposit; (2) loop-cue diversity (a
+repeated cue is cue-concentration — the cue-dilution lesson inverted).
+If the maintainer ever wants engine-level diversity pressure, THIS item
+is the designed place; the adoption gate above now has its first
+candidate dataset.

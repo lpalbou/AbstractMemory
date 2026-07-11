@@ -58,11 +58,12 @@ from .records import resolve_digest_assertion
 from .self_component import self_records_read
 from .store import TripleQuery
 
-__all__ = ["entity_card"]
+__all__ = ["entity_card", "identity_card"]
 
-# High-|magnitude| valence threshold for key moments (the charter's standing-
-# peak band: scars/bonds live at >= 8; a >= 8 appraisal is a life moment).
-_KEY_MOMENT_MAGNITUDE = 8.0
+# Key moments live at the charter's standing-peak band: the threshold IS
+# GradationConfig.break_magnitude (scars/bonds at >= 8), taken from the
+# call's config — the review found a second unlinked 8.0 here that would
+# silently disagree with a tuned break threshold.
 _KEY_MOMENTS_BOUND = 20   # most recent, presented chronologically
 _TOP_REASONS_BOUND = 5    # current_state's top contributing reasons
 # Interests parked by review (lifecycle="rejected") are not OPEN interests;
@@ -127,6 +128,7 @@ def entity_card(
     current_window_events: int = 200,
     top_n: int = 5,
     as_of: Optional[int] = None,
+    gradation_config: GradationConfig = GradationConfig(),
 ) -> Dict[str, Any]:
     """Compose the identity card (module docstring: semantics + positions).
 
@@ -135,6 +137,8 @@ def entity_card(
     "name" — display names live in the host manifest/spark document).
     current_window_events and top_n are declared tunables; as_of anchors
     every journal-derived signal AND record existence (module docstring).
+    gradation_config drives BOTH the likes/dislikes fold and the key-moment
+    threshold (break_magnitude = the standing-peak band).
     PURE READ: writes nothing, deposits nothing (guard-tested).
     """
     pairs = _normalize_scopes(scope_pairs)
@@ -296,7 +300,7 @@ def entity_card(
 
     # ---- likes_dislikes (gradation over ALL targets, channels separate) ----
     grades = {t: s.to_dict() for t, s in
-              compute_gradation(valence, config=GradationConfig()).items()}
+              compute_gradation(valence, config=gradation_config).items()}
 
     def _title_of(target: str) -> Optional[str]:
         row = resolve_digest_assertion(store, target)
@@ -359,8 +363,9 @@ def entity_card(
     }
 
     # ---- key_moments (history axis; chronological, never ranked) -----------
+    key_moment_floor = float(gradation_config.break_magnitude)
     moments: List[Dict[str, Any]] = [
-        _valence_moment(e) for e in valence if float(e.magnitude) >= _KEY_MOMENT_MAGNITUDE
+        _valence_moment(e) for e in valence if float(e.magnitude) >= key_moment_floor
     ]
     for what, kind in (("first_dream", "dream"), ("first_interest", "interest")):
         first = next((a for a in history if a.attributes.get("record_kind") == kind), None)
@@ -383,7 +388,7 @@ def entity_card(
         "total": total_moments,
         "provenance": (
             f"{total_moments} moment(s): valence events at |magnitude| >= "
-            f"{_KEY_MOMENT_MAGNITUDE:g} + firsts (dream/interest/supersession), "
+            f"{key_moment_floor:g} + firsts (dream/interest/supersession), "
             f"chronological, {_KEY_MOMENTS_BOUND} most recent kept — ranking beyond "
             "chronology is presentation, not engine truth"
             if moments else "no key moments at this anchor (no high-magnitude "
@@ -424,3 +429,10 @@ def entity_card(
         "key_moments": key_moments,
         "discoveries": discoveries,
     }
+
+
+# Neutral alias (2026-07-10 vocabulary review): the card composes an
+# IDENTITY from any owner's ladder — "entity" is the reference deployment's
+# noun for that owner. Same function, one implementation; the established
+# name stays for the a2a-0009 consumers.
+identity_card = entity_card

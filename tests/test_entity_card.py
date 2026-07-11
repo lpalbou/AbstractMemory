@@ -68,15 +68,15 @@ def _seeded_home(system) -> Dict[str, str]:
     ids["q-open"] = _remember(system, "d-1", "diary", "Why do names persist?",
                               "What persists when no one is reading?", scope="diary",
                               attributes={"diary_type": "question"},
-                              provenance={"source": "entity-direct"})
+                              provenance={"source": "owner-direct"})
     ids["q-done"] = _remember(system, "d-2", "diary", "Which model runs me?",
                               "Which substrate is powering me tonight?", scope="diary",
                               attributes={"diary_type": "question"},
-                              provenance={"source": "entity-direct"})
+                              provenance={"source": "owner-direct"})
     ids["answer"] = _remember(system, "d-3", "diary", "Learned my substrate",
                               "The episode stamps carry mind_substrate now.", scope="diary",
                               attributes={"answers": ids["q-done"]},
-                              provenance={"source": "entity-direct"})
+                              provenance={"source": "owner-direct"})
 
     ids["dream"] = _remember(system, "dr-1", "dream", "Dream: pool beside harbor",
                              "Two islands lit up together tonight.",
@@ -237,7 +237,7 @@ def test_as_of_anchors_records_and_valence(system) -> None:
     _remember(system, "p2-i", "interest", "Later interest", "Grew later.", scope="self")
     _remember(system, "p2-q", "diary", "Later question", "Asked later.", scope="diary",
               attributes={"diary_type": "question"},
-              provenance={"source": "entity-direct"})
+              provenance={"source": "owner-direct"})
     system.appraise("tool:beta", sign=-1, magnitude=9, reason="phase two loss",
                     scope="life", owner_id=EID, actor="operator")
 
@@ -277,10 +277,10 @@ def test_question_resolved_after_anchor_reads_open_at_anchor(system) -> None:
     the anchor — the resolution must not leak backward."""
     q = _remember(system, "aq-1", "diary", "Standing question", "Still wondering.",
                   scope="diary", attributes={"diary_type": "question"},
-                  provenance={"source": "entity-direct"})
+                  provenance={"source": "owner-direct"})
     anchor = system.current_seq()
     _remember(system, "aq-2", "diary", "Answered", "Learned it.", scope="diary",
-              attributes={"answers": q}, provenance={"source": "entity-direct"})
+              attributes={"answers": q}, provenance={"source": "owner-direct"})
 
     then = system.entity_card(scope_pairs=SCOPES, owner_id=EID, as_of=anchor)
     assert [x["record_id"] for x in then["questions"]["open"]] == [q]

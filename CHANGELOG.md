@@ -7,6 +7,251 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (embedding-pin incident hardening, 2026-07-11)
+
+Follow-through on the Mnemosyne incident (a first-write pin recorded an
+embedder-attribute label — `mlx-community/all-minilm-l6-v2` — that the
+serving endpoint never recognized, over 1024-d qwen-space vectors; recall's
+cue embed then failed with a server 400 naming only the requested model).
+The engine cannot verify a label against server truth, so the honest
+hardening is provenance + diagnosis, never a hardcoded model/dimension
+table (neutrality rule):
+
+- **`build_pin(..., claimed_by=)`**: first-write pins now record
+  `claimed_by="embedder-attribute"` — the model_id is a CLAIM read off the
+  bound embedder object, not an operator assertion. Creation and reembed
+  pins stay claim-free (the caller vouches). Provenance only: compat
+  checks ignore the field; stores pass it through on creation dicts.
+- **Embed-failure diagnosis carries the pin**: `query_text` embed failures
+  in both stores re-raise with ` [store pin: <model>@<dim>d (source,
+  claimed by ...)]` (`annotate_embed_failure`/`pin_note`, exported), and
+  the vector channel's injected-embedder `#FALLBACK` appends the same
+  suffix — a server refusal now shows claimed-vs-served in one line.
+- **Incident-shape pinned test**: rogue first-write label → right-model
+  open refuses → embedder-less repair-posture open legal → `reembed_store`
+  heals → previously refused embedder opens and serves recall
+  (`tests/test_embedding_pin.py`). Repair rehearsal artifacts (runbook +
+  runnable fixture rehearsal) under
+  `untracked/incident-2026-07-11-mnemosyne-embedding-pin/`.
+
+### Changed (adversarial-review wave — vocabulary/parameters/abstractions, 2026-07-10)
+Three independent adversarial reviews (vocabulary neutrality, parameter
+discipline, process abstractions — maintainer-directed) converged on one
+disease family: shared rules left duplicated or unreachable. The fixes,
+all engine-side and behavior-stable at defaults:
+
+- **`text_tokens.py` — ONE tokenization home.** The package had FOUR
+  text-normalization implementations with materially different rules
+  (recall tokenize, near-dup token set, duplicate-title key, facet tokens);
+  "café" produced three different tokens across the package. All consumers
+  now import declared variants from one module. Two deliberate behavior
+  fixes ride this: **near-dup evidence gained NFKD accent folding**
+  (accented FR near-duplicates were invisible to the tending pass while
+  keyword recall matched them) and **duplicate-title identity converged on
+  `title_key`** (structural_report used whole-title casefold while
+  maintenance used token normalization — one report, two duplicate
+  definitions). Both pinned in `tests/test_review_wave.py`.
+- **`ReconstructConfig` + `GradationConfig` now thread through
+  `MemorySystem`** (`reconstruct_config=` / `gradation_config=` kwargs).
+  Both were root-exported as the tuning surface yet UNREACHABLE — every
+  internal call site constructed fresh defaults. The vector floor/margin
+  knobs are embedder-dependent by the code's own documentation; now a host
+  can actually set them. `entity_card` gains `gradation_config=` and its
+  key-moment band IS `break_magnitude` (was a second unlinked 8.0);
+  `GradationConfig.privileged_actors` makes the amplitude-authority
+  channel names host vocabulary (defaults unchanged — neutrality review:
+  the engine must not hardcode one host's channel dialect).
+- **`sleep_policy.SleepTuning`** — every sleep-lane policy number (floors,
+  list bounds, salience weights, candidate band) in one frozen config,
+  threaded through `maintenance_report`/`consolidation_pass`/`dream_pass`/
+  `sleep_pass`. Kills the same-name `_LIST_BOUND = 12` copy in two sibling
+  modules (the diary_type drift class). The silent candidate-cap clamp
+  (which inverted 0 into 1) is now a **loud band refusal** —
+  works-or-loud. `sleep_cadence.py` split out (600-line rule); import
+  paths preserved via re-exports.
+- **Numeric twins killed**: `SpreadParams.trail_divisor` (the inlined 25.0
+  silently decoupled from the tunable `max_activation` ceiling);
+  `default_ranking_boost` delegates to `attention.ranking_boost` (one
+  formula owner); shelf imports `_TITLE_MAX` (the constant existed "so the
+  two surfaces can never drift" — and one had); one
+  `EXCLUSION_OVERFETCH_CAP` replaces four inline 256s; the vector-channel
+  median population floor is named (`_MEDIAN_MIN_POPULATION = 5`) and its
+  docstring corrected (claimed 3, code gated at 5 — the review's live
+  example of what unnamed literals cost).
+- **Self-describing pass results**: maintenance/consolidation/dream/sleep
+  results carry `pass_name` (+ `phases` on sleep) — three near-miss dict
+  shapes had already caused one cross-package consumer bug.
+- **Composition surface**: `MemorySystem.store` / `.journal` read-only
+  properties; sleep/reembed passes no longer reach into `_store`/`_journal`
+  privates. `reembed_home` gains `batch_size=` (operator knob, validated
+  loudly). `KIND_RANKS` and journal `DEFAULT_WEIGHTS` are read-only
+  mappings (a stray in-place edit changed write-time weights globally);
+  `reinforce`/`attenuate` defaults read `DEFAULT_WEIGHTS` instead of
+  duplicating 8.0 four times.
+- **Vocabulary neutrality (engine-only lifts)**: `identity_card` alias for
+  `entity_card` (the card composes an identity from any owner's ladder;
+  "entity" is the reference deployment's noun) — as the engine function AND
+  the `MemorySystem` facade method (both spellings, one implementation);
+  store swap-guard errors no
+  longer name "the per-home lease" (a door concept) — they state the
+  neutral invariant ("the caller's exclusive-writer guarantee did not
+  hold"); `LanceDBTripleStore` now warns loudly (`#FALLBACK`) that it has
+  NO embedding-space pin when constructed with an embedder (the M1 hole
+  made audible; full port is backlog).
+- **Naming ruling folded in (laurent c338)**: `visit_id` STAYS — recorded
+  as the first instance of the generic interaction-correlation convention
+  (door-minted once, opaque, carried as data, kind-free; the concept is
+  generic, the spelling stays where it was born). Documented in the item-14
+  contract test docstring. Replay display blocks of digest rows now surface
+  the already-engraved `attributes.visit_id` (observer render ask c344,
+  additive like `graph_id`); diary-redacted blocks never carry it (a
+  private entry's correlation key would leak the act's context — same rule
+  as formation edges).
+- Deferred deliberately (design-level, coordination owed): seam `entity_*`
+  naming (frozen seam — a2a lane), kind-vocabulary host extension
+  (registry design), spark charter content (maintainer-ruled).
+
+### Added (closed sets root-exported — the copy-drift killer, 2026-07-10)
+- **`DIARY_TYPES`, `MEMORY_RECORD_KINDS`, `KIND_RANKS` are now package-root
+  exports** (answering semantics' c297 offer with the import option): the
+  known copy-drift class (runtime's `diary_type` clamp once silently
+  projected a new kind as "note"; the observer's kind color map has the
+  same gotcha) dies by IMPORT of the owning set, not by a registry third
+  copy — same one-source rule as `SELF_FRACTION_FLOOR`. Consumers should
+  replace their copies with these imports; the sync-on-widening
+  notification convention stays for consumers that cannot import.
+
+### Added (item-14 memory-layer contract — two-sided visits, 2026-07-10)
+- **`tests/test_two_sided_visit_contract.py`** (8 checks, both stacks): the
+  plan's item-14 memory layer pinned on the engine BEFORE the transport
+  exists (the M3 seam pattern) — one event, two perspectives, two
+  append-only journals: each home forms its OWN record of a shared moment
+  (distinct record ids; the door-stamped `visit_id` correlates as DATA);
+  never shared rows (neither store contains the other's record ids);
+  identity never contaminated (B's core absent from A's store and
+  inversely) and **presence ≠ use holds through correspondence** — a
+  recall+commit cycle over the visit leaves both identity cores at access
+  0 (the 0011 correct-outcome test the seam spec's A/B criterion 1 names);
+  what A diaries about the visit never lands in B's home (every row + the
+  served replay stream checked for the private sentinel — the 0007
+  predicate); and WITH-WHOM works on the receiving side (a later stimulus
+  naming the visitor surfaces B's own record via the shared-context
+  channel, never anything of A's).
+
+### Added (`read_embedding_pin` — entity-embedding-config contract, 2026-07-11)
+- **`read_embedding_pin(path, *, table_name="triples")`** (module-level in
+  `sqlite_store.py`, root-exported): a PURE, guaranteed-non-mutating peek
+  at a store file's embedding pin (read-only connection; missing file /
+  meta table / row / malformed JSON all return None; can never create the
+  file). Exists for the maintainer's 2026-07-11 ruling ("a configuration
+  object for entities... that config should override any default of
+  core"): doors resolve WHICH embedder to construct FROM the home's own
+  declaration BEFORE opening the store — and opening a store just to read
+  the pin mutates the file (schema ensure + WAL), so the resolution read
+  needed a pure surface. The pin IS the config (adversary-reviewed: no
+  yaml twin — one source, no drift axis); the engine deliberately adds NO
+  yaml reader, NO adopt_pin (label-by-claim is the incident's own
+  mechanism), and NO entity-awareness (pinless-entity refusal is door
+  policy; the generic first-write fallback stays for non-entity stores).
+
+### Added (`Stimulus.cue_source` — steering wave, 2026-07-11)
+- **`Stimulus.cue_source: Optional[str]`** (additive seam field, provenance
+  only): names the CHANNEL a recall cue came through — `"steer"` for an
+  operator mid-turn interjection, `"diary_re_entry"` for a re-read of one's
+  own entry, absent for ordinary turn cues. Flows into the journaled trace's
+  `need` (via `to_dict`) so observers can label WHY a recall fired; NOT part
+  of the query fingerprint (same cue through a different channel = same
+  query — the `turn_id` rule). Pays the a2a-0005 promise the room believed
+  already shipped (adversarial review found `cue_source` existed in no
+  source file). Free string — host vocabulary, never an enum. Pinned in
+  `tests/test_review_wave.py`.
+
+### Changed (sign-off renames executed — laurent's approval c398, 2026-07-10)
+- **`reembed_home` → `reembed_store`** (renaming sign-off, unanimous +
+  approved): the pass is per-STORE by its own contract ("one store = one
+  embedding space"); "home" is the reference deployment's noun for the
+  containing directory. `reembed_home` remains as a migration shim (same
+  function object) and DIES BEFORE RELEASE; the one gateway call site and
+  observer's demo exporter move same-day per their sign-off commitments.
+- **D4 diary channel `"entity-direct"` → `"owner-direct"`** (engraved-class
+  string renamed INSIDE its window — scan-verified zero engravings in any
+  real home): the diary's sole author is the SCOPE OWNER, the engine's own
+  noun. The form-gate accepts and CANONICALIZES the legacy spelling during
+  the migration window (nothing old can engrave from now on; the acceptance
+  dies with the shims). Runtime moves its one test line same-day (c395).
+
+### Changed (M2 contract made lease-migration-tolerant, 2026-07-10)
+- `tests/test_home_lease_contract.py` now resolves the runtime lease
+  primitive by NEW neutral spelling first (`storage.lease` /
+  `acquire_directory_lease`, per runtime's c357 re-home intent) with
+  fallback to the legacy `identity.lease` spelling, and asserts refusals by
+  exception TYPE + holder metadata instead of prose — the refusal wording
+  is diagnostics and neutralizes with the re-home (the exact
+  string-pinning trap memory's own c356 note named). This IS memory's ack
+  of the re-home: zero edits needed here when runtime ships it.
+
+### Added (phase-1 contract tests — plan items 1/2/6, M2 + M3, 2026-07-10)
+- **M2 (`tests/test_home_lease_contract.py`, 3 checks)**: the per-home lease
+  composition from the maintenance seat — maintenance passes (reembed,
+  sleep) run UNDER the caller-acquired `abstractruntime` lease (the engine
+  itself never imports the runtime; the import boundary stands, so
+  lease-taking is the gateway verb's / runtime CLI's, exactly the plan's
+  seat split); a held home refuses a maintenance window loudly
+  (`HomeLeaseHeld` naming the holder); per-pass release verified via the
+  lease probe; and the engine's reembed count-guard stays the BACKSTOP for
+  writers that never took the lease (advisory-lock honesty). Skips labeled
+  when the sibling runtime checkout or flock is absent.
+- **M3 (`tests/test_clean_owner_keys.py`, 8 checks, both stacks)**: owner
+  strings are OPAQUE — the clean `entity:<name>` form (item 6, new homes)
+  and the legacy `entity:<slug>@<home_id>` engraving (kept for life) each
+  round-trip identically through engram → formation → recall → commit →
+  gradation → replay; prefix-sharing owners NEVER merge on any read surface
+  (identity core, recall, gradation, replay filter — exact-string matching
+  everywhere); participant stamps compare exact strings, never prefixes.
+  The gateway's item-6 mint change therefore needs zero engine work.
+
+### Added (embedding-space pin + reembed repair — consensus plan item 3, M1/M1b, 2026-07-10)
+- **`src/abstractmemory/embedding_pin.py`** — the embedding-space identity
+  rules shared by both shipped stores (one definition; the canonical_text /
+  vector_scoring anti-drift lesson): a pin `{model_id, dimension, source,
+  pinned_at}` declares the store's ONE embedding space. Enforcement
+  invariant: **no silent mixing of embedding spaces** — a known embedder
+  identity contradicting the pin refuses at open; a wrong-dimension batch
+  refuses at write with ZERO rows landed; a wrong-dimension query vector
+  refuses at read, which the vector channel converts into its labeled
+  `#FALLBACK` (recall degrades to exact/keyword, never cross-space cosine).
+- **Creation pin (M1)**: `SQLiteTripleStore(..., embedding_pin={model_id,
+  dimension})` / `InMemoryTripleStore(...)` — embedder identity is an
+  explicit, customizable BIRTH choice written at creation (SQLite: a
+  `{table}_meta` sidecar in the SAME file — the one-file home invariant
+  covers the space identity). A creation pin naming only the model gets its
+  dimension locked by the first write (completing the birth choice, no
+  fallback label). First-write pinning survives ONLY as the labeled fallback
+  for pre-existing homes (`#FALLBACK` RuntimeWarning naming the path).
+  `store.embedding_pin()` is the read surface; `build_pin` is exported for
+  the door's creation knob.
+- **`reembed_home(system, *, embedder, owner_id, ...)`**
+  (`src/abstractmemory/reembed.py`) — the M1b operator-gated repair:
+  vectors are DERIVED data; the pass re-embeds every stored canonical text
+  (all-or-nothing: any embedder failure aborts with nothing written), then
+  swaps atomically via the new `store.replace_vectors(...)` (ONE
+  transaction: count guard — the lease-violation backstop refuses if the
+  store changed mid-pass —, every vector rewritten, pin updated LAST, live
+  embedder switched). Readers serve the OLD space consistently until the
+  commit — never a mixed space (stronger than the plan's labeled-vectorless
+  minimum, noted as a named divergence). The act is JOURNALED: a
+  bookkeeping `kind="claim"` record (engram-marker precedent) carries
+  old → new model ids + dimensions, so the life stream shows exactly when
+  retrieval geometry changed. Digests, journal history, access counts, and
+  valence are untouched (guard-tested byte-for-byte). Previously vectorless
+  rows are backfilled by the repair.
+- **Deliberate behavior change**: dimension-mismatched query vectors now
+  REFUSE on both stores (`test_scoring_parity_between_stores` updated) —
+  the prior silent min-prefix cosine overlap was 0014's documented
+  "confident garbage" failure and is exactly what the pin exists to remove.
+- Guards in `tests/test_embedding_pin.py` (10 checks, both stores); full
+  offline suite 571.
+
 ### Added (sleep phase-1: data-quality tending + cadence — 0023 fork parity, 2026-07-09)
 - **`src/abstractmemory/maintenance.py`** — the codex fork's missing sleep
   half (phase 1 "data_quality_tending"; phase 2, the dream, shipped earlier in

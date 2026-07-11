@@ -497,7 +497,7 @@ def test_diary_chain_build_verify_and_break_detection(system, stack) -> None:
     [gid1] = system.remember_many(
         [MemoryRecordInput(kind="diary", title="Day one", digest="I began existing today.",
                            attributes={"prev_entry_hash": ""},  # genesis: empty pointer
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope=SCOPE, owner_id=OWNER, idempotency_key="d-1")
     from abstractmemory.store import TripleQuery
     [entry1] = [a for a in store.query(TripleQuery(subject=gid1, limit=0))
@@ -508,7 +508,7 @@ def test_diary_chain_build_verify_and_break_detection(system, stack) -> None:
     system.remember_many(
         [MemoryRecordInput(kind="diary", title="Day two", digest="The piano recital happened.",
                            attributes={"prev_entry_hash": h1, "diary_type": "reflection"},
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope=SCOPE, owner_id=OWNER, idempotency_key="d-2")
 
     report = verify_diary_chain(store, scope=SCOPE, owner_id=OWNER)
@@ -518,7 +518,7 @@ def test_diary_chain_build_verify_and_break_detection(system, stack) -> None:
     [gid3] = system.remember_many(
         [MemoryRecordInput(kind="diary", title="Day three", digest="Something felt off.",
                            attributes={"prev_entry_hash": "f" * 64},
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope=SCOPE, owner_id=OWNER, idempotency_key="d-3")
     broken = verify_diary_chain(store, scope=SCOPE, owner_id=OWNER)
     assert broken["intact"] is False and broken["break_at"] == gid3
@@ -528,7 +528,7 @@ def test_unchained_diary_reports_intact(system, stack) -> None:
     store, _ = stack
     system.remember_many(
         [MemoryRecordInput(kind="diary", title="Loose note", digest="No chain here.",
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope=SCOPE, owner_id=OWNER, idempotency_key="d-loose")
     report = verify_diary_chain(store, scope=SCOPE, owner_id=OWNER)
     assert report == {"intact": True, "break_at": None, "entries": 1}

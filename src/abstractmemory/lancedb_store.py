@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -111,6 +112,18 @@ class LanceDBTripleStore:
         self._table_name = str(table_name)
         self._vector_column = str(vector_column or "vector")
         self._embedder = embedder
+        if embedder is not None:
+            # M1 gap, loud (2026-07-10 review): this backend has no
+            # embedding-space pin — swapping embedders between sessions can
+            # silently mix embedding spaces here, which the SQLite/InMemory
+            # stores refuse. Absence of the guarantee must be audible.
+            warnings.warn(
+                "#FALLBACK: LanceDBTripleStore has no embedding-space pin (M1): "
+                "the store cannot detect an embedder/model swap between sessions — "
+                "keep the embedder stable, or use SQLiteTripleStore for pinned homes",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         self._table = None
         try:

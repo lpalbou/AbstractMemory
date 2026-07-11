@@ -41,6 +41,15 @@ class Stimulus:
     # NOT part of the query fingerprint: the same cue in a different turn is
     # still the same query (qmult semantics key on retrieval content only).
     turn_id: Optional[str] = None
+    # Additive (steering wave, 2026-07-11 — pays the 0005 promise the room
+    # believed already shipped): names the CHANNEL the cue came through
+    # ("steer" for an operator mid-turn interjection, "diary_re_entry" for
+    # a re-read of one's own entry, absent for an ordinary turn cue). Pure
+    # provenance like turn_id: flows into trace `need` via to_dict so the
+    # observer can label WHY a recall fired; NOT part of the query
+    # fingerprint (same cue through a different channel = same query).
+    # Free string — host vocabulary, never an enum.
+    cue_source: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "cue_text", str(self.cue_text or "").strip())
@@ -58,6 +67,9 @@ class Stimulus:
         if self.turn_id is not None:
             tid = str(self.turn_id).strip()
             object.__setattr__(self, "turn_id", tid if tid else None)
+        if self.cue_source is not None:
+            src = str(self.cue_source).strip()
+            object.__setattr__(self, "cue_source", src if src else None)
 
     def to_dict(self) -> Dict[str, Any]:
         return _jsonify(asdict(self))

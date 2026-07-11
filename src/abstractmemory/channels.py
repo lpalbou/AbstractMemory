@@ -12,13 +12,13 @@ module is internal to the reconstruction pipeline.
 
 from __future__ import annotations
 
-import re
 import statistics
-import unicodedata
 from dataclasses import dataclass
 from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from . import text_tokens as _text_tokens
 from .canonical_text import canonical_text
+from .embedding_pin import pin_note
 from .models import TripleAssertion
 from .seam import RecallBudget, Stimulus
 from .store import TripleQuery
@@ -30,17 +30,22 @@ from .store import TripleQuery
 # content match.
 CHANNEL_ORDER: Tuple[str, ...] = ("exact", "keyword", "vector", "participants")
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-# 4, not 3 (0002 decay regression): the fork rule stands — no language
-# stopword LISTS, length is the measurable proxy — but 3 admits the
-# highest-frequency English function words ("the", "for", "was", "and"),
-# and a cue matching a record on "the" alone made it CHANNEL-MATCHED
-# (ordering supremacy + trail deposits) on every unrelated turn. At 4 the
-# worst offenders drop while content tokens survive. Documented limits:
-# 4-char function words ("this", "with", "from") still pass, and real
-# 3-char content tokens ("tax", "aws", "gpu") now need another channel —
-# FTS5 with corpus statistics (0019) is the honest fix for both.
-_MIN_TOKEN_LEN = 4
+# Tokenization rules live in text_tokens.py (ONE home — the 2026-07-10
+# review unified four drifting implementations); these aliases keep this
+# module's established names. The 4-vs-3 floor rationale (0002 decay
+# regression) is documented there.
+_TOKEN_RE = _text_tokens.TOKEN_RE
+_MIN_TOKEN_LEN = _text_tokens.RECALL_MIN_TOKEN_LEN
+# Exclusion over-fetch headroom (audit f2): how many extra rows a bounded
+# fetch may request so excluded/closed rows cannot shadow eligible ones.
+# ONE policy constant — reconstruct.py and spreading.py import it (the
+# review found four inline copies of the same 256).
+EXCLUSION_OVERFETCH_CAP = 256
+# Median baseline-estimation population floor (was an unnamed inline 5 whose
+# docstring had drifted to claim 3 — the review's live example of what
+# unnamed literals cost): below this many scored rows the median is the hits
+# themselves, so only the absolute floor governs.
+_MEDIAN_MIN_POPULATION = 5
 # Keys a serialized exact pattern may carry into a TripleQuery. scope/owner_id
 # come from the scope ladder (authoritative — a pattern must not escalate
 # scope), query_text/query_vector belong to the vector channel, limit/order
@@ -59,16 +64,11 @@ class ChannelResult:
 
 
 def tokenize(text: str) -> List[str]:
-    """Unique casefolded, accent-folded alnum tokens (len>=3), first-seen
-    order. NFKD + combining-mark strip makes accented and plain spellings of
-    the same word match ('café' == 'cafe' — audit f6); short tokens are
-    dropped as stop-word surrogates WITHOUT a language-specific list (fork
-    ADR rule: no stopword lists; length is a measurable proxy). Non-Latin
-    scripts still produce zero tokens — the CALLER must label that
-    degradation (run_keyword_channel does); FTS5 (0019) is the real fix."""
-    folded = unicodedata.normalize("NFKD", str(text or "").casefold())
-    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
-    return list(dict.fromkeys(t for t in _TOKEN_RE.findall(folded) if len(t) >= _MIN_TOKEN_LEN))
+    """Unique casefolded, accent-folded alnum tokens (len>=4 — the recall
+    floor; rationale in text_tokens.py), first-seen order. Non-Latin scripts
+    still produce zero tokens — the CALLER must label that degradation
+    (run_keyword_channel does); FTS5 (0019) is the real fix."""
+    return _text_tokens.tokenize(text, min_len=_MIN_TOKEN_LEN)
 
 
 def _pattern_value_usable(value: Any) -> bool:
@@ -124,7 +124,7 @@ def run_exact_channel(
     # Exclusion-aware over-fetch (audit f2): closed/hidden rows consume the
     # fetch window and can fully shadow eligible rows just past it; fetch
     # extra headroom (bounded), filter, and keep at most `limit` survivors.
-    fetch_limit = limit + min(len(excluded_ids), 256)
+    fetch_limit = limit + min(len(excluded_ids), EXCLUSION_OVERFETCH_CAP)
 
     prepared: List[Tuple[Dict[str, Any], str]] = []
     for pattern in stimulus.patterns:
@@ -184,6 +184,20 @@ def run_exact_channel(
     return results, found, ran
 
 
+def _store_pin_suffix(store: Any) -> str:
+    """' [store pin: ...]' when the store declares an embedding pin, else
+    ''. Best-effort by design: a diagnostics suffix must never turn a
+    labeled degradation into a crash."""
+    getter = getattr(store, "embedding_pin", None)
+    if not callable(getter):
+        return ""
+    try:
+        pin = getter()
+    except Exception:
+        return ""
+    return f" [store pin: {pin_note(pin)}]" if pin else ""
+
+
 def run_vector_channel(
     store: Any,
     stimulus: Stimulus,
@@ -206,7 +220,8 @@ def run_vector_channel(
 
     Floor (audit f3 + realistic-embedder fix): effective floor =
     max(vector_floor, median(fetched cosines) + vector_margin) when at least
-    3 rows scored (a median over fewer points estimates nothing). Real
+    _MEDIAN_MIN_POPULATION rows scored (a median over fewer points estimates
+    nothing — it is dominated by the hits themselves). Real
     embedders (qwen-class) put UNRELATED pairs at ~0.35-0.5 cosine, so an
     absolute floor alone never fires and everything channel-matches; the
     median estimates that unrelated baseline. Cosines below the effective
@@ -219,7 +234,11 @@ def run_vector_channel(
         try:
             query_kwargs["query_vector"] = [float(x) for x in embedder.embed_texts([stimulus.cue_text])[0]]
         except (ValueError, RuntimeError, IndexError) as e:
-            warnings.append(f"#FALLBACK: vector channel unavailable: {e}")
+            # The injected embedder never touched the store, so a server
+            # refusal names only the REQUESTED model; append the store's
+            # pinned identity (claimed-vs-served in one warning line —
+            # the 2026-07-11 incident's missing join).
+            warnings.append(f"#FALLBACK: vector channel unavailable: {e}{_store_pin_suffix(store)}")
             return [], {}, False
     elif stimulus.cue_text:
         query_kwargs["query_text"] = stimulus.cue_text
@@ -227,7 +246,7 @@ def run_vector_channel(
         return [], {}, False
 
     limit = max(1, int(budget.max_candidates))
-    fetch_limit = limit + min(len(excluded_ids), 256)
+    fetch_limit = limit + min(len(excluded_ids), EXCLUSION_OVERFETCH_CAP)
     raw_scores: Dict[str, float] = {}
     found: Dict[str, TripleAssertion] = {}
     for scope, owner in scope_pairs:
@@ -269,10 +288,10 @@ def run_vector_channel(
     # A strong field (top well clear of the floor) still reads ≈1.0; a weak
     # field yields uniformly low vector relevance and cannot crown noise.
     floor = float(vector_floor)
-    if len(raw_scores) >= 5:
-        # Baseline estimation needs a population: below 5 scored rows the
-        # median is dominated by the (likely relevant) hits themselves and
-        # would clip legitimate recall; the absolute floor governs there.
+    if len(raw_scores) >= _MEDIAN_MIN_POPULATION:
+        # Baseline estimation needs a population: below the floor population
+        # the median is dominated by the (likely relevant) hits themselves
+        # and would clip legitimate recall; the absolute floor governs there.
         floor = max(floor, statistics.median(raw_scores.values()) + float(vector_margin))
     positive = {rid: s for rid, s in raw_scores.items() if s > 0.0 and s >= floor}
     results: List[ChannelResult] = []

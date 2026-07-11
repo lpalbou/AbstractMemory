@@ -46,10 +46,13 @@ from .folds import (
     reconstruction_inputs as _reconstruction_inputs,
     scoring_window as _scoring_window,
 )
+from .gradation import GradationConfig
+from .journal import DEFAULT_WEIGHTS as _DEFAULT_WEIGHTS
 from .journal import ClosureRecord, MemoryEvent, MemoryJournal, ScopeBinding, utc_now_iso
 from .models import TripleAssertion
 from .records import (
     MemoryRecordInput,
+    ReconstructConfig,
     apply_formation_plan as _apply_formation_plan,
     build_formation_plan as _build_formation_plan,
     close_record_plan as _close_record_plan,
@@ -102,6 +105,8 @@ class MemorySystem(ValenceOps, AccessOps):
         embedder: Any = None, selector: Any = None, reflector: Any = None,
         attention_config: AttentionConfig = AttentionConfig(),
         spread_params: SpreadParams = SpreadParams(),
+        reconstruct_config: ReconstructConfig = ReconstructConfig(),
+        gradation_config: GradationConfig = GradationConfig(),
         clock: Optional[Callable[[], str]] = None,
         broad_scopes: Optional[Iterable[str]] = None,
         ablation: Optional[str] = None,
@@ -124,6 +129,13 @@ class MemorySystem(ValenceOps, AccessOps):
                           "sleep() lands with backlog 0023", RuntimeWarning, stacklevel=2)
         self._attention_config = attention_config
         self._spread_params = spread_params
+        # 2026-07-10 review F1/F2: both configs were root-exported as the
+        # tuning surface yet UNREACHABLE through the facade (constructed
+        # fresh with defaults at every internal call site). The vector
+        # floor/margin knobs are embedder-dependent by the code's own
+        # documentation — a host with a third embedder profile needs them.
+        self._reconstruct_config = reconstruct_config
+        self._gradation_config = gradation_config
         self._clock: Callable[[], str] = clock if clock is not None else utc_now_iso
         self._broad_scopes = (
             frozenset(str(s or "").strip().lower() for s in broad_scopes if str(s or "").strip())
@@ -142,6 +154,18 @@ class MemorySystem(ValenceOps, AccessOps):
         self._ablation = normalized_ablation
 
     # -- layer-1 passthroughs (unchanged surface; part of the frozen protocol) --
+
+    @property
+    def store(self) -> TripleStore:
+        """The layer-1 store handle (read-only property — sleep passes and
+        other same-package processes composed OVER the facade used to reach
+        into `_store`; review: privates are not a composition surface)."""
+        return self._store
+
+    @property
+    def journal(self) -> MemoryJournal:
+        """The layer-1 journal handle (read-only property; see `store`)."""
+        return self._journal
 
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
         """Layer-1 write passthrough (the seam keeps MEMORY_KG_* effects working)."""
@@ -252,6 +276,7 @@ class MemorySystem(ValenceOps, AccessOps):
             self._store, self._journal, scope_pairs, as_of,
             config=self._attention_config,
             spread_params=self._spread_params,
+            pipeline_config=self._reconstruct_config,
             ablation=self._ablation,
         )
 
@@ -419,7 +444,7 @@ class MemorySystem(ValenceOps, AccessOps):
     # event. reason stays mandatory; either id namespace accepted.
 
     def reinforce(
-        self, record_id: str, *, reason: str, weight: float = 8,
+        self, record_id: str, *, reason: str, weight: float = _DEFAULT_WEIGHTS["pinned"],
         ttl_activity: Optional[int] = None, scope: str, owner_id: str,
         event_id: Optional[str] = None, actor: str = "operator",
         provenance: Optional[Mapping[str, Any]] = None,
@@ -432,7 +457,7 @@ class MemorySystem(ValenceOps, AccessOps):
             event_id=event_id, actor=actor, provenance=provenance)
 
     def attenuate(
-        self, record_id: str, *, reason: str, weight: float = 8,
+        self, record_id: str, *, reason: str, weight: float = _DEFAULT_WEIGHTS["silenced"],
         ttl_activity: Optional[int] = None, scope: str, owner_id: str,
         event_id: Optional[str] = None, actor: str = "operator",
         provenance: Optional[Mapping[str, Any]] = None,

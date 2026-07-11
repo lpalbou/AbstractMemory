@@ -47,7 +47,32 @@ Semantic/vector support (mirrors the InMemory reference semantics exactly):
   comfortable at single-home scale; ANN indexing is on the design backlog.
 - Rows added while no embedder was configured stay vectorless: vector
   queries skip them and layer-2 recall labels the degradation
-  (`#FALLBACK`). Re-embedding backfill is on the design backlog.
+  (`#FALLBACK`). The `reembed_store(...)` repair pass backfills them.
+
+Embedding-space pin (one store = one embedding space; both stores):
+- Pass `embedding_pin={"model_id": ..., "dimension": ...}` at construction
+  to declare the space as a birth choice (SQLite persists it in a
+  `{table}_meta` sidecar in the same file). `store.embedding_pin()` reads it.
+- No silent mixing of spaces: a known embedder identity contradicting the
+  pin refuses at open; a wrong-dimension write refuses with zero rows; a
+  wrong-dimension query vector refuses at read (layer-2 recall converts
+  that into the vector channel's labeled `#FALLBACK` and keeps serving
+  exact/keyword).
+- Pinless legacy stores pin at their first embedded write with a labeled
+  `#FALLBACK` warning — creation pinning is the contract for new homes.
+  First-write pins carry `claimed_by: "embedder-attribute"`: the model_id
+  is a CLAIM read off the bound embedder object, never verified against
+  the serving endpoint (the engine cannot know server truth). Creation and
+  reembed pins are operator-vouched and carry no claim marker.
+- Embed-time failures name the pin: when the configured embedder fails a
+  `query_text` embed (e.g. an HTTP 400 naming the requested model), the
+  raised error appends `[store pin: <model>@<dim>d (source, claimed by
+  ...)]` so claimed-vs-served identity is visible in one line; the vector
+  channel's `#FALLBACK` warning carries the same suffix.
+- `reembed_store(system, embedder=..., owner_id=...)` is the deliberate,
+  operator-gated migration: all-or-nothing re-embed + atomic swap, pin
+  updated last, the act journaled as a bookkeeping record. Same memories,
+  different neighbors — a substrate effect, on the record, never silent.
 
 Persistence:
 - Data (including vectors) is stored in the provided SQLite file path.

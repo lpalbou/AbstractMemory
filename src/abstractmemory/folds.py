@@ -12,7 +12,7 @@ writes, no facade policy.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .attention import AttentionConfig, compute_activation, compute_trail_activation
@@ -182,6 +182,7 @@ def reconstruction_inputs(
     *,
     config: AttentionConfig,
     spread_params: SpreadParams,
+    pipeline_config: Optional[ReconstructConfig] = None,
     ablation: Optional[str] = None,
 ) -> ReconstructionInputs:
     """Assemble every journal-derived input one reconstruction needs, plus
@@ -221,20 +222,27 @@ def reconstruction_inputs(
     states, hidden, prompt_active = binding_states(store, journal, scope_pairs, as_of)
     excluded = closure_exclusions(journal, as_of) | hidden
 
+    # The facade-threaded config is the base (review F1: ReconstructConfig
+    # used to be constructed fresh here, making the exported tuning surface
+    # unreachable); a missing config keeps the defaults.
+    threaded = pipeline_config if pipeline_config is not None else ReconstructConfig()
     if ablation == "recency":
         run_channels = False
-        pipeline_config = ReconstructConfig(kind_rank={})
+        # Kind priority neutralized (empty kind_rank -> constant rank), the
+        # OTHER threaded knobs kept: the arm removes kind resurfacing, not
+        # the host's vector-floor calibration.
+        pipeline_config = replace(threaded, kind_rank={})
         notes: Tuple[str, ...] = (
             "ablation=recency (pure recency baseline)",
             "ablation=recency: channels disabled — stimulus cues, patterns and anchors are ignored",
         )
     elif ablation == "recency_embedding":
         run_channels = True
-        pipeline_config = ReconstructConfig()
+        pipeline_config = threaded
         notes = ("ablation=recency_embedding (Arm B)",)
     else:
         run_channels = True
-        pipeline_config = ReconstructConfig()
+        pipeline_config = threaded
         notes = ()
     # Global counts are anchored to as_of like every other journal-derived
     # input: a C4 replay must see the counts AS OF the anchor, or repeated

@@ -79,8 +79,8 @@ def test_value_kind_requires_explicit_value_class() -> None:
 
 def test_diary_kind_defaults_type_and_never_requires_edges() -> None:
     # Diary formation requires a declared write channel (D4 form-gate);
-    # these are entity-direct writes semantically.
-    direct = {"source": "entity-direct"}
+    # these are owner-direct writes semantically.
+    direct = {"source": "owner-direct"}
     first = _record("diary", "Day one", "I began existing today.", provenance=direct)
     assert first.attributes["diary_type"] == "note" and first.edges == ()
     for dt in ("note", "idea", "commitment", "reflection"):

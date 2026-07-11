@@ -68,10 +68,17 @@ __all__ = [
 
 # Actors allowed to write amplitude > AMPLITUDE_TRIGGER_MAX appraisals
 # (0003 §3 amplitude authority): deterministic triggers stay small; big
-# swings need the entity's own reflection or the operator.
+# swings need a reflective/operator-class channel. The DEFAULT names are
+# the reference host's channel vocabulary; hosts with different channel
+# names tune GradationConfig.privileged_actors (2026-07-10 neutrality
+# review: the engine must not hardcode one host's channel dialect).
 AMPLITUDE_TRIGGER_MAX = 3.0
 _AMPLITUDE_ACTORS = frozenset({"entity-reflection", "operator"})
 
+# Bounded "why" strings per gradation score. Same concept as attention.py's
+# _MAX_CONTRIBUTION_REASONS but a DIFFERENT ruled value (0018 fixes 6 for
+# activation reports; gradation carries 5) — the shared name is historical,
+# do not "unify" the values without a ruling.
 _MAX_CONTRIBUTION_REASONS = 5
 
 
@@ -82,6 +89,9 @@ class GradationConfig:
 
     channel_clamp: float = 100.0   # G+ / G- each accumulate within 0..this
     break_magnitude: float = 8.0   # a scar at/after this magnitude breaks earlier bonds
+    # Channels trusted with amplitude > AMPLITUDE_TRIGGER_MAX (see the
+    # module-constant note above; compared lowercased).
+    privileged_actors: frozenset = _AMPLITUDE_ACTORS
 
 
 @dataclass(frozen=True)
@@ -120,21 +130,23 @@ NEUTRAL_GRADATION: Dict[str, object] = {
 
 
 def validate_amplitude_authority(
-    magnitude: float, actor: str, provenance: Optional[Mapping[str, object]]
+    magnitude: float, actor: str, provenance: Optional[Mapping[str, object]],
+    *, config: GradationConfig = GradationConfig(),
 ) -> None:
     """Amplitude authority (0003 §3): deterministic triggers write only
-    ±1..3; a magnitude above that requires entity-reflection/operator
-    actorship OR a catastrophic outcome code. Loud by design — a runaway
-    trigger writing ±10s would fabricate trauma (or euphoria)."""
+    ±1..3; a magnitude above that requires a privileged-channel actor
+    (config.privileged_actors) OR a catastrophic outcome code. Loud by
+    design — a runaway trigger writing ±10s would fabricate trauma (or
+    euphoria)."""
     if float(magnitude) <= AMPLITUDE_TRIGGER_MAX:
         return
-    if str(actor or "").strip().lower() in _AMPLITUDE_ACTORS:
+    if str(actor or "").strip().lower() in config.privileged_actors:
         return
     if str(dict(provenance or {}).get("outcome_class") or "").strip().lower() == "catastrophic":
         return
     raise ValueError(
         f"amplitude authority: magnitude {float(magnitude):g} > {AMPLITUDE_TRIGGER_MAX:g} requires "
-        f"actor in {sorted(_AMPLITUDE_ACTORS)} or provenance['outcome_class']=='catastrophic' "
+        f"actor in {sorted(config.privileged_actors)} or provenance['outcome_class']=='catastrophic' "
         f"(got actor={actor!r}) — deterministic triggers may only write ±1..3"
     )
 

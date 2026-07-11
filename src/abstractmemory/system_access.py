@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .entity_card import entity_card as _entity_card
+from .gradation import GradationConfig as _GradationConfig
 from .models import TripleAssertion
 from .records import resolve_assertion_ids as _resolve_assertion_ids
 from .replay import export_replay as _export_replay
@@ -67,7 +68,14 @@ class AccessOps:
             self._store, self._journal,  # type: ignore[attr-defined]
             scope_pairs=scope_pairs, owner_id=owner_id,
             current_window_events=current_window_events, top_n=top_n, as_of=as_of,
+            # Threaded (review F2): the card's likes/dislikes fold and
+            # key-moment band follow the facade's gradation tuning.
+            gradation_config=getattr(self, "_gradation_config", None) or _GradationConfig(),
         )
+
+    # Neutral alias (mirrors entity_card.identity_card — one implementation,
+    # two spellings; the entity one stays for the a2a-0009 consumers).
+    identity_card = entity_card
 
     def self_records(
         self, *, scope: str, owner_id: str, spark_version: Optional[int] = None,

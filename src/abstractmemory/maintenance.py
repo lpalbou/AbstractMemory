@@ -47,50 +47,40 @@ NAMED DIVERGENCES from the fork (our architecture rules where they clash):
 from __future__ import annotations
 
 import hashlib
-import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .consolidation import COMPONENT_RELATIONS, dream_pass, structural_report
 from .records import MemoryRecordInput, record_id_for
+# Cadence lives in sleep_cadence.py (600-line split: "is there material" is
+# its own task); re-exported here so established import paths keep working.
+from .sleep_cadence import last_maintenance_seq, maintenance_due  # noqa: F401
+# Policy numbers live in sleep_policy (ONE source — this module and
+# consolidation.py each carried a same-name _LIST_BOUND before); the
+# NEAR_DUP_* re-exports keep established import paths working.
+from .sleep_policy import (  # noqa: F401  (re-exported tunables)
+    DEFAULT_SLEEP_TUNING,
+    NEAR_DUP_JACCARD_FLOOR,
+    NEAR_DUP_SCAN_LIMIT,
+    NEAR_DUP_VECTOR_FLOOR,
+    SleepTuning,
+)
 from .store import TripleQuery
+# Tokenization lives in text_tokens (ONE home): token_set gains NFKD accent
+# folding over the old local copy — accented FR near-duplicates were
+# invisible to tending while keyword recall matched them (review find).
+from .text_tokens import jaccard as _jaccard
+from .text_tokens import title_key as _title_key
+from .text_tokens import token_set as _tokens
 from .vector_scoring import cosine
 
 __all__ = [
+    "SleepTuning",
     "consolidation_pass",
     "last_maintenance_seq",
     "maintenance_due",
     "maintenance_report",
     "sleep_pass",
 ]
-
-# Fork parity: STRUCTURAL_NEAR_DUPLICATE_SCAN_LIMIT (bounded O(n^2) scan) and
-# the 0.65 Jaccard floor. Declared tunables, never fear-derived ceilings —
-# the scan cap keeps a bounded sleep window; raise it for bigger windows.
-NEAR_DUP_SCAN_LIMIT = 200
-NEAR_DUP_JACCARD_FLOOR = 0.65
-# Our vector upgrade: near-identity, far above the 0.35 bridge floor.
-NEAR_DUP_VECTOR_FLOOR = 0.90
-_LIST_BOUND = 12  # bounded report lists (fork's limit discipline)
-
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-def _tokens(text: str) -> Set[str]:
-    """Lowercase alnum tokens (fork structural_tokenize; len>=3 like facets —
-    dedup evidence should not hinge on articles)."""
-    return {t for t in _TOKEN_RE.findall(str(text or "").lower()) if len(t) >= 3}
-
-
-def _title_key(title: str) -> str:
-    """Normalized duplicate-title key (fork structural_text_key)."""
-    return " ".join(_TOKEN_RE.findall(str(title or "").lower()))
-
-
-def _jaccard(left: Set[str], right: Set[str]) -> float:
-    if not left or not right:
-        return 0.0
-    union = len(left | right)
-    return (len(left & right) / union) if union else 0.0
 
 
 def _scan(
@@ -142,7 +132,9 @@ def _scan(
     return records, edges, candidates
 
 
-def _metadata_gaps(records: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _metadata_gaps(
+    records: Dict[str, Dict[str, Any]], tuning: SleepTuning,
+) -> List[Dict[str, Any]]:
     """Fork structural_metadata_gaps, REPORT-ONLY by our boundary: the fix is
     a waking act (formation-time keywords are the runtime's v1.1 lane; a
     re-digestion surface may consume this list) — sleep never mutates sources."""
@@ -157,10 +149,12 @@ def _metadata_gaps(records: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
                            "re-digestion, never while asleep (no source mutation)"),
             })
     gaps.sort(key=lambda g: (-len(g["missing_fields"]), g["record_id"]))
-    return gaps[:_LIST_BOUND * 4]
+    return gaps[: tuning.list_bound * tuning.metadata_gaps_factor]
 
 
-def _duplicate_title_groups(records: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _duplicate_title_groups(
+    records: Dict[str, Dict[str, Any]], tuning: SleepTuning,
+) -> List[Dict[str, Any]]:
     by_key: Dict[Tuple[str, str], List[str]] = {}
     for rid in sorted(records):
         key = _title_key(records[rid]["title"])
@@ -171,14 +165,15 @@ def _duplicate_title_groups(records: Dict[str, Dict[str, Any]]) -> List[Dict[str
         for (kind, key), ids in sorted(by_key.items()) if len(ids) > 1
     ]
     groups.sort(key=lambda g: (-len(g["record_ids"]), g["record_ids"][0]))
-    return groups[:_LIST_BOUND]
+    return groups[: tuning.list_bound]
 
 
 def _near_duplicate_pairs(
     records: Dict[str, Dict[str, Any]], store: Any, scan_limit: int,
+    tuning: SleepTuning,
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Same-kind near-dup pairs: Jaccard >= floor over title+digest tokens,
-    OR stored-vector cosine >= NEAR_DUP_VECTOR_FLOOR (both vectors present).
+    OR stored-vector cosine >= the tuned vector floor (both vectors present).
     Newest-first bounded scan (a resident home tends recent material first);
     vectorless below-Jaccard pairs are counted, never guessed."""
     ordered = sorted(records, key=lambda rid: (records[rid]["observed_at"], rid), reverse=True)
@@ -193,7 +188,7 @@ def _near_duplicate_pairs(
                 continue
             entry: Dict[str, Any] = {"pair": sorted((left, right)), "kind": records[left]["kind"]}
             score = _jaccard(fingerprints[left], fingerprints[right])
-            if score >= NEAR_DUP_JACCARD_FLOOR:
+            if score >= tuning.near_dup_jaccard_floor:
                 entry["jaccard"] = round(score, 6)
                 pairs.append(entry)
                 continue
@@ -204,17 +199,18 @@ def _near_duplicate_pairs(
             vb = vector_reader(records[right]["assertion_id"])
             if isinstance(va, list) and isinstance(vb, list):
                 vector_score = cosine(va, vb)
-                if vector_score >= NEAR_DUP_VECTOR_FLOOR:
+                if vector_score >= tuning.near_dup_vector_floor:
                     entry["vector_score"] = round(vector_score, 6)
                     pairs.append(entry)
             else:
                 vectorless += 1
     pairs.sort(key=lambda p: (-(p.get("jaccard") or p.get("vector_score") or 0.0), p["pair"][0], p["pair"][1]))
-    return pairs[:_LIST_BOUND], vectorless
+    return pairs[: tuning.list_bound], vectorless
 
 
 def _shared_source_groups(
     records: Dict[str, Dict[str, Any]], edges: Sequence[Dict[str, Any]],
+    tuning: SleepTuning,
 ) -> List[Dict[str, Any]]:
     """Records whose summarizes/derived_from edges hit ONE shared target —
     possibly redundant derivations, possibly legitimate specializations
@@ -229,15 +225,17 @@ def _shared_source_groups(
         if len(ids) > 1:
             groups.append({"source_id": source_id, "record_ids": ids})
     groups.sort(key=lambda g: (-len(g["record_ids"]), g["source_id"]))
-    return groups[:_LIST_BOUND]
+    return groups[: tuning.list_bound]
 
 
 def _isolated_link_candidates(
     base: Dict[str, Any], records: Dict[str, Dict[str, Any]],
+    tuning: SleepTuning,
 ) -> List[Dict[str, Any]]:
     """Fork structural_isolated_link_candidates: an isolated record sharing
-    >=2 facets with another record is a PROPOSAL for a waking-review link
-    (mentions/supports after source expansion) — never written here."""
+    >= min_shared_facets facets with another record is a PROPOSAL for a
+    waking-review link (mentions/supports after source expansion) — never
+    written here."""
     base_records = base.get("records", {})
     facet_of = {
         rid: set(info.get("facets", ())) | set(info.get("participants", ()))
@@ -252,8 +250,8 @@ def _isolated_link_candidates(
         for rid in sorted(facet_of):
             if rid == isolated_id:
                 continue
-            shared = sorted(left_facets & facet_of[rid])[:6]
-            if len(shared) < 2:
+            shared = sorted(left_facets & facet_of[rid])[: tuning.shared_facets_shown]
+            if len(shared) < tuning.min_shared_facets:
                 continue
             pair = tuple(sorted((isolated_id, rid)))
             if pair in seen:
@@ -266,11 +264,12 @@ def _isolated_link_candidates(
                            "while at least one is isolated"),
             })
     out.sort(key=lambda c: (-len(c["shared_terms"]), c["pair"][0], c["pair"][1]))
-    return out[:_LIST_BOUND]
+    return out[: tuning.list_bound]
 
 
 def _edge_suppression_candidates(
     records: Dict[str, Dict[str, Any]], edges: Sequence[Dict[str, Any]],
+    tuning: SleepTuning,
 ) -> List[Dict[str, Any]]:
     """Fork structural_edge_suppression_candidates, REPORT-ONLY here: the act
     it proposes is an append-only closure on the redundant EDGE assertion —
@@ -316,7 +315,7 @@ def _edge_suppression_candidates(
                 "risk": "low",
             })
     out.sort(key=lambda c: (c["risk"], c["pair"][0], c["pair"][1], c["kind"]))
-    return out[:_LIST_BOUND * 2]
+    return out[: tuning.list_bound * tuning.suppressions_factor]
 
 
 def _consolidation_proposals(
@@ -324,6 +323,7 @@ def _consolidation_proposals(
     duplicate_groups: Sequence[Dict[str, Any]],
     near_dups: Sequence[Dict[str, Any]],
     shared_sources: Sequence[Dict[str, Any]],
+    tuning: SleepTuning,
 ) -> List[Dict[str, Any]]:
     """Fork structural_consolidation_proposals order: duplicate_title (low)
     -> shared_source (medium) -> near_duplicate (medium); one proposal per
@@ -338,7 +338,7 @@ def _consolidation_proposals(
             return
         seen.add(key)
         first = records.get(ids[0], {})
-        preserved = [records[rid]["digest"] for rid in ids[:4] if rid in records]
+        preserved = [records[rid]["digest"] for rid in ids[: tuning.preserved_digests] if rid in records]
         proposals.append({
             "id": f"consolidate:{prefix}:{index}", "signal": signal,
             "source_ids": list(ids),
@@ -353,20 +353,20 @@ def _consolidation_proposals(
              ("expand all sources, verify distinct facts/caveats, then review the "
               "inactive summary candidate carrying summarizes edges to every source"),
              "same normalized title within one kind; likely a repeated handle")
-        if len(proposals) >= _LIST_BOUND:
+        if len(proposals) >= tuning.list_bound:
             return proposals
     for i, group in enumerate(shared_sources):
         _add("shared_source", i + 1, "shared_source", list(group["record_ids"]), "medium",
              ("review whether the shared source created redundant derived records; "
               "consolidate only if the newer handle preserves every source-specific fact"),
              "multiple records derive from one source; may be legitimate specializations")
-        if len(proposals) >= _LIST_BOUND:
+        if len(proposals) >= tuning.list_bound:
             return proposals
     for i, pair in enumerate(near_dups):
         _add("near_duplicate", i + 1, "near_duplicate", list(pair["pair"]), "medium",
              "source-expand both records before any waking consolidation",
              "textual/vector similarity only; may be a false-positive topic overlap")
-        if len(proposals) >= _LIST_BOUND:
+        if len(proposals) >= tuning.list_bound:
             return proposals
     return proposals
 
@@ -374,22 +374,26 @@ def _consolidation_proposals(
 def maintenance_report(
     store: Any, journal: Any, *,
     scopes: Sequence[Tuple[str, str]], as_of: Optional[int] = None,
-    scan_limit: int = NEAR_DUP_SCAN_LIMIT,
+    scan_limit: Optional[int] = None,
+    tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Dict[str, Any]:
     """PURE READ phase-1 analysis (the fork's data-quality half of the
     maintenance ledger). Builds on structural_report (components/isolated —
     dream-pass semantics untouched) plus its own attribute-level scan.
-    Deterministic ordering everywhere; deposits nothing; writes nothing."""
+    Deterministic ordering everywhere; deposits nothing; writes nothing.
+    Every policy number rides `tuning`; an explicit scan_limit wins over
+    the tuned default."""
+    resolved_scan = tuning.resolve_scan_limit(scan_limit)
     base = structural_report(store, journal, scopes=scopes, as_of=as_of)
     records, edges, candidates = _scan(store, scopes)
 
-    gaps = _metadata_gaps(records)
-    duplicate_groups = _duplicate_title_groups(records)
-    near_dups, vectorless_pairs = _near_duplicate_pairs(records, store, scan_limit)
-    shared_sources = _shared_source_groups(records, edges)
-    link_candidates = _isolated_link_candidates(base, records)
-    suppressions = _edge_suppression_candidates(records, edges)
-    proposals = _consolidation_proposals(records, duplicate_groups, near_dups, shared_sources)
+    gaps = _metadata_gaps(records, tuning)
+    duplicate_groups = _duplicate_title_groups(records, tuning)
+    near_dups, vectorless_pairs = _near_duplicate_pairs(records, store, resolved_scan, tuning)
+    shared_sources = _shared_source_groups(records, edges, tuning)
+    link_candidates = _isolated_link_candidates(base, records, tuning)
+    suppressions = _edge_suppression_candidates(records, edges, tuning)
+    proposals = _consolidation_proposals(records, duplicate_groups, near_dups, shared_sources, tuning)
 
     operations: List[Dict[str, Any]] = []
     for gap in gaps:
@@ -425,10 +429,11 @@ def maintenance_report(
             "risk": proposal["risk"],
         })
     operations.sort(key=lambda o: (o["phase"], o["kind"], o["risk"], o["id"]))
-    bound = _LIST_BOUND * 6
+    bound = tuning.list_bound * tuning.operations_factor
     omitted = max(0, len(operations) - bound)
 
     return {
+        "pass_name": "maintenance_report",
         "as_of_seq": base["as_of_seq"],
         "metadata_gaps": gaps,
         "duplicate_title_groups": duplicate_groups,
@@ -458,24 +463,32 @@ def consolidation_pass(
     scopes: Sequence[Tuple[str, str]], owner_id: str,
     max_candidates: int = 2, proposal_ids: Sequence[str] = (),
     report_only: bool = False, as_of: Optional[int] = None,
-    scan_limit: int = NEAR_DUP_SCAN_LIMIT,
+    scan_limit: Optional[int] = None,
+    tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Dict[str, Any]:
     """Phase-1's ONE write surface (fork create_consolidation_candidates):
     low-risk duplicate-title proposals become at most `max_candidates`
-    (clamped 1..6, fork parity) INACTIVE kind="summary" candidates via
-    remember_many — summarizes edges to every source (true by construction:
-    the candidate stands for exactly those records), review_required, sources
-    byte-untouched. Idempotent by sorted source set; a group already covered
-    by an existing candidate (equal or superset sources) is skipped.
-    as_of anchors AUDIT reads only: writes under as_of are refused loudly."""
+    (validated against SleepTuning.candidate_cap_band — out-of-band asks
+    refuse loudly, never silently clamp) INACTIVE kind="summary" candidates
+    via remember_many — summarizes edges to every source (true by
+    construction: the candidate stands for exactly those records),
+    review_required, sources byte-untouched. Idempotent by sorted source
+    set; a group already covered by an existing candidate (equal or
+    superset sources) is skipped. as_of anchors AUDIT reads only: writes
+    under as_of are refused loudly."""
     if as_of is not None and not report_only:
         raise ValueError(
             "consolidation_pass: as_of anchors an audit read — writing candidates "
             "against a historical anchor would forge the timeline; pass report_only=True"
         )
-    store, journal = system._store, system._journal  # facade internals, same package
-    report = maintenance_report(store, journal, scopes=scopes, as_of=as_of, scan_limit=scan_limit)
-    out: Dict[str, Any] = {"report": report, "created": [], "skipped": [], "created_count": 0}
+    cap = tuning.validated_candidate_cap(max_candidates)
+    store, journal = system.store, system.journal  # public substrate handles
+    report = maintenance_report(
+        store, journal, scopes=scopes, as_of=as_of, scan_limit=scan_limit, tuning=tuning)
+    out: Dict[str, Any] = {
+        "pass_name": "consolidation_pass",
+        "report": report, "created": [], "skipped": [], "created_count": 0,
+    }
     if report_only:
         out["skipped"].append({"reason": "report_only requested"})
         return out
@@ -484,7 +497,6 @@ def consolidation_pass(
     selected = [p for p in report["consolidation_proposals"]
                 if p["signal"] == "duplicate_title" and p["risk"] == "low"
                 and (not wanted or p["id"] in wanted)]
-    cap = max(1, min(6, int(max_candidates)))
     covered_sets = [set(c["source_ids"]) for c in report["existing_candidates"] if c["source_ids"]]
 
     for proposal in selected[:cap]:
@@ -533,79 +545,31 @@ def consolidation_pass(
     return out
 
 
-def last_maintenance_seq(
-    store: Any, journal: Any, *, scopes: Sequence[Tuple[str, str]],
-) -> int:
-    """Journal seq of the newest sleep artifact's formation (dream OR
-    maintenance candidate) — the default "since when" anchor for the cadence
-    predicate. 0 = this home has never slept."""
-    artifact_ids: List[str] = []
-    for scope, owner in scopes:
-        for a in store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=0)):
-            attrs = a.attributes if isinstance(a.attributes, dict) else {}
-            if attrs.get("record_kind") == "dream" or attrs.get("maintenance_candidate"):
-                artifact_ids.append(a.subject)
-    high = 0
-    for rid in sorted(set(artifact_ids)):
-        for binding in journal.bindings(record_id=rid, fold=True):
-            high = max(high, int(binding.seq))
-    return high
-
-
-def maintenance_due(
-    store: Any, journal: Any, *,
-    scopes: Sequence[Tuple[str, str]], since_seq: Optional[int] = None,
-    min_new_records: int = 12, min_signal: int = 3,
-) -> Dict[str, Any]:
-    """Deterministic cadence predicate (fork 770: "enough new nodes +
-    fragmentation"; late-local-time stays the HOST's clock). Due when enough
-    NEW records formed since the last pass, or when SOME new material exists
-    and the standing fragmentation signal (duplicate-title groups + isolated
-    records) clears its floor. A home with zero new formations is never due —
-    the pass would reproduce its own prior output byte-for-byte."""
-    anchor = int(since_seq) if since_seq is not None else last_maintenance_seq(
-        store, journal, scopes=scopes)
-    new_formed = 0
-    for scope, owner in scopes:
-        for binding in journal.bindings(scope=scope, owner_id=owner, fold=False):
-            if int(binding.seq) > anchor and binding.source == "remember":
-                new_formed += 1
-    base = structural_report(store, journal, scopes=scopes)
-    duplicates = len(base.get("duplicates", {}))
-    isolated = len(base.get("isolated", ()))
-    signal = duplicates + isolated
-
-    reasons: List[str] = []
-    if new_formed >= int(min_new_records):
-        reasons.append(f"{new_formed} new records since seq {anchor} (floor {int(min_new_records)})")
-    if new_formed > 0 and signal >= int(min_signal):
-        reasons.append(
-            f"{new_formed} new record(s) with fragmentation signal {signal} >= {int(min_signal)} "
-            f"({duplicates} duplicate-title group(s) + {isolated} isolated)")
-    return {
-        "due": bool(reasons), "reasons": reasons, "since_seq": anchor,
-        "new_records": new_formed, "signal": signal,
-        "duplicate_groups": duplicates, "isolated": isolated,
-    }
-
-
 def sleep_pass(
     system: Any, *,
     scopes: Sequence[Tuple[str, str]], owner_id: str,
     max_candidates: int = 2, salience_floor: int = 2, max_sources: int = 8,
     embedder_similarity_floor: float = 0.35,
     report_only: bool = False, as_of: Optional[int] = None,
-    scan_limit: int = NEAR_DUP_SCAN_LIMIT,
+    scan_limit: Optional[int] = None,
+    tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Dict[str, Any]:
     """One full sleep: phase-1 tending FIRST, then the dream over the tended
     graph — the fork's canonical order, encoded engine-side so the host's
     on_sleep hook wires exactly one call. Both phases idempotent; a quiet
-    night in either phase is a valid night."""
+    night in either phase is a valid night. The result names itself and its
+    phases (self-describing shapes — review: three sleep verbs returned
+    three near-miss dicts and a consumer confused two of them)."""
     maintenance = consolidation_pass(
         system, scopes=scopes, owner_id=owner_id, max_candidates=max_candidates,
-        report_only=report_only, as_of=as_of, scan_limit=scan_limit)
+        report_only=report_only, as_of=as_of, scan_limit=scan_limit, tuning=tuning)
     dream = dream_pass(
         system, scopes=scopes, owner_id=owner_id, salience_floor=salience_floor,
         max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
-        report_only=report_only, as_of=as_of)
-    return {"maintenance": maintenance, "dream": dream}
+        report_only=report_only, as_of=as_of, tuning=tuning)
+    return {
+        "pass_name": "sleep_pass",
+        "phases": ("maintenance", "dream"),
+        "maintenance": maintenance,
+        "dream": dream,
+    }

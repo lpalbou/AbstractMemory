@@ -10,8 +10,9 @@ trace); this module owns the 0019/0020 selection semantics.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Sequence
 
+from .canonical_text import _TITLE_MAX
 from .canonical_text import display_title as _display_title
 from .canonical_text import token_estimate as _token_estimate
 from .channels import CHANNEL_ORDER
@@ -107,12 +108,13 @@ def build_handle(
             cues.append(f"recent: scope {a.scope}/{a.owner_id or ''}")
 
     # v1 record enrichment (records.py): stored title beats the "s p o"
-    # preview (same 120-char bound); payload_ref makes the raw tier reachable.
+    # preview (same _TITLE_MAX bound — imported, since the constant exists
+    # precisely "so the two surfaces can never drift").
     stored_title = attrs.get("title")
     if isinstance(stored_title, str) and stored_title.strip():
         title = stored_title.strip()
-        if len(title) > 120:
-            title = title[:119] + "…"  #[WARNING:TRUNCATION] title preview bounded at 120 chars (digest carries the full text)
+        if len(title) > _TITLE_MAX:
+            title = title[: _TITLE_MAX - 1] + "…"  #[WARNING:TRUNCATION] title preview bounded (digest carries the full text)
     else:
         title = _display_title(a)
     has_raw = isinstance(attrs.get("payload_ref"), str) and attrs["payload_ref"].strip()

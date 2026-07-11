@@ -110,3 +110,22 @@ table + fixed-size vector column need the dimension) — one migration, not two.
 Treat `canonical_text` changes like schema changes: bump the version, keep the
 old renderer callable for verification, and route re-embeds through the
 backfill helper.
+
+## Status addendum: CORE IMPLEMENTED (2026-07-10, consensus plan item 3 — M1/M1b)
+
+The manifest shipped as the **embedding pin** (`embedding_pin.py` — shared
+rules; per-store storage: SQLite `{table}_meta` sidecar / in-object), under
+the 1-gateway-N-runtimes consensus plan: creation-time pinning (birth
+choice, `embedding_pin=` store kwarg + `build_pin` export), first-write
+pinning demoted to the labeled `#FALLBACK` for pre-existing homes,
+model-mismatch refusal at open, dimension-mismatch refusal at write (zero
+rows) and at read (the vector channel labels the degradation — the silent
+min-prefix cosine this item documented is REMOVED). Re-embedding shipped as
+`reembed_home` (M1b): all-or-nothing atomic swap (`replace_vectors`), pin
+updated last, mid-pass-writer count guard, journaled bookkeeping act,
+truth untouched, vectorless rows backfilled. Guards:
+`tests/test_embedding_pin.py`. Deliberately NOT built from this item's
+original sketch: `describe()` probe-embeds (the pin + measured dimensions
+suffice), per-query skip-count reporting (the channel's vectorless
+`#FALLBACK` already labels it), and LanceDB coverage (homes are SQLite;
+LanceDB keeps its own raise-on-mismatch behavior).

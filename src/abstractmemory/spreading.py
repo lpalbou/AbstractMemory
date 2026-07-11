@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import AbstractSet, Any, Dict, List, Mapping, Tuple
 
+from .channels import EXCLUSION_OVERFETCH_CAP
 from .models import TripleAssertion
 from .store import TripleQuery
 
@@ -38,6 +39,12 @@ class SpreadParams:
     damping: float = 0.5       # per-hop multiplier
     max_edges: int = 100       # total accepted-edge budget for the whole walk
     min_contribution: float = 0.05  # noise floor: weaker contributions do not propagate
+    # Trail normalization divisor: a maximally reinforced pair (trail at the
+    # attention ceiling) DOUBLES its edge contribution (1 + trail/divisor).
+    # Must track AttentionConfig.max_activation — the review found the 25.0
+    # inlined here while max_activation was a declared tunable, so raising
+    # the ceiling silently doubled the intended max trail bonus.
+    trail_divisor: float = 25.0
     # predicate -> multiplier; missing predicate = 1.0 (uniform by default,
     # per-edge-kind differentials are a maintainer-pending tuning decision).
     edge_kind_weights: Mapping[str, float] = field(default_factory=dict)
@@ -116,7 +123,7 @@ def _neighbors(
     found: Dict[str, TripleAssertion] = {}
     # +1 leaves room for the source itself showing up in its own term queries;
     # over-fetch bounded headroom so excluded rows cannot shadow eligible ones.
-    per_query_limit = max(1, int(fan_out_cap)) + 1 + min(len(excluded_ids), 256)
+    per_query_limit = max(1, int(fan_out_cap)) + 1 + min(len(excluded_ids), EXCLUSION_OVERFETCH_CAP)
     for term in _expansion_terms(source):
         for q in (
             TripleQuery(subject=term, scope=scope, owner_id=owner_id, limit=per_query_limit),
@@ -254,7 +261,7 @@ def spread_activation(
                 except (TypeError, ValueError):
                     trail = 0.0
                 kind_weight = float(params.edge_kind_weights.get(neighbor.predicate, 1.0))
-                contribution = strength * float(params.damping) * kind_weight * (1.0 + trail / 25.0)
+                contribution = strength * float(params.damping) * kind_weight * (1.0 + trail / float(params.trail_divisor))
                 if contribution < float(params.min_contribution):
                     continue  # below the noise floor: no accumulation, no edge, no propagation
 
@@ -306,7 +313,7 @@ def spread_activation(
                 partner = partner_rows.get(partner_id)
                 if partner is None:
                     continue  # not resolvable in this (scope, owner): skip
-                contribution = strength * float(params.damping) * (1.0 + trail / 25.0)
+                contribution = strength * float(params.damping) * (1.0 + trail / float(params.trail_divisor))
                 if contribution < float(params.min_contribution):
                     continue
                 if len(edges) >= max_edges:

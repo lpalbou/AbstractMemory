@@ -36,7 +36,7 @@ edges).
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 from .canonical_text import handle_digest, token_estimate
 from .records import resolve_digest_assertion
@@ -131,6 +131,17 @@ def _display_block(assertion: Any, requested_id: str) -> Dict[str, Any]:
     }
     if formed:
         block["graph_id"] = assertion.subject
+    # Interaction-correlation key (item-14 render ask, additive like
+    # graph_id): visit_id is the FIRST INSTANCE of the generic convention —
+    # door-minted once, opaque, carried as DATA on each home's own records
+    # so two perspectives of one shared moment correlate without the
+    # streams ever merging (laurent c338: the name stays concrete, the
+    # concept is generic). Diary-redacted blocks never reach here — a
+    # private entry's correlation would leak the act's context, same rule
+    # as formation edges.
+    visit_id = attrs.get("visit_id")
+    if isinstance(visit_id, str) and visit_id.strip():
+        block["visit_id"] = visit_id.strip()
     return block
 
 

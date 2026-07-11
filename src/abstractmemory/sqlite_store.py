@@ -7,6 +7,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
+from .embedding_pin import (
+    annotate_embed_failure,
+    build_pin,
+    check_add_dimension,
+    check_model_compat,
+    check_query_dimension,
+    embedder_model_id,
+    warn_first_write_pin,
+)
 from .embeddings import TextEmbedder
 from .models import TripleAssertion
 from .store import TripleQuery
@@ -53,6 +62,7 @@ class SQLiteTripleStore:
     def __init__(
         self, path: Path, *, table_name: str = "triples",
         embedder: Optional[TextEmbedder] = None,
+        embedding_pin: Optional[dict] = None,
     ) -> None:
         self._path = Path(path).expanduser()
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +77,30 @@ class SQLiteTripleStore:
         self._conn.row_factory = sqlite3.Row
         self._configure_pragmas()
         self._ensure_schema()
+        # EMBEDDING PIN (M1, one store = one embedding space): a supplied
+        # creation pin is persisted on a pinless store and must AGREE with an
+        # existing one; a known embedder identity must agree with the pin.
+        # Both mismatches refuse loudly — no silent mixing of spaces.
+        stored = self.embedding_pin()
+        if embedding_pin is not None:
+            declared = build_pin(
+                embedding_pin.get("model_id"), embedding_pin.get("dimension"),
+                source=str(embedding_pin.get("source") or "creation"),
+                claimed_by=embedding_pin.get("claimed_by"))
+            if stored is None:
+                self._write_pin(declared)
+                stored = declared
+            else:
+                for field in ("model_id", "dimension"):
+                    a, b = stored.get(field), declared.get(field)
+                    if a is not None and b is not None and a != b:
+                        raise ValueError(
+                            f"embedding-space mismatch: store is pinned to "
+                            f"{field}={a!r} but the declared pin says {b!r} — "
+                            "no silent mixing of embedding spaces (reembed is "
+                            "the sanctioned migration)"
+                        )
+        check_model_compat(stored, self._embedder)
 
     def close(self) -> None:
         with self._lock:
@@ -116,6 +150,40 @@ class SQLiteTripleStore:
         columns = {r[1] for r in cur.execute(f"PRAGMA table_info({self._table})").fetchall()}
         if "embedding" not in columns:
             cur.execute(f"ALTER TABLE {self._table} ADD COLUMN embedding TEXT")
+        # Store metadata sidecar (M1): the embedding pin lives IN the same
+        # file — the one-file home invariant covers the space identity too.
+        cur.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._table}_meta "
+            "(key TEXT PRIMARY KEY, value TEXT)"
+        )
+
+    def embedding_pin(self) -> Optional[dict]:
+        """The store's embedding-space pin `{model_id, dimension, source,
+        pinned_at}`, or None (legacy pinless store — first embedded write
+        pins with a labeled #FALLBACK)."""
+        with self._lock:
+            row = self._conn.cursor().execute(
+                f"SELECT value FROM {self._table}_meta WHERE key = 'embedding_pin'"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            pin = json.loads(row["value"])
+        except (TypeError, ValueError):
+            return None
+        return pin if isinstance(pin, dict) else None
+
+    def _write_pin(self, pin: dict, cursor: Optional[sqlite3.Cursor] = None) -> None:
+        payload = json.dumps(pin, ensure_ascii=False, separators=(",", ":"))
+        if cursor is not None:  # caller owns the transaction (atomic swaps)
+            cursor.execute(
+                f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
+                "VALUES ('embedding_pin', ?)", (payload,))
+            return
+        with self._lock:
+            self._conn.cursor().execute(
+                f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
+                "VALUES ('embedding_pin', ?)", (payload,))
 
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
         pending: List[TripleAssertion] = [a for a in assertions]
@@ -131,6 +199,26 @@ class SQLiteTripleStore:
             if embeddable:
                 embedded = self._embedder.embed_texts([t for _, t in embeddable])
                 vectors = {i: v for (i, _), v in zip(embeddable, embedded)}
+                # M1 write guard: dimension must agree with the pin (abort =
+                # zero rows). Pinless legacy stores pin here, loudly; a
+                # creation pin missing only its dimension gets it filled.
+                pin = self.embedding_pin()
+                dim = check_add_dimension(pin, vectors.values())
+                if dim is not None:
+                    if pin is None:
+                        # claimed_by: the label is read off the embedder
+                        # object, never verified against the serving
+                        # endpoint — consumers must treat it as a CLAIM
+                        # (2026-07-11: a first-write pin recorded a label
+                        # the server never recognized).
+                        pin = build_pin(embedder_model_id(self._embedder), dim,
+                                        source="first-write",
+                                        claimed_by="embedder-attribute")
+                        warn_first_write_pin(pin)
+                        self._write_pin(pin)
+                    elif pin.get("dimension") is None:
+                        pin = dict(pin, dimension=dim)
+                        self._write_pin(pin)
 
         ids: List[str] = []
         rows: List[tuple] = []
@@ -196,7 +284,20 @@ class SQLiteTripleStore:
         elif q.query_text:
             if self._embedder is None:
                 raise ValueError("query_text requires a configured embedder (vector search); keyword fallback is disabled")
-            query_vector = [float(x) for x in self._embedder.embed_texts([q.query_text])[0]]
+            try:
+                query_vector = [float(x) for x in self._embedder.embed_texts([q.query_text])[0]]
+            except (ValueError, RuntimeError) as e:
+                # Surface claimed-vs-served in ONE line (2026-07-11): the
+                # server error names the REQUESTED model; append the store's
+                # pinned identity so the operator sees the mismatch here.
+                annotated = annotate_embed_failure(e, self.embedding_pin())
+                if annotated is None:
+                    raise
+                raise annotated from e
+        # M1 read guard: a wrong-space query vector refuses loudly here; the
+        # vector CHANNEL converts this into its labeled #FALLBACK, so recall
+        # degrades to exact/keyword instead of serving cross-space cosine.
+        check_query_dimension(self.embedding_pin(), query_vector)
 
         raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
         limit: Optional[int]
@@ -280,6 +381,45 @@ class SQLiteTripleStore:
             rows = self._conn.cursor().execute(sql, params).fetchall()
         return [self._row_to_assertion(r) for r in rows]
 
+    def replace_vectors(
+        self, vectors: dict, pin: dict, *,
+        expected_row_count: int, embedder: Optional[TextEmbedder] = None,
+    ) -> int:
+        """ATOMIC embedding-space swap (M1b reembed): in ONE transaction,
+        verify the store did not change under the pass (expected_row_count —
+        the lease-violation guard), rewrite EVERY row's vector (rows absent
+        from `vectors` become NULL — edge rows and unembeddable rows), and
+        write the new pin LAST inside the same transaction. Readers serve
+        the OLD space consistently until the commit — never a mixed space.
+        The live embedder swaps with the pin so subsequent adds embed into
+        the new space. Returns the number of vectored rows."""
+        payload = {str(k): json.dumps([float(x) for x in v], separators=(",", ":"))
+                   for k, v in vectors.items() if v is not None}
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                [(count,)] = cur.execute(f"SELECT COUNT(*) FROM {self._table}").fetchall()
+                if int(count) != int(expected_row_count):
+                    raise RuntimeError(
+                        f"reembed swap refused: store changed mid-pass "
+                        f"({count} rows now, {expected_row_count} at scan) — "
+                        "the caller's exclusive-writer guarantee did not hold (another writer touched the store); nothing was written"
+                    )
+                cur.execute(f"UPDATE {self._table} SET embedding = NULL")
+                cur.executemany(
+                    f"UPDATE {self._table} SET embedding = ? WHERE assertion_id = ?",
+                    [(vec, rid) for rid, vec in sorted(payload.items())],
+                )
+                self._write_pin(pin, cursor=cur)
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+            if embedder is not None:
+                self._embedder = embedder
+        return len(payload)
+
     def stored_vector(self, assertion_id: str) -> Optional[List[float]]:
         """The persisted embedding for one row, or None (vectorless /
         unknown). Read surface for consolidation's vector bridge signal —
@@ -328,3 +468,49 @@ class SQLiteTripleStore:
             attributes=dict(attrs) if isinstance(attrs, dict) else {},
             assertion_id=str(r["assertion_id"] or "").strip() or None,
         )
+
+
+def read_embedding_pin(path: Any, *, table_name: str = "triples") -> Optional[dict]:
+    """PURE PEEK at a store file's embedding pin — the resolution read of the
+    entity-embedding-config contract (maintainer ruling 2026-07-11: the home's
+    declaration overrides every ambient default).
+
+    Doors must decide WHICH embedder to construct FROM the store's own
+    declaration BEFORE opening the store with it — but opening a store just
+    to read the pin MUTATES the file (schema ensure + WAL flip), and a
+    "read the declaration" step must be a pure read. This helper is that
+    read: read-only sqlite connection (mode=ro URI), tolerant of everything
+    (missing file / missing meta table / missing row / malformed JSON ->
+    None, exactly matching embedding_pin()'s tolerance), and guaranteed
+    non-mutating — it can never create the file or the table.
+
+    None means "no declaration" — for entity homes the DOOR turns that into
+    a loud refusal (legacy home: run the reembed migration once); the engine
+    stays entity-blind (non-entity stores keep the labeled first-write
+    fallback). InMemoryTripleStore needs no twin: an object in hand already
+    answers embedding_pin() — this is a path-vs-object difference, not a
+    parity gap.
+    """
+    file_path = Path(path).expanduser()
+    if not file_path.is_file():
+        return None
+    table = str(table_name or "triples").strip() or "triples"
+    try:
+        conn = sqlite3.connect(f"file:{file_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        row = conn.execute(
+            f"SELECT value FROM {table}_meta WHERE key = 'embedding_pin'"
+        ).fetchone()
+    except sqlite3.Error:
+        return None  # no meta table (pre-M1 store) or not a store file
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    try:
+        pin = json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
+    return pin if isinstance(pin, dict) else None

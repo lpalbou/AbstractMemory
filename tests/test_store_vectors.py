@@ -179,8 +179,11 @@ def test_sqlite_in_place_upgrade_of_pre_vector_home(tmp_path: Path) -> None:
 
 def test_scoring_parity_between_stores(tmp_path: Path) -> None:
     """The two stores rank identical data identically (shared
-    vector_scoring module — including the defensive min-prefix overlap on
-    dimension-mismatched vectors, the InMemory reference behavior)."""
+    vector_scoring module) — and REFUSE identically: a dimension-mismatched
+    query vector raises on both (M1 pin guard; the pre-pin behavior was the
+    silent min-prefix overlap 0014 documented as confident garbage)."""
+    import pytest
+
     emb_a, emb_b = TopicEmbedder(), TopicEmbedder()
     mem = InMemoryTripleStore(embedder=emb_a)
     lite = SQLiteTripleStore(tmp_path / "kg.sqlite3", embedder=emb_b)
@@ -193,7 +196,7 @@ def test_scoring_parity_between_stores(tmp_path: Path) -> None:
     lite.add(list(data))
     for q in (
         TripleQuery(query_text="museum", scope=SCOPE, limit=10),
-        TripleQuery(query_vector=(0.5, 0.5, 0.0, 0.9), scope=SCOPE, limit=10),  # dim mismatch: prefix overlap
+        TripleQuery(query_vector=(0.5, 0.5, 0.0), scope=SCOPE, limit=10),  # pinned dim (3)
         TripleQuery(query_text="museum", scope=SCOPE, min_score=0.5, limit=10),
     ):
         mem_hits = [(h.assertion_id, round(h.attributes["_retrieval"]["score"], 9))
@@ -201,4 +204,9 @@ def test_scoring_parity_between_stores(tmp_path: Path) -> None:
         lite_hits = [(h.assertion_id, round(h.attributes["_retrieval"]["score"], 9))
                      for h in lite.query(q)]
         assert mem_hits == lite_hits
+    # Dimension-mismatch parity: both stores refuse loudly, same contract.
+    mismatched = TripleQuery(query_vector=(0.5, 0.5, 0.0, 0.9), scope=SCOPE, limit=10)
+    for store in (mem, lite):
+        with pytest.raises(ValueError, match="no silent mixing"):
+            store.query(mismatched)
     lite.close()

@@ -170,7 +170,7 @@ Id namespaces: every id-taking call (`commit_selection`, `reinforce`, `attenuate
 
 Record kinds: `memory`, `episode`, `lesson`, `instruction`, `decision`, `claim`, `summary` (requires at least one edge naming what it summarizes), `question`, `answer`, `plan`, the identity kinds `value` (requires `attributes.value_class` ∈ {core, revisable}), `purpose`, `trait`, `diary`, `interest`, and the sleep artifact `dream`. Kind ranks order identity first (value < purpose < trait) and derived artifacts as summary peers.
 
-Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-projection`, `entity-direct`}; `diary_type` ∈ {note, idea, commitment, reflection, question, problem} (absent defaults to `note`; unknown values raise); projections must carry `attributes.entry_id`; resolution references ride `attributes.answers` (questions) and `attributes.resolves` (problems).
+Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-projection`, `owner-direct`}; `diary_type` ∈ {note, idea, commitment, reflection, question, problem} (absent defaults to `note`; unknown values raise); projections must carry `attributes.entry_id`; resolution references ride `attributes.answers` (questions) and `attributes.resolves` (problems).
 
 ### Bindings and closures
 
@@ -204,7 +204,7 @@ Targets are anything nameable — records, people, tools, ideas, places, moments
 - `open_problems(...)` (same signature) — unresolved `diary_type="problem"` entries (`attributes.resolves`).
 - `open_ideas(...)` (same signature) — incubating `diary_type="idea"` entries; with a journal, the folded binding lifecycle decides (inactive_candidate/reviewed incubate; rejected and promoted leave the open set).
 - Pass the `journal` to apply closure/hidden folds; without it these are layer-1 store reads. All three return rows oldest-first; resolved entries stay retrievable as ordinary records.
-- `verify_diary_chain(store, *, scope, owner_id) -> {"intact", "break_at", "entries"}` — audits the content-hash chain of entity-direct entries (`prev_entry_hash`/`entry_hash`); entries that make no chain claim fail nothing.
+- `verify_diary_chain(store, *, scope, owner_id) -> {"intact", "break_at", "entries"}` — audits the content-hash chain of owner-direct entries (`prev_entry_hash`/`entry_hash`); entries that make no chain claim fail nothing.
 - `diary_entry_hash(title, digest, observed_at) -> str` — the chain's content hash (sha256).
 
 ### Consolidation (sleep and dreams)

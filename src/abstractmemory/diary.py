@@ -5,7 +5,7 @@ the definition home; records.py re-exports the chain helpers for
 compatibility): everything the engine owns about kind="diary" records
 beyond formation validation. The dual-plane split (a2a 0003) stands: the
 runtime's BOOK is the attested original; these records are the MEMORY of
-the book (or entity-direct entries where no book exists).
+the book (or owner-direct entries where no book exists).
 
 QUESTIONS AS AUTONOMY DRIVERS (maintainer round 4): "all the unanswered
 questions... and also the resolved questions; those are also drivers for
@@ -49,7 +49,7 @@ def verify_diary_chain(store: Any, *, scope: str, owner_id: str) -> Dict[str, An
 
     SCOPE OF THE CONVENTION (dual-plane split, a2a 0003): the
     entry_hash/prev_entry_hash chain applies ONLY when the WRITER supplies
-    prev_entry_hash — i.e. entity-direct writes where no book exists.
+    prev_entry_hash — i.e. owner-direct writes where no book exists.
     Book PROJECTIONS deliberately do NOT chain here: their attestation
     plane is the runtime's HashChainedLedgerStore, referenced via
     attributes.entry_id (a second, weaker chain over gists would invite

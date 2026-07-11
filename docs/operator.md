@@ -83,7 +83,7 @@ One stream, six families: `event` (attention: what got selected, what got reinfo
 
 ## 6. Verify integrity
 
-**Diary chain** (graph plane): entity-direct diary entries carry a content-hash chain; a tampered or truncated chain fails loudly, naming the first broken entry:
+**Diary chain** (graph plane): owner-direct diary entries carry a content-hash chain; a tampered or truncated chain fails loudly, naming the first broken entry:
 
 ```python
 from abstractmemory import verify_diary_chain
@@ -102,11 +102,35 @@ snapshots = journal.snapshots(limit=10)    # what entered contexts
 
 **Spark attestation** is host-side (`manifest.json` records the spark hash; `spark.yaml` is byte-verbatim).
 
+## 6b. The embedding space (pin, mismatches, repair)
+
+Every home store is ONE embedding space, declared by a pin (`{model_id, dimension, source, pinned_at}`) written at creation — the embedder is a birth choice:
+
+```python
+store = SQLiteTripleStore(home / "memory.sqlite3", embedder=embedder,
+                          embedding_pin={"model_id": "text-embedding-qwen3-embedding-0.6b",
+                                         "dimension": 1024})
+store.embedding_pin()   # read it back
+```
+
+No silent mixing of spaces: opening with a different known model refuses; a wrong-dimension write refuses with zero rows; a wrong-dimension query refuses at read and recall degrades loudly to exact/keyword (`#FALLBACK` on the vector channel). Homes created before pinning (Castor's) take the FIRST-WRITE path — pinned at their next embedded write from what actually embedded, with a labeled `#FALLBACK` warning naming it (ruled by the door's owner: the door pins only what it knows; a creation-source pin written years after birth would claim a fact nobody attested — the label is the home's history, not a blemish). First-write pins additionally record `claimed_by: "embedder-attribute"` — the model label was read off the embedder object, not asserted by an operator, and the engine cannot verify a label against the serving endpoint (2026-07-11 incident: a first-write pin captured a label the server never recognized). Pinning such a home deliberately remains one operator act: pass `embedding_pin=` on the pinless store and it writes as a creation-source pin from that moment on. When an embed call fails at query time, the error names the pin (`[store pin: <model>@<dim>d (...)]`) so claimed-vs-served is one line.
+
+Changing the embedder is a deliberate, operator-gated repair — never routine:
+
+```python
+from abstractmemory import reembed_store
+report = reembed_store(system, embedder=new_embedder, owner_id=eid)
+# {'rows': n, 'vectored': m, 'old_pin': ..., 'new_pin': ..., 'marker_record_id': ...}
+```
+
+Vectors are derived data: the pass re-embeds every stored text, swaps atomically (pin last), backfills vectorless rows, and journals the act as a bookkeeping record — the life stream shows exactly when retrieval geometry changed. Memories, history, counts, and feelings are untouched; retrieval *neighbors* may shift (same memories, different neighbors — a substrate effect, on the record). Run it over a closed home under the maintenance lease. A runnable demonstration of all of this is `examples/entity_home_maintenance_proof.py` (nine numbered proofs; `--live` uses LMStudio).
+
 ## 7. What the engine will never do
 
 - **Delete**: there is no delete surface. Forgetting is decay of retrieval strength + closure records + silencing — the substrate is lossless.
 - **Compact**: no rewriting, no summarizing-in-place. Degradation through compaction cannot originate here.
 - **Strengthen on read**: your inspection deposits nothing. Only the entity's own committed use moves its trails.
+- **Mix embedding spaces**: the pin refuses wrong-space writes and reads; the only space change is the journaled reembed repair.
 
 ## Budget guidance (entity sessions)
 

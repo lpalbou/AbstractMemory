@@ -104,23 +104,23 @@ def test_diary_projection_attribute_schema() -> None:
     with pytest.raises(ValueError, match="non-empty string"):
         MemoryRecordInput(kind="diary", title="t", digest="d",
                           attributes={"entry_id": "  "},
-                          provenance={"source": "entity-direct"})
+                          provenance={"source": "owner-direct"})
     # Entity-direct diary records stay free of the entry_id requirement.
     loose = MemoryRecordInput(kind="diary", title="t", digest="A loose note, kept simple.",
-                              provenance={"source": "entity-direct"})
+                              provenance={"source": "owner-direct"})
     assert "entry_id" not in loose.attributes
 
 
 def test_diary_form_gate_requires_declared_source() -> None:
     """D4 (one-writer guarantee, memory-side half): kind='diary' is accepted
     ONLY from a declared write channel — 'diary-projection' (the runtime's
-    book) or 'entity-direct' (entity-authored home writes; WHO may use it
+    book) or 'owner-direct' (entity-authored home writes; WHO may use it
     is the gateway deposit gate's job — the engine enforces THAT a source
     is declared)."""
     for bad_provenance in ({}, {"source": "turn-summarizer"}, {"source": ""}):
-        with pytest.raises(ValueError, match="diary-projection.*entity-direct"):
+        with pytest.raises(ValueError, match="diary-projection.*owner-direct"):
             MemoryRecordInput(kind="diary", title="t", digest="d", provenance=bad_provenance)
-    for good in ("diary-projection", "entity-direct"):
+    for good in ("diary-projection", "owner-direct"):
         rec = MemoryRecordInput(
             kind="diary", title="t", digest="d",
             attributes=({"entry_id": "e-1"} if good == "diary-projection" else {}),
@@ -132,13 +132,13 @@ def test_diary_type_absent_defaults_present_unknown_is_loud() -> None:
     """Ask 2: absent diary_type -> documented default 'note'; present-but-
     unknown -> LOUD (the old code silently re-defaulted falsy unknowns)."""
     absent = MemoryRecordInput(kind="diary", title="t", digest="d",
-                               provenance={"source": "entity-direct"})
+                               provenance={"source": "owner-direct"})
     assert absent.attributes["diary_type"] == "note"
     for bad in ("confession", "", "  "):
         with pytest.raises(ValueError, match="diary_type must be one of"):
             MemoryRecordInput(kind="diary", title="t", digest="d",
                               attributes={"diary_type": bad},
-                              provenance={"source": "entity-direct"})
+                              provenance={"source": "owner-direct"})
 
 
 def test_diary_questions_lifecycle(system, stack) -> None:
@@ -152,13 +152,13 @@ def test_diary_questions_lifecycle(system, stack) -> None:
         [MemoryRecordInput(kind="diary", title="Why does the pool saturate at noon?",
                            digest="Wondering why the connection pool saturates at noon.",
                            attributes={"diary_type": "question"},
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope="session", owner_id="s1", idempotency_key="q-1")
     [q2] = system.remember_many(
         [MemoryRecordInput(kind="diary", title="What is Chloé's recital piece?",
                            digest="I should ask which piece Chloé is playing.",
                            attributes={"diary_type": "question"},
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope="session", owner_id="s1", idempotency_key="q-2")
 
     listed = open_questions(store, scope="session", owner_id="s1")
@@ -169,7 +169,7 @@ def test_diary_questions_lifecycle(system, stack) -> None:
         [MemoryRecordInput(kind="diary", title="Noon saturation solved",
                            digest="The noon cron fans out unpooled; batching fixed it.",
                            attributes={"diary_type": "reflection", "answers": q1},
-                           provenance={"source": "entity-direct"})],
+                           provenance={"source": "owner-direct"})],
         scope="session", owner_id="s1", idempotency_key="q-1-answer")
 
     after = open_questions(store, scope="session", owner_id="s1")
@@ -188,7 +188,7 @@ def test_diary_questions_lifecycle(system, stack) -> None:
     with pytest.raises(ValueError, match="answers"):
         MemoryRecordInput(kind="diary", title="t", digest="d",
                           attributes={"answers": "  "},
-                          provenance={"source": "entity-direct"})
+                          provenance={"source": "owner-direct"})
 
 
 def test_open_problems_lifecycle(system, stack) -> None:
@@ -199,7 +199,7 @@ def test_open_problems_lifecycle(system, stack) -> None:
     from abstractmemory.diary import open_problems, open_questions
     from abstractmemory.store import TripleQuery
     store, journal = stack
-    direct = {"source": "entity-direct"}
+    direct = {"source": "owner-direct"}
     [p1] = system.remember_many(
         [MemoryRecordInput(kind="diary", title="Pool saturates at noon",
                            digest="The connection pool saturates every noon; queries stall.",
@@ -249,7 +249,7 @@ def test_open_ideas_incubation_lifecycle(system, stack) -> None:
         [gid] = system.remember_many(
             [MemoryRecordInput(kind="diary", title=title, digest=f"Idea: {title.lower()}.",
                                attributes={"diary_type": "idea"},
-                               provenance={"source": "entity-direct"})],
+                               provenance={"source": "owner-direct"})],
             scope="session", owner_id="s1", idempotency_key=key)
         ids[key] = gid
 

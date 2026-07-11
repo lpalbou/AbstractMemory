@@ -27,8 +27,10 @@ from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Se
 
 from .canonical_text import handle_digest
 from .canonical_text import token_estimate as _token_estimate
+from .attention import AttentionConfig, ranking_boost
 from .channels import (
     CHANNEL_ORDER,
+    EXCLUSION_OVERFETCH_CAP,
     ChannelResult,
     run_exact_channel,
     run_keyword_channel,
@@ -64,10 +66,15 @@ _EMPTY_BINDINGS: Mapping[Tuple[str, str, str], str] = MappingProxyType({})
 
 
 def default_ranking_boost(base_level: float) -> float:
-    """Fork-derived activation boost: min(4a, 120), capped so runaway base
-    activation cannot dominate forever. Negative base (silenced) attenuates
-    (min picks 4a when a < 0). Relevance admits, activation reorders (0018)."""
-    return min(4.0 * float(base_level), 120.0)
+    """Fork-derived activation boost for DIRECT `run_reconstruction` callers
+    (the facade injects its own config-driven boost — system.py). Delegates
+    to attention.ranking_boost with default config so the formula has ONE
+    owner: min(boost_scale·a, max_boost) = min(4a, 120) at defaults. Negative
+    base (silenced) attenuates. Relevance admits, activation reorders (0018).
+    Invariant worth naming: max_boost/1000 (shelf.py's relevance scale) is
+    the "activation boost ≤ 12% of a direct hit" seam contract — tune
+    AttentionConfig.max_boost with that ratio in view."""
+    return ranking_boost(float(base_level), config=AttentionConfig())
 
 
 def _query_fingerprint(stimulus: Stimulus) -> str:
@@ -186,7 +193,7 @@ def run_reconstruction(
         # Exclusion-aware over-fetch (audit f2): closed/hidden rows would
         # otherwise burn the whole window and shadow eligible older rows.
         cap = int(budget.max_candidates)
-        fetch_limit = cap + min(len(excluded_ids), 256)
+        fetch_limit = cap + min(len(excluded_ids), EXCLUSION_OVERFETCH_CAP)
         for scope, owner in scope_pairs:
             kept = 0
             for a in store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=fetch_limit)):

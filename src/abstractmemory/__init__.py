@@ -20,10 +20,13 @@ from .consolidation import (
     structural_report,
     unresolved_dreams,
 )
+from .embedding_pin import build_pin, pin_note
 from .embeddings import AbstractGatewayTextEmbedder, TextEmbedder
 from .embeddings_openai_compat import OpenAICompatTextEmbedder
+# reembed_home is the migration shim (dies before release — sign-off row).
+from .reembed import reembed_home, reembed_store
 from .engram import EngramResult, engram
-from .entity_card import entity_card
+from .entity_card import entity_card, identity_card
 from .gradation import GradationConfig, GradationScore, compute_gradation
 from .in_memory_store import InMemoryTripleStore
 from .journal import (
@@ -45,9 +48,22 @@ from .maintenance import (
     maintenance_report,
     sleep_pass,
 )
+from .records import ReconstructConfig
+from .sleep_policy import SleepTuning
 from .diary import open_ideas, open_problems, open_questions
 from .models import TripleAssertion
-from .records import MemoryRecordInput, diary_entry_hash, verify_diary_chain
+# The closed sets are ROOT-EXPORTED as the one shared source: consumers
+# (runtime's diary_type clamp, kind-aware renderers) IMPORT them instead of
+# copying — the 2026-07-06 clamp-drift class ("problem" silently projected
+# as "note") dies by import, not by a registry third copy (c297 answer).
+from .records import (
+    DIARY_TYPES,
+    KIND_RANKS,
+    MEMORY_RECORD_KINDS,
+    MemoryRecordInput,
+    diary_entry_hash,
+    verify_diary_chain,
+)
 from .replay import export_replay
 from .spark import (
     DEFAULT_SPARK_TEMPLATE,
@@ -66,7 +82,7 @@ from .seam import (
     entity_recall_budget,
 )
 from .spreading import SpreadParams
-from .sqlite_store import SQLiteTripleStore
+from .sqlite_store import SQLiteTripleStore, read_embedding_pin
 from .store import TripleQuery, TripleStore
 from .system import MemorySystem
 
@@ -79,13 +95,16 @@ __all__ = [
     "CONTEXT_RELATIONS",
     "ClosureRecord",
     "DEFAULT_SPARK_TEMPLATE",
+    "DIARY_TYPES",
     "ENTITY_CONTEXT_FLOOR",
     "EngramResult",
     "GradationConfig",
     "GradationScore",
     "InMemoryJournal",
     "InMemoryTripleStore",
+    "KIND_RANKS",
     "LanceDBTripleStore",
+    "MEMORY_RECORD_KINDS",
     "MemoryEvent",
     "MemoryHandle",
     "MemoryJournal",
@@ -93,6 +112,7 @@ __all__ = [
     "MemorySystem",
     "OpenAICompatTextEmbedder",
     "RecallBudget",
+    "ReconstructConfig",
     "ReconstructionResult",
     "ReconstructionTrace",
     "SELF_FRACTION_FLOOR",
@@ -100,6 +120,7 @@ __all__ = [
     "SQLiteJournal",
     "SQLiteTripleStore",
     "ScopeBinding",
+    "SleepTuning",
     "SpreadParams",
     "Stimulus",
     "TextEmbedder",
@@ -107,6 +128,7 @@ __all__ = [
     "TripleQuery",
     "TripleStore",
     "ValenceEvent",
+    "build_pin",
     "canonical_spark_hash",
     "canonical_text",
     "compute_gradation",
@@ -118,6 +140,7 @@ __all__ = [
     "entity_recall_budget",
     "export_replay",
     "fold_bindings",
+    "identity_card",
     "last_maintenance_seq",
     "lint_spark",
     "maintenance_due",
@@ -125,6 +148,9 @@ __all__ = [
     "open_ideas",
     "open_problems",
     "open_questions",
+    "read_embedding_pin",
+    "reembed_home",
+    "reembed_store",
     "sleep_pass",
     "structural_report",
     "token_estimate",

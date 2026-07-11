@@ -4,6 +4,15 @@ import threading
 import uuid
 from typing import Any, Iterable, List, Optional, Sequence
 
+from .embedding_pin import (
+    annotate_embed_failure,
+    build_pin,
+    check_add_dimension,
+    check_model_compat,
+    check_query_dimension,
+    embedder_model_id,
+    warn_first_write_pin,
+)
 from .embeddings import TextEmbedder
 from .models import TripleAssertion, normalize_term
 from .store import TripleQuery
@@ -54,12 +63,53 @@ class InMemoryTripleStore:
         *,
         embedder: Optional[TextEmbedder] = None,
         vector_column: str = "vector",
+        embedding_pin: Optional[dict] = None,
     ) -> None:
         self._embedder = embedder
         self._vector_column = str(vector_column or "vector")
         self._rows: list[dict[str, Any]] = []
         self._ids: set[str] = set()
         self._lock = threading.RLock()
+        # EMBEDDING PIN (M1) — SQLite parity, in-object storage.
+        self._embedding_pin: Optional[dict] = None
+        if embedding_pin is not None:
+            self._embedding_pin = build_pin(
+                embedding_pin.get("model_id"), embedding_pin.get("dimension"),
+                source=str(embedding_pin.get("source") or "creation"),
+                claimed_by=embedding_pin.get("claimed_by"))
+        check_model_compat(self._embedding_pin, self._embedder)
+
+    def embedding_pin(self) -> Optional[dict]:
+        """The store's embedding-space pin, or None (pinless — first
+        embedded write pins with a labeled #FALLBACK). SQLite parity."""
+        with self._lock:
+            return dict(self._embedding_pin) if self._embedding_pin else None
+
+    def replace_vectors(
+        self, vectors: dict, pin: dict, *,
+        expected_row_count: int, embedder: Optional[TextEmbedder] = None,
+    ) -> int:
+        """ATOMIC embedding-space swap (M1b reembed) — SQLite parity: count
+        guard (lease violation refuses, nothing changes), every row's vector
+        rewritten (absent = vectorless), pin last, live embedder swapped."""
+        clean = {str(k): [float(x) for x in v] for k, v in vectors.items() if v is not None}
+        with self._lock:
+            if len(self._rows) != int(expected_row_count):
+                raise RuntimeError(
+                    f"reembed swap refused: store changed mid-pass "
+                    f"({len(self._rows)} rows now, {expected_row_count} at scan) — "
+                    "the caller's exclusive-writer guarantee did not hold (another writer touched the store); nothing was written"
+                )
+            for row in self._rows:
+                vector = clean.get(str(row.get("assertion_id")))
+                if vector is None:
+                    row.pop(self._vector_column, None)
+                else:
+                    row[self._vector_column] = vector
+            self._embedding_pin = dict(pin)
+            if embedder is not None:
+                self._embedder = embedder
+        return len(clean)
 
     def close(self) -> None:
         return None
@@ -90,6 +140,21 @@ class InMemoryTripleStore:
             if embeddable:
                 embedded = self._embedder.embed_texts([t for _, t in embeddable])
                 vectors = {i: v for (i, _), v in zip(embeddable, embedded)}
+                # M1 write guard (SQLite parity): dimension must agree with
+                # the pin; pinless stores pin here, loudly.
+                with self._lock:
+                    dim = check_add_dimension(self._embedding_pin, vectors.values())
+                    if dim is not None:
+                        if self._embedding_pin is None:
+                            # claimed_by: unverified embedder-attribute
+                            # label (SQLite parity — see sqlite_store.add).
+                            pin = build_pin(embedder_model_id(self._embedder), dim,
+                                            source="first-write",
+                                            claimed_by="embedder-attribute")
+                            warn_first_write_pin(pin)
+                            self._embedding_pin = pin
+                        elif self._embedding_pin.get("dimension") is None:
+                            self._embedding_pin = dict(self._embedding_pin, dimension=dim)
 
         ids: list[str] = []
         with self._lock:
@@ -154,7 +219,18 @@ class InMemoryTripleStore:
         elif q.query_text:
             if self._embedder is None:
                 raise ValueError("query_text requires a configured embedder (vector search); keyword fallback is disabled")
-            query_vector = self._embedder.embed_texts([q.query_text])[0]
+            try:
+                query_vector = self._embedder.embed_texts([q.query_text])[0]
+            except (ValueError, RuntimeError) as e:
+                # Claimed-vs-served in one line (SQLite parity — see
+                # sqlite_store.query).
+                annotated = annotate_embed_failure(e, self.embedding_pin())
+                if annotated is None:
+                    raise
+                raise annotated from e
+        # M1 read guard (SQLite parity): wrong-space query vectors refuse
+        # loudly; the vector channel labels the degradation.
+        check_query_dimension(self.embedding_pin(), query_vector)
 
         if query_vector is not None:
             column = q.vector_column or self._vector_column

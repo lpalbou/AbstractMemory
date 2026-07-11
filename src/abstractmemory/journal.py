@@ -21,7 +21,8 @@ from __future__ import annotations
 import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Protocol, Sequence, Tuple
+from types import MappingProxyType
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 
 def utc_now_iso() -> str:
@@ -37,12 +38,16 @@ AUDIT_KINDS = frozenset({"listed", "shown", "expanded", "cited"})
 ALL_EVENT_KINDS = ATTENTION_KINDS | DECAY_MARKER_KINDS | AUDIT_KINDS
 
 # Default weights per kind (config can override pin strength only).
-DEFAULT_WEIGHTS: Dict[str, float] = {
+# Read-only mapping (review nit): a mutable public module dict meant one
+# stray `DEFAULT_WEIGHTS[...] = x` anywhere changed WRITE-TIME weights
+# globally — and weights live on events so scoring reproduces what was
+# journaled (attention.py), making that a silent history fork.
+DEFAULT_WEIGHTS: Mapping[str, float] = MappingProxyType({
     "selected": 8.0,
     "co_selected": 4.0,
     "pinned": 8.0,
     "silenced": 8.0,  # applied with negative sign at scoring time
-}
+})
 
 
 def _jsonify(value: Any) -> Any:

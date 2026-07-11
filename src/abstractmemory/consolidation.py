@@ -58,7 +58,9 @@ import json
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .records import MemoryRecordInput
+from .sleep_policy import DEFAULT_SLEEP_TUNING, SleepTuning
 from .store import TripleQuery
+from .text_tokens import facet_tokens, title_key
 from .vector_scoring import cosine
 
 __all__ = [
@@ -69,8 +71,9 @@ __all__ = [
     "unresolved_dreams",
 ]
 
-_FACET_MIN_LEN = 3
-_LIST_BOUND = 12  # proposals/questions stored on the dream (bounded lists)
+# Sleep-lane policy numbers live in sleep_policy.SleepTuning (one source —
+# maintenance.py used to carry a same-name _LIST_BOUND copy).
+_LIST_BOUND = DEFAULT_SLEEP_TUNING.list_bound  # proposals/questions stored on the dream
 
 # --- Predicate policy (URGENT correction, 2026-07-07) -----------------------
 # Formation stores each edge's relation name as the record_edge assertion's
@@ -110,16 +113,13 @@ CONTEXT_RELATIONS = frozenset({"written_amid", "mentions"})
 
 def _facets_of(attrs: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
     """(lexical facets, participants) for one record: keyword/intent/outcome
-    tokens (lowercase, len>2) + participants kept whole (namespaced ids)."""
+    tokens (text_tokens.facet_tokens — the declared any-script variant) +
+    participants kept whole (namespaced ids)."""
     lexical: Set[str] = set()
     for field in ("keywords", "intents", "outcomes"):
         values = attrs.get(field)
         if isinstance(values, (list, tuple)):
-            for value in values:
-                for token in str(value).lower().replace(",", " ").split():
-                    token = token.strip(".;:!?()[]\"'")
-                    if len(token) >= _FACET_MIN_LEN:
-                        lexical.add(token)
+            lexical |= facet_tokens(values, min_len=DEFAULT_SLEEP_TUNING.facet_min_len)
     participants: Set[str] = set()
     raw = attrs.get("participants")
     if isinstance(raw, (list, tuple)):
@@ -237,7 +237,12 @@ def structural_report(
     isolated = sorted(rid for rid in records if not adjacency[rid])
     titles: Dict[str, List[str]] = {}
     for rid in sorted(records):
-        normalized = records[rid]["title"].casefold().strip()
+        # ONE duplicate-title identity across the whole sleep lane
+        # (text_tokens.title_key): this used whole-title casefold while
+        # maintenance used token normalization — one report, two duplicate
+        # definitions (review find). Punctuation/spacing/accents never make
+        # two titles "different" now.
+        normalized = title_key(records[rid]["title"])
         if normalized:
             titles.setdefault(normalized, []).append(rid)
     duplicates = {t: ids for t, ids in sorted(titles.items()) if len(ids) > 1}
@@ -355,20 +360,24 @@ def dream_pass(
     salience_floor: int = 2, max_sources: int = 8,
     embedder_similarity_floor: float = 0.35,
     report_only: bool = False, as_of: Optional[int] = None,
+    tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Dict[str, Any]:
     """One sleep pass: structural report → bridge proposals → at most ONE
     dream record (kind="dream", via remember_many — idempotent by report
     fingerprint, so re-running on the same graph state forms nothing new).
     A quiet night (salience < floor, or fewer than 2 distinct sources) is a
     VALID night: no record, and the report says why. The dream lands in the
-    FIRST scope pair (the home scope) under owner_id. Salience and the
-    one-per-pass shape are declared tunables (fork parity)."""
-    store, journal = system._store, system._journal  # facade internals, same package
+    FIRST scope pair (the home scope) under owner_id. Salience weights, the
+    floor, and the one-per-pass shape are declared tunables (SleepTuning;
+    fork parity at defaults — the fork inlines the same weights)."""
+    store, journal = system.store, system.journal  # public substrate handles
     report = structural_report(store, journal, scopes=scopes, as_of=as_of)
     proposals, questions, vectorless_pairs, trail_associated, context_associated = _bridges(
         report, store, embedder_similarity_floor)
 
-    salience = 3 * len(proposals) + 2 * len(questions) + len(report["underlinked_facets"])
+    salience = (tuning.salience_proposal_weight * len(proposals)
+                + tuning.salience_question_weight * len(questions)
+                + len(report["underlinked_facets"]))
     sources: List[str] = []
     for entry in (*proposals, *questions):
         for rid in entry["pair"]:
@@ -376,6 +385,10 @@ def dream_pass(
                 sources.append(rid)
 
     out: Dict[str, Any] = {
+        # Self-describing result (review: three sleep verbs returned three
+        # near-miss shapes and a consumer already confused two of them —
+        # every pass result now names itself).
+        "pass_name": "dream_pass",
         "report": report, "proposals": proposals, "questions": questions,
         "salience": salience, "vectorless_pairs": vectorless_pairs,
         "trail_associated": trail_associated,
@@ -417,7 +430,7 @@ def dream_pass(
         attributes={
             "report_fingerprint": fingerprint,
             "salience": salience,
-            "salience_label": "high" if salience >= 6 else "medium",
+            "salience_label": "high" if salience >= tuning.salience_high else "medium",
             "parent_dream_ids": [a.subject for a in prior],
             "continuation_state": "unresolved" if questions else "changed_understanding",
             "interpretation_required": True,

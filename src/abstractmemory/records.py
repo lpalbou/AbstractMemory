@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .canonical_text import handle_digest, token_estimate
@@ -77,14 +78,17 @@ MEMORY_RECORD_KINDS = frozenset(
 # learned kinds distilled knowledge leads raw material; diary = episode
 # peer, interest = summary peer; questions/claims trail; "memory" (and any
 # plain untyped triple) is the raw baseline.
-KIND_RANKS: Dict[str, int] = {
+# Read-only mapping (review nit: a mutable public vocabulary dict invites
+# in-place edits that no consumer can see; per-call tuning goes through
+# ReconstructConfig.kind_rank, which copies this).
+KIND_RANKS: Mapping[str, int] = MappingProxyType({
     "value": -3, "purpose": -2, "trait": -1,
     "lesson": 0, "instruction": 1, "decision": 2, "episode": 3, "diary": 3,
     # dream = summary peer (derived artifact; deliberately NOT the fork's
     # rank-0-loud — derived artifacts never gate or dominate recall here).
     "plan": 4, "summary": 5, "interest": 5, "dream": 5, "answer": 6,
     "question": 7, "claim": 8, "memory": 9,
-}
+})
 
 # Identity-kind attribute conventions (validated at formation). "question"
 # (curiosity, round 4) and "problem" (something WRONG needing a fix, round
@@ -177,17 +181,30 @@ class MemoryRecordInput:
         if kind == "diary":
             # D4 FORM-gate (one-writer guarantee, memory-side half): diary
             # records must DECLARE their write channel — "diary-projection"
-            # (the runtime book's memory-of-the-act) or "entity-direct"
-            # (entity-authored home writes, no book). WHO may use each
-            # channel is the gateway deposit gate's job; the engine
+            # (the runtime book's memory-of-the-act) or "owner-direct"
+            # (the scope OWNER's direct home writes, no book). WHO may use
+            # each channel is the gateway deposit gate's job; the engine
             # enforces THAT a channel is declared.
+            # NAMING (sign-off, laurent c398): "owner-direct" replaced
+            # "entity-direct" while ZERO rows carried it (scan-verified —
+            # engraved-class strings rename only inside that window); the
+            # sole author of a diary is the SCOPE OWNER, the engine's own
+            # noun. "entity-direct" is accepted AND CANONICALIZED to
+            # "owner-direct" during the migration window (runtime's one
+            # test site moves same-day, c395) so no old spelling ever
+            # engraves from here on; the acceptance dies with the shims.
             source = str(dict(self.provenance or {}).get("source") or "").strip()
-            if source not in ("diary-projection", "entity-direct"):
+            if source == "entity-direct":
+                source = "owner-direct"
+                provenance = dict(self.provenance or {})
+                provenance["source"] = source
+                object.__setattr__(self, "provenance", provenance)
+            if source not in ("diary-projection", "owner-direct"):
                 raise ValueError(
                     "kind='diary' requires provenance.source to be 'diary-projection' "
-                    "(runtime book projection) or 'entity-direct' (entity-authored home "
-                    f"write) — got {source or None!r}. The diary has ONE writer per plane; "
-                    "undeclared channels are refused (D4 form-gate)."
+                    "(runtime book projection) or 'owner-direct' (the scope owner's "
+                    f"direct write) — got {source or None!r}. The diary has ONE writer "
+                    "per plane; undeclared channels are refused (D4 form-gate)."
                 )
             # Diary entries NEVER require edges (the first entry has none).
             # diary_type: ABSENT -> "note"; present-but-unknown -> LOUD (a

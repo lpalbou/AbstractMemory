@@ -2,9 +2,10 @@
 
 One task: the facade write/read paths for the valence family (a2a 0003 §3).
 `MemorySystem` inherits `ValenceOps`; the methods use only the facade's own
-substrate handles (`_journal`, `_clock`). Pure derivations live in
-gradation.py; record shapes in journal.py. NOTHING here is reachable from
-reconstruct/shelf — valence never touches retrieval by contract.
+substrate handles (`_journal`, `_clock`, `_gradation_config`). Pure
+derivations live in gradation.py; record shapes in journal.py. NOTHING here
+is reachable from reconstruct/shelf — valence never touches retrieval by
+contract.
 """
 
 from __future__ import annotations
@@ -24,6 +25,12 @@ __all__ = ["ValenceOps"]
 
 class ValenceOps:
     """Appraise / heal / break / read-gradation facade methods (identity wave)."""
+
+    def _valence_config(self) -> GradationConfig:
+        # Threaded by MemorySystem.__init__ (review F2: the exported config
+        # used to be constructed fresh here — unreachable tuning surface);
+        # the getattr default keeps the mixin usable standalone in tests.
+        return getattr(self, "_gradation_config", None) or GradationConfig()
 
     def appraise(
         self, target_id: str, *, sign: int, magnitude: float, reason: str,
@@ -45,7 +52,7 @@ class ValenceOps:
         dedupes at the journal; markers ride as "{event_id}:scar" /
         "{event_id}:bond" so pair replays are no-ops too. Marker magnitude
         is the caller's judgment (typically >= 8 per the charter)."""
-        validate_amplitude_authority(magnitude, actor, provenance)
+        validate_amplitude_authority(magnitude, actor, provenance, config=self._valence_config())
         if scar and bond:
             raise ValueError("one appraisal is one peak: scar=True and bond=True are mutually exclusive")
         if scar and sign != -1:
@@ -147,7 +154,7 @@ class ValenceOps:
         events = self._journal.valence_events(  # type: ignore[attr-defined]
             scope=scope, owner_id=owner_id, until_seq=anchor, limit=0,
         )
-        scores = compute_gradation(events, config=GradationConfig())
+        scores = compute_gradation(events, config=self._valence_config())
         if target_ids is None:
             return {tid: s.to_dict() for tid, s in scores.items()}
         out: Dict[str, Dict[str, Any]] = {}
