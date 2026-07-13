@@ -248,7 +248,12 @@ def test_binding_display_carries_formation_edges(system) -> None:
     """Ask 2 (0007, display-only additive): an edge-bearing formed record's
     binding envelope carries display.edges so the view draws "known" links
     distinct from lit usage trails; edgeless records carry NO edges key;
-    diary redaction is unaffected (sealed blocks never gain edges)."""
+    diary blocks carry edges TOO but never content (observer e-s 253 gap:
+    the maintainer's diary-connectivity ruling made written_amid ACT-FRAME
+    — "the edge is act-frame, the words stay in the book" — so sealing
+    edges made diary connectivity invisible in pixels while present at
+    rest; an edge is relation + opaque target graph id, node identity by
+    the same justification as the block's own graph_id)."""
     gids = system.remember_many(
         [MemoryRecordInput(kind="episode", title="Storm watch", digest="watched the storm roll in"),
          MemoryRecordInput(kind="episode", title="Storm log", digest="logged the storm damage",
@@ -259,7 +264,7 @@ def test_binding_display_carries_formation_edges(system) -> None:
                            digest="Wrote privately about the storm.",
                            attributes={"entry_id": "entry-9"},
                            provenance={"source": "diary-projection"},
-                           edges=(("reflects_on", gids[0]),))],
+                           edges=(("written_amid", gids[0]),))],
         scope=SCOPE, owner_id=OWNER, idempotency_key="rp-edges-diary")
 
     bindings = {i["payload"]["record_id"]: i["display"]
@@ -267,4 +272,11 @@ def test_binding_display_carries_formation_edges(system) -> None:
     assert bindings[gids[1]]["edges"] == [
         {"relation": "follows", "target_graph_id": gids[0]}]
     assert "edges" not in bindings[gids[0]]              # edgeless: no key, no fabrication
-    assert bindings[diary] == {"redacted": "diary", "graph_id": diary}  # sealed
+    sealed = bindings[diary]
+    assert sealed["redacted"] == "diary"                  # content marker stands
+    assert sealed["graph_id"] == diary
+    assert sealed["edges"] == [                           # act-frame topology visible
+        {"relation": "written_amid", "target_graph_id": gids[0]}]
+    # Redaction semantics: no content fields ever (title/digest/kind/tokens).
+    assert not {"title", "kind", "token_estimate", "record_id"} & set(sealed)
+    assert "Storm feelings" not in str(sealed) and "privately" not in str(sealed)

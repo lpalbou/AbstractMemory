@@ -172,12 +172,18 @@ def _enrich(family: str, record: Any, store: Any) -> Optional[Dict[str, Any]]:
     if a is None:
         return None
     block = _display_block(a, rid)
-    if family == "binding" and "redacted" not in block:
+    if family == "binding":
         # Display-only, additive (0007 ask 2): a formed record's binding
         # envelope carries its FORMATION-TIME edges so the view can draw
         # "known" links distinct from lit usage trails. Diary-redacted
-        # blocks stay sealed (edges could leak the private thought's
-        # context — same rule as the act-only projection).
+        # blocks carry edges TOO (observer e-s 253 gap): the maintainer's
+        # diary-connectivity ruling made written_amid act-frame, not
+        # content — "uniformly (private included): the edge is act-frame,
+        # the words stay in the book". An edge is relation + opaque target
+        # graph id (node identity, the same justification as the block's
+        # own graph_id); sealing it made diary connectivity invisible in
+        # pixels while present at rest — the invisible-topology class.
+        # Content fields stay sealed exactly as before.
         from .store import TripleQuery  # local: keep module imports lean
 
         edges = [

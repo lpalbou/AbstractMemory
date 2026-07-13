@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed (replay stream: diary act-frame edges, 2026-07-13 — observer e-s 253 gap)
+
+- **Diary-redacted display blocks now carry `edges`** (`replay._enrich`):
+  the maintainer's diary-connectivity ruling made `written_amid`
+  ACT-FRAME data — "uniformly (private included): the edge is act-frame,
+  the words stay in the book" — but the export sealed edges along with
+  content, so a life's diary connectivity was present at rest (2,223
+  edges in Castor's store) and structurally invisible in pixels (4
+  string occurrences in 88,982 envelopes): the invisible-topology class.
+  An edge is relation + opaque target graph id — node identity, the same
+  justification as the `graph_id` the sealed block already carried.
+  Content fields (title/digest/kind/token_estimate) stay sealed exactly
+  as before; the leak pin now asserts semantics (no content fields) plus
+  the act-frame edges, not an exact two-key dict.
+
 ### Added (subconscious + long-term-knowledge wave, 2026-07-12 — maintainer-authorized; backlog track `planned/subconscious_wave/` 0032-0035)
 
 Four capabilities from the maintainer's ruling (dreams as subconscious
