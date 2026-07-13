@@ -9,11 +9,21 @@ inspect the current code first, then update the item if reality has changed.
 
 ## Current Status
 
-- Planned: 7
-- Proposed: 21 (1 standalone + 20 items in the `memory_system_v1` track)
+- Planned: 11 (7 standalone + 4 in the `subconscious_wave` track)
+- Proposed: 24 (1 standalone + 23 items in the `memory_system_v1` track)
 - Completed: 0
 - Deprecated: 0
 - Recurrent: 0
+
+Topic tracks:
+- `planned/subconscious_wave/` (0032-0035, maintainer-authorized
+  2026-07-12): dream subconscious lifecycle (passive resolution +
+  resurfacing), world-model orientation cards, situate() temporal/
+  relational reconstruction, lessons-layer conventions. See the track
+  README for the ruling text and reading order.
+- `proposed/memory_system_v1/` (0009-0031): the engine design wave;
+  0030/0031 are the fork-comparison adoption ledgers (0030's list is
+  shipped; 0031 is the second-pass proposal set awaiting rulings).
 
 Implementation status (2026-07-06): memory system engine v1 is IMPLEMENTED in
 `src/abstractmemory/` ahead of item promotion — seam dataclasses (`seam.py`),

@@ -20,6 +20,9 @@ from .consolidation import (
     structural_report,
     unresolved_dreams,
 )
+from .dream_resolution import resolve_dreams_pass
+from .situate import SituateBudget, situate
+from .world_model import current_world_models, standing_world_models, world_model_pass
 from .embedding_pin import build_pin, pin_note
 from .embeddings import AbstractGatewayTextEmbedder, TextEmbedder
 from .embeddings_openai_compat import OpenAICompatTextEmbedder
@@ -48,6 +51,16 @@ from .maintenance import (
     maintenance_report,
     sleep_pass,
 )
+from .concept_anchor import ConceptAnchorTuning, concept_terms, expand_by_concepts
+from .disposal import (
+    DISPOSAL_RELATIONS,
+    confirm_relation,
+    dispose_dream,
+    promote_candidate,
+    reject_candidate,
+)
+from .probe import PROBE_EFFORTS, ProbeBudget, ProbeHit, ProbeResult, probe, probe_expand
+from .recall_reads import absence_diagnosis, recall_history
 from .records import ReconstructConfig
 from .sleep_policy import SleepTuning
 from .diary import open_ideas, open_problems, open_questions
@@ -94,8 +107,10 @@ __all__ = [
     "COMPONENT_RELATIONS",
     "CONTEXT_RELATIONS",
     "ClosureRecord",
+    "ConceptAnchorTuning",
     "DEFAULT_SPARK_TEMPLATE",
     "DIARY_TYPES",
+    "DISPOSAL_RELATIONS",
     "ENTITY_CONTEXT_FLOOR",
     "EngramResult",
     "GradationConfig",
@@ -111,6 +126,10 @@ __all__ = [
     "MemoryRecordInput",
     "MemorySystem",
     "OpenAICompatTextEmbedder",
+    "PROBE_EFFORTS",
+    "ProbeBudget",
+    "ProbeHit",
+    "ProbeResult",
     "RecallBudget",
     "ReconstructConfig",
     "ReconstructionResult",
@@ -120,6 +139,7 @@ __all__ = [
     "SQLiteJournal",
     "SQLiteTripleStore",
     "ScopeBinding",
+    "SituateBudget",
     "SleepTuning",
     "SpreadParams",
     "Stimulus",
@@ -128,16 +148,22 @@ __all__ = [
     "TripleQuery",
     "TripleStore",
     "ValenceEvent",
+    "absence_diagnosis",
     "build_pin",
     "canonical_spark_hash",
     "canonical_text",
     "compute_gradation",
+    "concept_terms",
+    "confirm_relation",
     "consolidation_pass",
+    "current_world_models",
     "diary_entry_hash",
+    "dispose_dream",
     "dream_pass",
     "engram",
     "entity_card",
     "entity_recall_budget",
+    "expand_by_concepts",
     "export_replay",
     "fold_bindings",
     "identity_card",
@@ -148,12 +174,21 @@ __all__ = [
     "open_ideas",
     "open_problems",
     "open_questions",
+    "probe",
+    "probe_expand",
+    "promote_candidate",
     "read_embedding_pin",
+    "recall_history",
     "reembed_home",
     "reembed_store",
+    "reject_candidate",
+    "resolve_dreams_pass",
+    "situate",
     "sleep_pass",
+    "standing_world_models",
     "structural_report",
     "token_estimate",
     "unresolved_dreams",
     "verify_diary_chain",
+    "world_model_pass",
 ]

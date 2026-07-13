@@ -252,6 +252,32 @@ def run_reconstruction(
             channels_run.append("participants")
             _apply_channel_results(universe, participant_results, {}, excluded_ids)
 
+        # CONCEPT ANCHORING (fork memory_anchor.rs port, 2026-07-12):
+        # edge-free associative expansion — records sharing a DISCRIMINATIVE
+        # concept with a channel-matched seed surface as candidates even
+        # when the query never contained the term. OFF by default
+        # (golden byte-stability; hosts opt in via ReconstructConfig);
+        # probe() runs its own copy of this pass with expansion ON.
+        if config.concept_expansion:
+            seeds = {rid: c.assertion for rid, c in universe.items() if c.channel_matched}
+            if seeds:
+                from .concept_anchor import DEFAULT_CONCEPT_TUNING, expand_by_concepts
+
+                admissions_c, notes_c = expand_by_concepts(
+                    store, seeds, scope_pairs, excluded_ids=excluded_ids,
+                    tuning=config.concept_tuning or DEFAULT_CONCEPT_TUNING)
+                warnings.extend(notes_c)
+                if admissions_c:
+                    channels_run.append("concept")
+                concept_results = [
+                    ChannelResult(record_id=adm["record_id"], channel="concept",
+                                  score=float(adm["score"]),
+                                  detail="shared concepts: " + ", ".join(adm["concepts"][:6]))
+                    for adm in admissions_c
+                ]
+                found_c = {adm["record_id"]: adm["assertion"] for adm in admissions_c}
+                _apply_channel_results(universe, concept_results, found_c, excluded_ids)
+
     channels_run.sort(key=CHANNEL_ORDER.index)
 
     # SPREADING (0026): seeds = channel-matched records with fused scores

@@ -115,8 +115,8 @@ def _scan(
                     "source_ids": [str(s) for s in sources] if isinstance(sources, (list, tuple)) else [],
                 })
                 continue
-            if kind == "dream":
-                continue  # phase-2 artifacts never enter tending inputs
+            if kind in ("dream", "world_model"):
+                continue  # sleep-born derived artifacts never enter tending inputs
             records[a.subject] = {
                 "record_id": a.subject,
                 "assertion_id": a.assertion_id,
@@ -127,6 +127,23 @@ def _scan(
                 "keywords": list(attrs.get("keywords") or ()),
                 "intents": list(attrs.get("intents") or ()),
                 "outcomes": list(attrs.get("outcomes") or ()),
+                # 0035: provenance signals for the unsourced-lesson check
+                # (archive-imported / operator-taught lessons carry import
+                # provenance instead of machine-readable source edges).
+                # BOTH rests are read (adversary P1.1: archive_import writes
+                # attributes.seeded_from + provenance.archive_path — the
+                # attrs-only read flagged the importer's own lessons):
+                # payload_ref counts as provenance BY RULING NEED — a
+                # verbatim-backed lesson is traceable to its body; if that
+                # proves over-wide, narrowing is a one-line change here.
+                "has_import_provenance": bool(
+                    attrs.get("import_provenance")
+                    or attrs.get("seeded_from")
+                    or attrs.get("origin_path")
+                    or attrs.get("payload_ref")
+                    or (isinstance(a.provenance, dict)
+                        and (a.provenance.get("archive_path")
+                             or a.provenance.get("source") == "archive-import"))),
             }
     candidates.sort(key=lambda c: c["record_id"])
     return records, edges, candidates
@@ -150,6 +167,47 @@ def _metadata_gaps(
             })
     gaps.sort(key=lambda g: (-len(g["missing_fields"]), g["record_id"]))
     return gaps[: tuning.list_bound * tuning.metadata_gaps_factor]
+
+
+def _unsourced_lessons(
+    records: Dict[str, Dict[str, Any]], edges: List[Dict[str, Any]],
+    tuning: SleepTuning,
+) -> List[Dict[str, Any]]:
+    """0035 sourcing discipline, by TENDING not refusal: a lesson/
+    instruction with zero derivation edges and no import provenance is an
+    opinion wearing wisdom's rank — named for a waking re-digestion (link
+    the sources, or state where it came from), never refused (real
+    teachings arrive without machine-readable sources).
+
+    DIRECTIONS follow the semantics registry (semantics c1151 — the
+    supports direction was backwards here before any row engraved it):
+    a lesson is sourced when it is the SUBJECT of a derivation edge
+    (derived_from/answers/from_session/summarizes/refines: the new/
+    derived record is the subject) OR the OBJECT of a supports edge
+    (cito:supports — subject=EVIDENCE, object=CLAIM: an episode
+    supporting the lesson sources it; the lesson being the subject would
+    mean the lesson is evidence for something else, which sources
+    nothing about the lesson itself)."""
+    subject_sourcing = {"derived_from", "answers", "from_session",
+                        "summarizes", "refines"}
+    sourced = {e["subject"] for e in edges if e["predicate"] in subject_sourcing}
+    sourced |= {e["object"] for e in edges if e["predicate"] == "supports"}
+    out: List[Dict[str, Any]] = []
+    for rid in sorted(records):
+        info = records[rid]
+        if info["kind"] not in ("lesson", "instruction"):
+            continue
+        if rid in sourced or info.get("has_import_provenance"):
+            continue
+        out.append({
+            "record_id": rid, "kind": info["kind"], "title": info["title"],
+            "action": ("report-only: link the memories this distills "
+                       "(lesson derived_from source) or record supporting "
+                       "evidence (episode supports lesson) at a waking "
+                       "re-digestion — distilled wisdom should reference "
+                       "the experience it came from"),
+        })
+    return out[: tuning.list_bound]
 
 
 def _duplicate_title_groups(
@@ -388,6 +446,7 @@ def maintenance_report(
     records, edges, candidates = _scan(store, scopes)
 
     gaps = _metadata_gaps(records, tuning)
+    unsourced = _unsourced_lessons(records, edges, tuning)
     duplicate_groups = _duplicate_title_groups(records, tuning)
     near_dups, vectorless_pairs = _near_duplicate_pairs(records, store, resolved_scan, tuning)
     shared_sources = _shared_source_groups(records, edges, tuning)
@@ -436,6 +495,7 @@ def maintenance_report(
         "pass_name": "maintenance_report",
         "as_of_seq": base["as_of_seq"],
         "metadata_gaps": gaps,
+        "unsourced_lessons": unsourced,
         "duplicate_title_groups": duplicate_groups,
         "near_duplicate_pairs": near_dups,
         "vectorless_pairs": vectorless_pairs,
@@ -449,7 +509,8 @@ def maintenance_report(
         "isolated": [rid for rid in base.get("isolated", ()) if rid in records],
         "counts": {
             "records": len(records), "existing_candidates": len(candidates),
-            "metadata_gaps": len(gaps), "duplicate_title_groups": len(duplicate_groups),
+            "metadata_gaps": len(gaps), "unsourced_lessons": len(unsourced),
+            "duplicate_title_groups": len(duplicate_groups),
             "near_duplicate_pairs": len(near_dups), "shared_source_groups": len(shared_sources),
             "isolated_link_candidates": len(link_candidates),
             "edge_suppression_candidates": len(suppressions),
@@ -554,22 +615,71 @@ def sleep_pass(
     scan_limit: Optional[int] = None,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Dict[str, Any]:
-    """One full sleep: phase-1 tending FIRST, then the dream over the tended
-    graph — the fork's canonical order, encoded engine-side so the host's
-    on_sleep hook wires exactly one call. Both phases idempotent; a quiet
-    night in either phase is a valid night. The result names itself and its
-    phases (self-describing shapes — review: three sleep verbs returned
-    three near-miss dicts and a consumer confused two of them)."""
+    """One full sleep: RESOLVE first (the night reviews the day — standing
+    dreams the day's lived experience already answered close softly,
+    0032), then phase-1 tending, then the dream over the tended graph —
+    the fork's canonical order extended by the maintainer's subconscious
+    model, encoded engine-side so the host's on_sleep hook wires exactly
+    one call. All phases idempotent; a quiet night in any phase is a valid
+    night. The result names itself and its phases (self-describing shapes
+    — review: three sleep verbs returned three near-miss dicts and a
+    consumer confused two of them).
+
+    Ordering rationale: resolution must PRECEDE tonight's dream so a
+    settled tension never feeds continuation anchors again, and a
+    continuation dream whose lineage closed resolves before it can re-arm
+    salience."""
+    from .dream_resolution import resolve_dreams_pass
+    from .world_model import world_model_pass
+
+    if as_of is not None and not report_only:
+        # One loud gate for the whole night (adversary P1-4): every write
+        # phase refuses historical anchors individually; failing HERE
+        # keeps an anchored mistake from producing a half-written night
+        # (resolution closures landing before tending raises).
+        raise ValueError(
+            "sleep_pass: as_of anchors AUDIT reads only — pass "
+            "report_only=True for anchored reads (a night written against "
+            "a historical anchor would forge the timeline)")
+    resolution = resolve_dreams_pass(
+        system, scopes=scopes, owner_id=owner_id,
+        report_only=report_only, as_of=as_of, tuning=tuning)
     maintenance = consolidation_pass(
         system, scopes=scopes, owner_id=owner_id, max_candidates=max_candidates,
         report_only=report_only, as_of=as_of, scan_limit=scan_limit, tuning=tuning)
+    # Understanding refines after tending, before the dream (0033): cards
+    # are report-excluded derived artifacts, so the dream never sees them —
+    # the order just keeps the night's narrative honest (review the day,
+    # tend the graph, refine understanding, then dream). Under an as_of
+    # anchor the phase is SKIPPED honestly (it reads current state only;
+    # a mixed-frame result would be worse than an absent one).
+    if as_of is not None:
+        world_models: Dict[str, Any] = {
+            "pass_name": "world_model_pass",
+            "skipped_reason": "as_of anchor: world models read current state "
+                              "only — phase skipped to keep the night's "
+                              "frames honest",
+            "formed": [], "unchanged": [], "skipped": [], "repaired": [],
+            "targets_seen": 0, "eligible": [], "formed_count": 0,
+        }
+    else:
+        world_models = world_model_pass(
+            system, scopes=scopes, owner_id=owner_id,
+            report_only=report_only, tuning=tuning)
+    # The dream metabolizes the night's work: the tending ledger's operation
+    # count feeds dream salience (fork parity, capped in SleepTuning — a busy
+    # tending night signals change worth dreaming about).
+    ops_count = len((maintenance.get("report") or {}).get("operations") or ())
     dream = dream_pass(
         system, scopes=scopes, owner_id=owner_id, salience_floor=salience_floor,
         max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
-        report_only=report_only, as_of=as_of, tuning=tuning)
+        report_only=report_only, as_of=as_of, maintenance_ops=ops_count,
+        tuning=tuning)
     return {
         "pass_name": "sleep_pass",
-        "phases": ("maintenance", "dream"),
+        "phases": ("resolution", "maintenance", "world_models", "dream"),
+        "resolution": resolution,
         "maintenance": maintenance,
+        "world_models": world_models,
         "dream": dream,
     }

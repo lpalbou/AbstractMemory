@@ -330,6 +330,202 @@ class MemorySystem(ValenceOps, AccessOps):
                 self._journal.append_events(listed)
         return result
 
+    # -- active reconstruction: probe / expand / recall reads ---------------
+
+    def probe(
+        self, stimulus: Stimulus, *, scopes: Sequence[Tuple[str, str]],
+        reason: str, effort: Any = "standard", journal: bool = True,
+        trace_id: Optional[str] = None,
+    ) -> "ProbeResult":
+        """The deliberate reach (0022, fork 090/091 shape): channels-only
+        active reconstruction EXEMPT from the shelf race — no identity
+        seats, no STM union, no activation boost. `reason` is MANDATORY
+        (an audited escalation, landing on the trace); `effort` is
+        "quick" | "standard" | "deep" (the Mnemosyne active-reconstruction
+        vocabulary) or a custom ProbeBudget. Broad scopes require no extra
+        reason: the probe reason IS the escalation reason. Pure read;
+        journal=True writes the trace + inert audit events. Deposits
+        happen only if the host commits displayed hits via
+        commit_selection (the one strengthening path)."""
+        from .probe import probe as _probe
+
+        scope_pairs = _normalize_scopes(scopes)
+        if not scope_pairs:
+            raise ValueError("probe requires at least one (scope, owner_id) pair")
+        current = self._journal.current_seq()
+        as_of = current if stimulus.as_of is None else int(stimulus.as_of)
+        if not (0 <= as_of <= current):
+            raise ValueError(
+                f"Stimulus.as_of={as_of} is not a valid anchor for this journal "
+                f"(current_seq={current}) — same boundary rule as reconstruct")
+        inputs = _reconstruction_inputs(
+            self._store, self._journal, scope_pairs, as_of,
+            config=self._attention_config, spread_params=self._spread_params,
+            pipeline_config=self._reconstruct_config, ablation=self._ablation,
+        )
+        return _probe(
+            self._store, self._journal, stimulus=stimulus, scopes=scope_pairs,
+            reason=reason, effort=effort, embedder=self._embedder,
+            excluded_ids=set(inputs.excluded), config=inputs.pipeline_config,
+            as_of_seq=as_of, trace_id=trace_id, write_journal=bool(journal),
+        )
+
+    def probe_expand(
+        self, record_ids: Sequence[str], *, reason: str, depth: int = 1,
+        max_records: int = 12, token_budget: int = 1600,
+        scopes: Optional[Sequence[Tuple[str, str]]] = None,
+        parent_trace_id: Optional[str] = None, journal: bool = True,
+        trace_id: Optional[str] = None,
+    ) -> "ProbeResult":
+        """Bounded source expansion from chosen records (the probe's second
+        disclosure step): BFS over record edges in BOTH directions, honoring
+        closure AND hidden folds, contained to the roots' scopes when the
+        caller names none. Root ids resolve through both namespaces (row or
+        graph); unknown roots refuse loudly. Deposits nothing."""
+        from .probe import probe_expand as _expand
+        from .records import resolve_digest_assertion
+
+        scope_pairs = _normalize_scopes(scopes) if scopes else []
+        if not scope_pairs:
+            # Derive containment from the ROOTS' own scope pairs (adversary
+            # F4: a scopeless expand must neither skip the hidden fold nor
+            # pull digests from scopes the caller never named).
+            derived: List[Tuple[str, str]] = []
+            for rid in record_ids or ():
+                digest = resolve_digest_assertion(self._store, str(rid or "").strip())
+                if digest is not None:
+                    pair = (digest.scope, digest.owner_id or "")
+                    if pair not in derived:
+                        derived.append(pair)
+            scope_pairs = derived
+        as_of = self._journal.current_seq()
+        excluded: set = set()
+        if scope_pairs:
+            inputs = _reconstruction_inputs(
+                self._store, self._journal, scope_pairs, as_of,
+                config=self._attention_config, spread_params=self._spread_params,
+                pipeline_config=self._reconstruct_config, ablation=self._ablation,
+            )
+            excluded = set(inputs.excluded)
+        else:
+            from .folds import closure_exclusions
+
+            excluded = set(closure_exclusions(self._journal, as_of))
+        return _expand(
+            self._store, self._journal, record_ids=record_ids, reason=reason,
+            depth=depth, max_records=max_records, token_budget=token_budget,
+            excluded_ids=excluded, scope_pairs=scope_pairs,
+            parent_trace_id=parent_trace_id,
+            as_of_seq=as_of, trace_id=trace_id, write_journal=bool(journal),
+        )
+
+    def situate(
+        self, *, scopes: Sequence[Tuple[str, str]],
+        at: Optional[str] = None, seq: Optional[int] = None,
+        participant: Optional[str] = None, occurrence: str = "first",
+        budget: Optional["SituateBudget"] = None,
+    ) -> Dict[str, Any]:
+        """Rebuild the full context of a past moment (0034 — the temporal
+        graph made usable): anchor by time (ISO/seq) or RELATION ("when I
+        first/last met X"), get back the moment's working set, what was
+        warm, the period's records, elected diary entries, the identity
+        AS OF then, the identity EVOLUTION since (what may help — or
+        hinder — resuming the path), and the tensions open at that time.
+        PURE READ, everything labeled historical, deposits nothing:
+        re-living is a deliberate act (re-enter via anchor_record_ids on
+        a normal reconstruct), never a side effect of looking back."""
+        from .situate import SituateBudget as _Budget, situate as _situate
+
+        return _situate(
+            self._store, self._journal, scopes=_normalize_scopes(scopes),
+            at=at, seq=seq, participant=participant, occurrence=occurrence,
+            budget=budget if budget is not None else _Budget(),
+            attention_config=self._attention_config,
+            config=self._reconstruct_config,
+        )
+
+    def recall_history(
+        self, record_id: str, *, scope: Optional[str] = None,
+        owner_id: str = "", limit_traces: int = 200,
+    ) -> Dict[str, Any]:
+        """Why was X (never) recalled — the explainability read (fork 605).
+        History over recent traces (selected/dropped/candidate-only per
+        trace, with reasons) plus, when scope is given, the structural
+        absence diagnosis (closed? hidden? keyword/vector-reachable?).
+        Pure read; writes nothing."""
+        from .recall_reads import absence_diagnosis, recall_history as _history
+
+        # store= threads BOTH id namespaces through the trace join (row ids
+        # from probe hits, graph ids from edges — one input id answers both
+        # halves correctly).
+        out = _history(self._journal, record_id,
+                       limit_traces=limit_traces, store=self._store)
+        if scope is not None:
+            out["diagnosis"] = absence_diagnosis(
+                self._store, self._journal, record_id,
+                scope=scope, owner_id=owner_id)
+        return out
+
+    # -- disposal: waking evidence decides (fork 690/360/470) ---------------
+
+    def confirm_relation(
+        self, source_id: str, relation: str, target_id: str, *,
+        evidence_ids: Sequence[str], reason: str,
+        proposed_by: Optional[str] = None, actor: str = "operator",
+    ) -> Dict[str, Any]:
+        """Turn a sleep proposal into a REAL typed edge (engraved vocabulary
+        only; evidence mandatory; the proposing dream can never be its own
+        evidence). Idempotent by (source, relation, target)."""
+        from .disposal import confirm_relation as _confirm
+
+        return _confirm(
+            self._store, self._journal, source_id=source_id, relation=relation,
+            target_id=target_id, evidence_ids=evidence_ids, reason=reason,
+            proposed_by=proposed_by, actor=actor)
+
+    def promote_candidate(
+        self, record_id: str, *, scope: str, owner_id: str,
+        corroborating_ids: Sequence[str], reason: str, min_origins: int = 2,
+        prompt_state: Optional[str] = None, actor: str = "operator",
+    ) -> Dict[str, Any]:
+        """Promote an inactive candidate — refused without independent-origin
+        corroboration (fork 470: repetition is not corroboration; the
+        bridge-attractor counter, loud)."""
+        from .disposal import promote_candidate as _promote
+
+        return _promote(
+            self._store, self._journal, record_id=record_id, scope=scope,
+            owner_id=owner_id, corroborating_ids=corroborating_ids,
+            reason=reason, min_origins=min_origins, prompt_state=prompt_state,
+            actor=actor)
+
+    def reject_candidate(
+        self, record_id: str, *, scope: str, owner_id: str, reason: str,
+        hide: bool = False, actor: str = "operator",
+    ) -> Dict[str, Any]:
+        """The honest no: lifecycle='rejected' with a mandatory reason;
+        stays indexed unless hide=True (judgment is not erasure)."""
+        from .disposal import reject_candidate as _reject
+
+        return _reject(
+            self._store, self._journal, record_id=record_id, scope=scope,
+            owner_id=owner_id, reason=reason, hide=hide, actor=actor)
+
+    def dispose_dream(
+        self, dream_id: str, *, disposition: str, reason: str,
+        relation: Optional[str] = None, source_id: Optional[str] = None,
+        target_id: Optional[str] = None, evidence_ids: Sequence[str] = (),
+        actor: str = "operator",
+    ) -> Dict[str, Any]:
+        """One call for the dream verdict: confirmed (edge + supersede) or
+        dissolved (retract). Composes confirm_relation + close_record."""
+        from .disposal import dispose_dream as _dispose
+
+        return _dispose(
+            self, dream_id=dream_id, disposition=disposition, reason=reason,
+            relation=relation, source_id=source_id, target_id=target_id,
+            evidence_ids=evidence_ids, actor=actor)
+
     # -- the seam: commit_selection ---------------------------------------------
 
     def commit_selection(

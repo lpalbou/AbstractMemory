@@ -96,6 +96,13 @@ _LIST_BOUND = DEFAULT_SLEEP_TUNING.list_bound  # proposals/questions stored on t
 COMPONENT_RELATIONS = frozenset({
     "summarizes", "from_session", "reflected_in", "continues",
     "derived_from", "answers", "supports", "part_of",
+    # Revision chains (0033 world-model cards; fork Refines edge): "this
+    # record supersedes-and-refines that one" is derivation family — one
+    # story across revisions. Card→card refines edges never reach
+    # adjacency anyway (world_model records are excluded from the report,
+    # same as dreams), but authored refines between LIVED records means
+    # one story and may merge, which is correct semantics.
+    "refines",
 })
 
 # Mechanical co-presence relations — NEVER component-defining. written_amid
@@ -130,6 +137,7 @@ def _facets_of(attrs: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
 def structural_report(
     store: Any, journal: Any, *,
     scopes: Sequence[Tuple[str, str]], as_of: Optional[int] = None,
+    evidence_grade: bool = False,
 ) -> Dict[str, Any]:
     """PURE READ structural analysis (the fork's maintenance ledger).
 
@@ -149,8 +157,23 @@ def structural_report(
     with no semantic relations still counts: the maintainer's isolation
     question is about semantic structure). Deterministic ordering
     everywhere.
+
+    evidence_grade=True (0032 adversary P0-1/P0-2 — the resolution pass's
+    view): the report additionally FOLDS CLOSURES (retracted/superseded
+    records and edges leave the substrate — a story the day retracted
+    must not keep joining islands) and EXCLUDES maintenance candidates
+    (sleep's own summaries carry summarizes edges that merge components;
+    "waking evidence" must never be sleep's own artifact). The DEFAULT
+    stays raw BY DESIGN: the dream pass deliberately sees the whole
+    graph (closures fold at recall, not in sleep reports), and tending
+    must see candidates to skip covered groups.
     """
     hi = int(as_of) if as_of is not None else journal.current_seq()
+    closed: frozenset = frozenset()
+    if evidence_grade:
+        from .folds import closure_exclusions
+
+        closed = frozenset(closure_exclusions(journal, hi))
     records: Dict[str, Dict[str, Any]] = {}       # graph id -> {title, facets, ...}
     assertion_to_record: Dict[str, str] = {}      # digest/edge assertion id -> graph id
     edges_seen: List[Tuple[str, str, str]] = []   # (predicate, subject, object)
@@ -158,13 +181,21 @@ def structural_report(
     for scope, owner in scopes:
         for a in store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=0)):
             attrs = a.attributes if isinstance(a.attributes, dict) else {}
+            if evidence_grade and a.assertion_id and a.assertion_id in closed:
+                continue
             if attrs.get("record_edge"):
                 if a.assertion_id:
                     assertion_to_record[a.assertion_id] = a.subject
                 edges_seen.append((str(a.predicate or "").strip(), a.subject, a.object))
                 continue
             kind = attrs.get("record_kind")
-            if not kind or kind == "dream" or attrs.get("bookkeeping"):
+            # dream AND world_model are sleep-born derived artifacts: both
+            # excluded from the structural substrate (loop-breaker — a
+            # derived artifact must never feed the passes that derive).
+            if not kind or kind in ("dream", "world_model") or attrs.get("bookkeeping"):
+                continue
+            if evidence_grade and (attrs.get("maintenance_candidate")
+                                   or a.subject in closed):
                 continue
             lexical, participants = _facets_of(attrs)
             records[a.subject] = {
@@ -280,6 +311,8 @@ def structural_report(
 
 def _bridges(
     report: Dict[str, Any], store: Any, similarity_floor: float,
+    owner_id: str = "",
+    tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, int]:
     """Cross-component bridge PROPOSALS + single-facet QUESTIONS.
 
@@ -293,23 +326,51 @@ def _bridges(
     (written_amid/mentions/unknown predicates) are already associated by
     circumstance, same rule, counted as context_associated.
 
-    Proposal: >=2 shared lexical facets, OR >=1 shared participant AND >=1
-    lexical facet, OR stored-vector cosine >= floor (both embeddings must
-    exist — vectorless pairs are counted, never guessed; the fork is
-    lexical-only, the vector signal is our named upgrade). Question: exactly
-    one shared lexical facet and nothing else — "connection or lexical
-    residue?" (the fork's own caution).
+    Proposal: >=2 shared lexical facets, OR >=1 shared DISCRIMINATIVE
+    participant AND >=1 lexical facet, OR >=1 shared DISCRIMINATIVE
+    participant alone (0032, the maintainer's person-dream case: a PERSON
+    spanning two unconnected islands of a life is a tension even with
+    zero shared words), OR stored-vector cosine >= floor (both embeddings
+    must exist — vectorless pairs are counted, never guessed; the fork is
+    lexical-only, the vector signal is our named upgrade). Question:
+    exactly one shared lexical facet and no discriminative participant —
+    "connection or lexical residue?" (the fork's own caution).
+
+    DISCRIMINATIVE participant (adversary P1-2, the bridge-attractor
+    guard applied in full): the scope OWNER never counts (the explicit
+    co-presence self-stamp is universal), and neither does a CONSTANT
+    COMPANION — a participant stamped on more than
+    `person_bridge_max_fraction` of the records (in the deployed shape
+    every episode carries the same visitor; ambient co-presence carries
+    no signal, exactly like the owner stamp). Only participants below
+    the fraction gate can bridge or block questions — the maintainer's
+    "I dream about that person" case is a RARE person spanning islands.
     """
     records = report["records"]
     component_of = report["component_of"]
     trail_pairs = {tuple(pair) for pair in report.get("trail_pairs", ())}
     context_pairs = {tuple(pair) for pair in report.get("context_pairs", ())}
     vector_reader = getattr(store, "stored_vector", None)
+    owner = str(owner_id or "").strip()
     proposals: List[Dict[str, Any]] = []
     questions: List[Dict[str, Any]] = []
     vectorless_pairs = 0
     trail_associated = 0
     context_associated = 0
+
+    # Mid-frequency gate for participants (concept-anchor reasoning):
+    # ambient stamps (owner, constant companions) are not signal.
+    participant_counts: Dict[str, int] = {}
+    for info in records.values():
+        for p in info["participants"]:
+            participant_counts[p] = participant_counts.get(p, 0) + 1
+    total = max(1, len(records))
+    max_fraction = float(tuning.person_bridge_max_fraction)
+
+    def _discriminative(person: str) -> bool:
+        if person == owner:
+            return False
+        return (participant_counts.get(person, 0) / total) <= max_fraction
 
     ids = sorted(records)
     for i, left in enumerate(ids):
@@ -325,8 +386,12 @@ def _bridges(
             a, b = records[left], records[right]
             shared_lex = sorted(set(a["facets"]) & set(b["facets"]))
             shared_people = sorted(set(a["participants"]) & set(b["participants"]))
+            shared_signal = [p for p in shared_people if _discriminative(p)]
+            lexical_bridge = (len(shared_lex) >= 2
+                              or bool(shared_signal and shared_lex))
+            person_bridge = bool(shared_signal)
             vector_score: Optional[float] = None
-            if len(shared_lex) < 2 and not (shared_people and shared_lex):
+            if not lexical_bridge and not person_bridge:
                 if vector_reader is not None:
                     va = vector_reader(a["assertion_id"])
                     vb = vector_reader(b["assertion_id"])
@@ -338,13 +403,13 @@ def _bridges(
                     vectorless_pairs += 1
 
             entry = {"pair": [left, right], "shared_facets": shared_lex,
-                     "shared_participants": shared_people}
-            if len(shared_lex) >= 2 or (shared_people and shared_lex):
+                     "shared_participants": shared_signal}
+            if lexical_bridge or person_bridge:
                 proposals.append(entry)
             elif vector_score is not None and vector_score >= float(similarity_floor):
                 entry["vector_score"] = round(vector_score, 6)
                 proposals.append(entry)
-            elif len(shared_lex) == 1 and not shared_people:
+            elif len(shared_lex) == 1 and not shared_signal:
                 questions.append({
                     "pair": [left, right], "facet": shared_lex[0],
                     "question": (f"does '{shared_lex[0]}' connect {left} and {right}, "
@@ -360,29 +425,55 @@ def dream_pass(
     salience_floor: int = 2, max_sources: int = 8,
     embedder_similarity_floor: float = 0.35,
     report_only: bool = False, as_of: Optional[int] = None,
+    maintenance_ops: int = 0,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
 ) -> Dict[str, Any]:
     """One sleep pass: structural report → bridge proposals → at most ONE
     dream record (kind="dream", via remember_many — idempotent by report
     fingerprint, so re-running on the same graph state forms nothing new).
-    A quiet night (salience < floor, or fewer than 2 distinct sources) is a
-    VALID night: no record, and the report says why. The dream lands in the
-    FIRST scope pair (the home scope) under owner_id. Salience weights, the
-    floor, and the one-per-pass shape are declared tunables (SleepTuning;
-    fork parity at defaults — the fork inlines the same weights)."""
+    A quiet night (salience < floor, or no dreamable sources) is a VALID
+    night: no record, and the report says why. The dream lands in the FIRST
+    scope pair (the home scope) under owner_id.
+
+    SALIENCE (fork parity restored 2026-07-12 — the fork-comparison
+    adversary caught two silently dropped terms): bridge proposals and
+    questions score as before, PLUS standing unresolved dreams (continuation
+    anchors — a recurring tension keeps pressing) and the night's
+    maintenance operations (capped: a busy tending night signals change
+    worth metabolizing, never a multiplier). A night whose ONLY pressure is
+    a prior unresolved dream forms a CONTINUATION dream
+    (continuation_state="continued") sourced from the standing dream —
+    the recurring-dream mechanic this module's docstring promises."""
+    if as_of is not None and not report_only:
+        # Timeline-forgery guard (adversary P1-4, matching
+        # consolidation_pass): a dream formed against a historical trail
+        # view would break the resolution lane's post-dating argument.
+        raise ValueError(
+            "dream_pass: as_of anchors AUDIT reads only — writing a dream "
+            "against a historical anchor forges the timeline; pass "
+            "report_only=True for anchored reads")
     store, journal = system.store, system.journal  # public substrate handles
     report = structural_report(store, journal, scopes=scopes, as_of=as_of)
     proposals, questions, vectorless_pairs, trail_associated, context_associated = _bridges(
-        report, store, embedder_similarity_floor)
+        report, store, embedder_similarity_floor, owner_id=owner_id, tuning=tuning)
+    prior = unresolved_dreams(store, scope=scopes[0][0], owner_id=scopes[0][1],
+                              journal=journal)
 
     salience = (tuning.salience_proposal_weight * len(proposals)
                 + tuning.salience_question_weight * len(questions)
-                + len(report["underlinked_facets"]))
+                + len(report["underlinked_facets"])
+                + tuning.salience_anchor_weight * len(prior)
+                + min(max(0, int(maintenance_ops)), tuning.salience_ops_cap))
     sources: List[str] = []
     for entry in (*proposals, *questions):
         for rid in entry["pair"]:
             if rid not in sources:
                 sources.append(rid)
+    # Anchors-only night: the standing dreams themselves are the sources —
+    # the continuation dream re-lights the unresolved tension, not a bridge.
+    continuation_only = not sources and bool(prior)
+    if continuation_only:
+        sources = [a.subject for a in prior]
 
     out: Dict[str, Any] = {
         # Self-describing result (review: three sleep verbs returned three
@@ -395,7 +486,8 @@ def dream_pass(
         "context_associated": context_associated,
         "dream_record_id": None, "created": False, "skipped_reason": None,
     }
-    if salience < int(salience_floor) or len(sources) < 2:
+    min_sources = 1 if continuation_only else 2
+    if salience < int(salience_floor) or len(sources) < min_sources:
         out["skipped_reason"] = (
             f"quiet night: salience {salience} below floor {int(salience_floor)}"
             if salience < int(salience_floor)
@@ -408,31 +500,97 @@ def dream_pass(
 
     fingerprint = hashlib.sha256(json.dumps(
         {"components": report["components"], "proposals": proposals,
-         "questions": questions, "underlinked": report["underlinked_facets"]},
+         "questions": questions, "underlinked": report["underlinked_facets"],
+         "anchors": sorted(a.subject for a in prior) if continuation_only else []},
         sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
-    top = proposals[0] if proposals else questions[0]
-    left, right = top["pair"]
     title_of = lambda rid: report["records"][rid]["title"] or rid  # noqa: E731
-    prior = unresolved_dreams(store, scope=scopes[0][0], owner_id=scopes[0][1],
-                              journal=journal)
-    dream = MemoryRecordInput(
-        kind="dream",
-        title=f"Dream: {title_of(left)} beside {title_of(right)}",
-        digest=(
+    if continuation_only:
+        title = "Dream: returning to an unresolved tension"
+        digest = (
+            f"No new bridges tonight, but {len(prior)} unresolved dream(s) kept "
+            "pressing. The tension is still here — the same islands remain "
+            "unreconciled, and sleep revisited them without new evidence. "
+            "Nothing is decided while asleep; waking attention may yet settle it."
+        )
+        continuation_state = "continued"
+    else:
+        top = proposals[0] if proposals else questions[0]
+        left, right = top["pair"]
+        title = f"Dream: {title_of(left)} beside {title_of(right)}"
+        digest = (
             "Two previously separate memory islands lit up together tonight. "
             f"I noticed {len(proposals)} possible bridge(s) and "
             f"{len(questions)} open question(s) across {report['counts']['components']} "
             "islands of experience. Nothing is decided while asleep — these are "
             "candidate connections for waking evidence to confirm or dissolve."
-        ),
+        )
+        # EVERY tension-bearing dream stands as "unresolved" (0032, the
+        # maintainer's subconscious model): a bridge PROPOSAL is a pending
+        # question exactly like a facet question — the digest itself says
+        # "for waking evidence to confirm or dissolve", so the dream must
+        # STAND until the day settles it (passively via
+        # resolve_dreams_pass, or deliberately via disposal). The old
+        # proposals-only state "changed_understanding" made such dreams
+        # unresolvable and un-chainable — they left the standing set at
+        # birth, which contradicted their own text.
+        continuation_state = "unresolved"
+    # RESURFACING METADATA (0032, maintainer's subconscious model): the
+    # dream's tension VOCABULARY becomes formation metadata — keywords from
+    # the shared facets its proposals/questions carry, participants from
+    # the shared participants (the dream about a person IS about them:
+    # stamping makes the participants channel resurface the dream when
+    # that person appears — "suddenly I meet the person and the dream
+    # resurfaces"). Continuation dreams inherit their parents' vocabulary
+    # (the standing tension's own words). Honest metadata, never invention:
+    # every term comes from the report/proposals the dream stands for.
+    # The OWNER never lands in dream participants (adversary P1-2c): the
+    # door stamps the entity into every stimulus, so an owner-stamped
+    # dream would resurface EVERY turn — "resurfaces when its trigger
+    # appears" must mean the discriminative trigger. shared_participants
+    # entries are already discriminative (gate above); the filter here is
+    # belt-and-braces for inherited continuation metadata.
+    owner_stamp = str(owner_id or "").strip()
+    dream_keywords: List[str] = []
+    dream_participants: List[str] = []
+    if continuation_only:
+        for a in prior:
+            attrs = a.attributes if isinstance(a.attributes, dict) else {}
+            for kw in attrs.get("keywords") or ():
+                if kw not in dream_keywords:
+                    dream_keywords.append(kw)
+            for p in attrs.get("participants") or ():
+                if p and p != owner_stamp and p not in dream_participants:
+                    dream_participants.append(p)
+    else:
+        for entry in proposals:
+            for facet in entry.get("shared_facets") or ():
+                if facet not in dream_keywords:
+                    dream_keywords.append(facet)
+            for person in entry.get("shared_participants") or ():
+                if person and person != owner_stamp and person not in dream_participants:
+                    dream_participants.append(person)
+        for entry in questions:
+            facet = entry.get("facet")
+            if facet and facet not in dream_keywords:
+                dream_keywords.append(facet)
+    dream = MemoryRecordInput(
+        kind="dream",
+        title=title,
+        digest=digest,
+        keywords=tuple(sorted(dream_keywords)[: tuning.list_bound]),
+        participants=tuple(sorted(dream_participants)[: tuning.list_bound]),
         edges=tuple(("mentions", rid) for rid in sources[: max(0, int(max_sources))]),
         attributes={
             "report_fingerprint": fingerprint,
             "salience": salience,
             "salience_label": "high" if salience >= tuning.salience_high else "medium",
-            "parent_dream_ids": [a.subject for a in prior],
-            "continuation_state": "unresolved" if questions else "changed_understanding",
+            # Standing-set snapshot at formation (bounded — with the
+            # discriminative-participant gate the standing set stays
+            # small; the cap keeps a pathological night from bloating
+            # attributes).
+            "parent_dream_ids": [a.subject for a in prior][: tuning.list_bound],
+            "continuation_state": continuation_state,
             "interpretation_required": True,
             "proposals": proposals,
             "questions": questions,
@@ -454,13 +612,16 @@ def unresolved_dreams(
 ) -> List[Any]:
     """Standing unresolved dreams (the future heartbeat wake reason —
     recurring dreams about unresolved tension): kind="dream" digest rows
-    with continuation_state=="unresolved", oldest first. journal supplied →
+    whose continuation_state is "unresolved" OR "continued" (adversary
+    P1-1: a continuation dream RE-LIGHTS standing tension — it is itself
+    standing, or it could never resolve when its lineage settles and
+    would stand immortal), oldest first. journal supplied →
     closure/hidden folds apply (same honest-v1 rule as open_questions);
     journal=None is the layer-1 read."""
     rows = [a for a in store.query(TripleQuery(scope=scope, owner_id=owner_id or None, limit=0))
             if isinstance(a.attributes, dict)
             and a.attributes.get("record_kind") == "dream"
-            and a.attributes.get("continuation_state") == "unresolved"]
+            and a.attributes.get("continuation_state") in ("unresolved", "continued")]
     if journal is not None:
         from .folds import binding_states, closure_exclusions
 

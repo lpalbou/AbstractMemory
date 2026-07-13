@@ -28,7 +28,7 @@ from .store import TripleQuery
 # sort). Encoded once. participants appended LAST deliberately: existing cue
 # orders stay byte-stable, and shared-context is a co-presence signal, not a
 # content match.
-CHANNEL_ORDER: Tuple[str, ...] = ("exact", "keyword", "vector", "participants")
+CHANNEL_ORDER: Tuple[str, ...] = ("exact", "keyword", "vector", "participants", "concept")
 
 # Tokenization rules live in text_tokens.py (ONE home — the 2026-07-10
 # review unified four drifting implementations); these aliases keep this
@@ -233,11 +233,18 @@ def run_vector_channel(
     elif stimulus.cue_text and embedder is not None:
         try:
             query_kwargs["query_vector"] = [float(x) for x in embedder.embed_texts([stimulus.cue_text])[0]]
-        except (ValueError, RuntimeError, IndexError) as e:
-            # The injected embedder never touched the store, so a server
-            # refusal names only the REQUESTED model; append the store's
-            # pinned identity (claimed-vs-served in one warning line —
-            # the 2026-07-11 incident's missing join).
+        except Exception as e:
+            # ANY embed failure degrades the channel — it never kills the
+            # recall. The vector channel is an enrichment (relevance admits;
+            # absence is honest), and the embedder is a NETWORK CLIENT whose
+            # provider stack raises its own exception types: the 2026-07-11
+            # incident's `LMStudio API error (400)` subclassed neither
+            # ValueError nor RuntimeError, escaped the old narrow catch, and
+            # turned a misconfigured embedding route into a dead entity turn.
+            # The engine cannot enumerate provider exception types (import
+            # boundary forbids abstractcore), so the honest general contract
+            # is: catch everything, label loudly, carry the store's pinned
+            # identity (claimed-vs-served in one warning line).
             warnings.append(f"#FALLBACK: vector channel unavailable: {e}{_store_pin_suffix(store)}")
             return [], {}, False
     elif stimulus.cue_text:
@@ -252,11 +259,13 @@ def run_vector_channel(
     for scope, owner in scope_pairs:
         try:
             rows = store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=fetch_limit, **query_kwargs))
-        except (ValueError, RuntimeError) as e:
-            # Store cannot serve vector queries (no embedder configured, or a
-            # structured-only backend like SQLite). The failure is identical
-            # for every scope: one warning, channel reported as not-run.
-            warnings.append(f"#FALLBACK: vector channel unavailable: {e}")
+        except Exception as e:
+            # Store cannot serve vector queries (no embedder configured, a
+            # structured-only backend, or — the query_text arm — a provider
+            # error from the store's OWN embedder, same network-client class
+            # as above). The failure is identical for every scope: one
+            # warning, channel reported as not-run, recall continues.
+            warnings.append(f"#FALLBACK: vector channel unavailable: {e}{_store_pin_suffix(store)}")
             return [], {}, False
         kept = 0
         for a in rows:

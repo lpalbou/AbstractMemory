@@ -206,7 +206,18 @@ def export_replay(
     since_seq exclusive; until_seq inclusive (None = high-water at call
     time); scope/owner filters match the LIFTED values; families defaults
     to all six (unknown names raise). enrich=False gives the pure ledger
-    stream."""
+    stream.
+
+    EXECUTION CONTRACT (pinned after the 2026-07-12 gateway starvation
+    incident — one abandoned since_seq=0 tail pinned the serving event
+    loop ~40s): this is a SYNCHRONOUS, CPU-bound generator by design
+    (SQLite reads + enrichment + dict assembly per envelope, no awaits).
+    Async/HTTP consumers MUST iterate it OFF the event loop (worker
+    thread / run_in_executor with chunked handoff) and SHOULD check
+    client liveness between chunks. Poll loops MUST pass their cursor as
+    since_seq — backends serve that as an indexed continuation (SQLite:
+    range scans `seq > cursor`), so a cursored re-poll is cheap while a
+    since_seq=0 re-walk replays the whole life every time."""
     wanted_families = tuple(families) if families is not None else REPLAY_FAMILIES
     # Reserved families are ACCEPTED (they yield nothing from memory — the
     # gateway interleaves them transport-side); unknown names still raise.

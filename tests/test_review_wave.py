@@ -196,9 +196,11 @@ def test_sleep_results_name_themselves():
                                      digest="a single quiet episode")], "night")
     result = sleep_pass(system, scopes=LADDER, owner_id=OWNER, report_only=True)
     assert result["pass_name"] == "sleep_pass"
-    assert result["phases"] == ("maintenance", "dream")
+    assert result["phases"] == ("resolution", "maintenance", "world_models", "dream")
+    assert result["resolution"]["pass_name"] == "resolve_dreams_pass"
     assert result["maintenance"]["pass_name"] == "consolidation_pass"
     assert result["maintenance"]["report"]["pass_name"] == "maintenance_report"
+    assert result["world_models"]["pass_name"] == "world_model_pass"
     assert result["dream"]["pass_name"] == "dream_pass"
 
 

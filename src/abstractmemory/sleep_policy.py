@@ -69,7 +69,48 @@ class SleepTuning:
     facet_min_len: int = 3
     salience_proposal_weight: int = 3
     salience_question_weight: int = 2
+    # Continuation pressure (fork parity, restored 2026-07-12 — the fork
+    # adversary caught the drift): standing unresolved dreams and the
+    # night's maintenance operations both feed salience, so a night with
+    # ONLY a prior unresolved dream can still dream (the recurring-dream
+    # mechanic the module docstring promises). Ops contribution is capped —
+    # a busy tending night is a signal, not a multiplier.
+    salience_anchor_weight: int = 1
+    salience_ops_cap: int = 4
     salience_high: int = 6       # label floor: >= high -> "high", else "medium"
+    # -- passive dream resolution (0032: the day answers the night) -------
+    # Fraction of a dream's tensions (proposals + questions) that must be
+    # INDIVIDUALLY settled by lived experience before the dream closes
+    # softly. 1.0 = ALL (conservative default per the 0032 guidance: a
+    # false resolution erases a real tension silently); hosts may lower it
+    # for entities whose dreams carry many parallel proposals.
+    resolution_fraction: float = 1.0
+    # Max resolving records recorded as closure replacements (evidence).
+    resolution_evidence_bound: int = 8
+    # Lived-use strength floor (adversary P1-5): a co_selected trail
+    # counts as resolution evidence only when the pair co-used across at
+    # least this many DISTINCT traces — one co-display in one prompt is
+    # co-appearance, not lived association (the dream's own resurfacing
+    # keywords co-surface its endpoints, so a single-event floor would
+    # let a dream resolve itself).
+    resolution_trail_min_traces: int = 2
+    # Discriminative-participant gate (adversary P1-2): a participant
+    # stamped on MORE than this fraction of the scanned records is
+    # ambient co-presence (the owner's self-stamp, a constant companion)
+    # and never bridges alone — the maintainer's person-dream case is a
+    # RARE person spanning islands.
+    person_bridge_max_fraction: float = 0.5
+    # -- world-model orientation cards (0033) ------------------------------
+    # Evidence floor: a target needs this many LIVED records before a card
+    # forms (below it, raw episodes serve fine and a card would be noise).
+    world_model_evidence_floor: int = 3
+    # Cards formed/revised per pass (a night refines a few understandings,
+    # never the whole world).
+    world_model_max_cards: int = 4
+    # Source (derived_from) edges carried on a card, newest-first.
+    world_model_max_sources: int = 8
+    # Recurring themes named in the card digest/keywords.
+    world_model_top_facets: int = 6
 
     def resolve_scan_limit(self, scan_limit: "int | None") -> int:
         """Explicit kwarg wins; None falls to the tuned default."""

@@ -46,7 +46,9 @@ from .store import TripleQuery
 __all__ = [
     "DIARY_TYPES",
     "FormationPlan",
+    "INSTRUCTION_CATEGORIES",
     "KIND_RANKS",
+    "LESSON_EVIDENCE_CLASSES",
     "MEMORY_RECORD_KINDS",
     "MemoryRecordInput",
     "ReconstructConfig",
@@ -68,7 +70,12 @@ MEMORY_RECORD_KINDS = frozenset(
      "value", "purpose", "trait", "diary", "interest",
      # Sleep artifact (0023): the felt residue of consolidation — one per
      # pass, review-gated, never promotable to fact (consolidation.py).
-     "dream"}
+     "dream",
+     # Long-term orientation (0033, maintainer 2026-07-12): the refined
+     # understanding of ONE target (person/object/location/time/problem/
+     # idea/concept) across time — sleep-formed, source-linked,
+     # revision-chained, ORIENTATION never authority (world_model.py).
+     "world_model"}
 )
 
 # 0020 kind priority (lower rank orders earlier): identity kinds (value <
@@ -86,8 +93,10 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
     "lesson": 0, "instruction": 1, "decision": 2, "episode": 3, "diary": 3,
     # dream = summary peer (derived artifact; deliberately NOT the fork's
     # rank-0-loud — derived artifacts never gate or dominate recall here).
-    "plan": 4, "summary": 5, "interest": 5, "dream": 5, "answer": 6,
-    "question": 7, "claim": 8, "memory": 9,
+    # world_model = same derived-artifact band: orientation competes as a
+    # summary peer, never outranking lessons or lived episodes (0033).
+    "plan": 4, "summary": 5, "interest": 5, "dream": 5, "world_model": 5,
+    "answer": 6, "question": 7, "claim": 8, "memory": 9,
 })
 
 # Identity-kind attribute conventions (validated at formation). "question"
@@ -98,6 +107,18 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
 # open_problems).
 VALUE_CLASSES = frozenset({"core", "revisable"})
 DIARY_TYPES = frozenset({"note", "idea", "commitment", "reflection", "question", "problem"})
+
+# Lesson-layer conventions (0035, maintainer 2026-07-12: lessons are
+# "something actionable that can reference actual memories and serve as
+# both distilled knowledge and wisdom — critical for the long term
+# evolution of the entity"; fork 095 lineage). All OPTIONAL-but-validated:
+# absence is honest, presence is checked. The evidence ladder is JUDGMENT
+# data (presentation, disposal corroboration) — it never gates recall.
+LESSON_EVIDENCE_CLASSES = frozenset(
+    {"proposed", "single_source", "corroborated", "validated", "disputed"})
+# Fork 490: a taught procedure is not a world lesson — rule (constraint),
+# instruction (how-to), process (multi-step discipline).
+INSTRUCTION_CATEGORIES = frozenset({"rule", "instruction", "process"})
 
 
 def _str_tuple(values: Any) -> Tuple[str, ...]:
@@ -245,6 +266,68 @@ class MemoryRecordInput:
                     "diary projections (provenance.source='diary-projection') must carry "
                     "attributes.entry_id — the graph record must be verifiable against the book"
                 )
+
+        if kind in ("lesson", "instruction"):
+            # 0035 conventions — optional-but-validated (absence is honest;
+            # presence is checked; nothing here ever gates recall):
+            # applies_when/caveats normalize to string tuples and
+            # applies_when tokens JOIN the keywords (findability: a lesson
+            # about "sqlite migrations" surfaces when migrations come up —
+            # plumbing tokenization, never cognition filtering).
+            for field_name in ("applies_when", "caveats"):
+                raw = attributes.get(field_name)
+                if raw is None:
+                    continue
+                values = (raw,) if isinstance(raw, str) else raw
+                if not isinstance(values, (list, tuple)) or not all(
+                        isinstance(v, str) and v.strip() for v in values):
+                    raise ValueError(
+                        f"kind={kind!r} attributes.{field_name} must be a non-empty "
+                        f"string or a list of non-empty strings (got {raw!r})"
+                    )
+                attributes[field_name] = [str(v).strip() for v in values]
+            if attributes.get("applies_when"):
+                from .text_tokens import tokenize
+
+                applicability_tokens = tokenize(" ".join(attributes["applies_when"]))
+                if not applicability_tokens:
+                    # tokenize()'s own contract: zero tokens for non-Latin
+                    # text must be LABELED by the caller — a lesson whose
+                    # applicability adds no findability should say so
+                    # rather than silently no-op (adversary P2).
+                    import warnings as _warnings
+
+                    _warnings.warn(
+                        "#FALLBACK: applies_when yielded no recall tokens "
+                        f"(non-Latin or too short: {attributes['applies_when']!r}) "
+                        "— the lesson gains no applicability findability",
+                        RuntimeWarning, stacklevel=2)
+                merged = list(self.keywords)
+                for token in sorted(applicability_tokens):
+                    if token not in merged:
+                        merged.append(token)
+                object.__setattr__(self, "keywords", tuple(merged))
+            evidence_class = attributes.get("evidence_class")
+            if evidence_class is not None:
+                normalized = str(evidence_class or "").strip().lower()
+                if normalized not in LESSON_EVIDENCE_CLASSES:
+                    raise ValueError(
+                        f"attributes.evidence_class must be one of "
+                        f"{sorted(LESSON_EVIDENCE_CLASSES)} (got {evidence_class!r}); "
+                        "omit the key for an unlabeled lesson"
+                    )
+                attributes["evidence_class"] = normalized
+        if kind == "instruction":
+            category = attributes.get("category")
+            if category is not None:
+                normalized = str(category or "").strip().lower()
+                if normalized not in INSTRUCTION_CATEGORIES:
+                    raise ValueError(
+                        f"kind='instruction' attributes.category must be one of "
+                        f"{sorted(INSTRUCTION_CATEGORIES)} (got {category!r}); "
+                        "omit the key for an uncategorized instruction"
+                    )
+                attributes["category"] = normalized
         object.__setattr__(self, "attributes", attributes)
 
         if self.payload_ref is not None:
@@ -592,6 +675,14 @@ class ReconstructConfig:
     # RecallBudget.stm_floor is None. 1.0 ≈ "used at least once recently on
     # the activity axis" after decay.
     stm_floor: float = 1.0
+    # Concept anchoring (fork memory_anchor.rs port, 2026-07-12): edge-free
+    # associative expansion from channel-matched seeds. OFF by default —
+    # passive recall keeps its golden byte-stability; hosts opt in here,
+    # and probe() runs the pass with expansion ON by its own default.
+    # concept_tuning is typed Any to keep the records module import-light
+    # (the real type is concept_anchor.ConceptAnchorTuning; None = defaults).
+    concept_expansion: bool = False
+    concept_tuning: Any = None
 
     def kind_of(self, assertion: TripleAssertion) -> str:
         attrs = assertion.attributes if isinstance(assertion.attributes, dict) else {}

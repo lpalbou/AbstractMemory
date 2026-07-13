@@ -7,6 +7,240 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (subconscious + long-term-knowledge wave, 2026-07-12 — maintainer-authorized; backlog track `planned/subconscious_wave/` 0032-0035)
+
+Four capabilities from the maintainer's ruling (dreams as subconscious
+opportunities; world-model cards as knowledge refined over time; situate
+as full context-at-T; lessons as distilled actionable wisdom):
+
+- **Dream subconscious lifecycle** (0032): dreams now FORM with
+  resurfacing metadata — keywords/participants drawn from their own
+  tension vocabulary (shared facets/participants of the proposals and
+  questions they stand for; continuation dreams inherit their parents')
+  — so normal recall surfaces a dream exactly when its trigger appears
+  ("I meet the person and the dream resurfaces"); influence = admission,
+  never a push. NEW `dream_resolution.resolve_dreams_pass` (the day
+  answers the night): at the sleep boundary, standing dreams whose
+  tension lived experience already settled close SOFTLY — bridge
+  proposals resolve when the pair is now joined (authored story or warm
+  co_selected trail), facet questions when a NEW post-dream record
+  carries the facet and touches an endpoint, continuation dreams when
+  their re-lit lineage settles; conservative by default
+  (`SleepTuning.resolution_fraction=1.0` — all tensions must settle),
+  append-only (supersede closure carrying the resolving evidence),
+  deposits nothing. Person-bridges: a shared NON-OWNER participant alone
+  now proposes a bridge (a person spanning two unconnected islands of a
+  life IS a tension; the owner's universal self-stamp never proposes).
+  Tension-bearing dreams always stand `continuation_state="unresolved"`
+  (the old proposals-only "changed_understanding" left them
+  unresolvable at birth, contradicting their own digest).
+- **World-model orientation cards** (0033, fork 750/ADR 0019 shape):
+  `world_model.world_model_pass` — one card per TARGET (participants
+  except the owner; `topic:` strings) clearing the evidence floor:
+  kind="world_model" (KIND_RANKS: summary band — orientation never
+  outranks lessons or lived episodes), mechanical-v1 digest that names
+  its own limits ("orientation, never authority"), `derived_from` edges
+  to the evidence, revision chain (`refines` + supersede closure,
+  current-wins), fingerprint-idempotent, participants-channel surfacing
+  for free (the card arrives with the encounter — the SITUATION
+  component's "profile recall" leg). Derived artifacts (dreams, cards,
+  maintenance candidates) never evidence a card; cards excluded from the
+  dream substrate and tending inputs (loop-breakers).
+- **situate()** (0034 — the temporal graph made usable):
+  `MemorySystem.situate(scopes, at=|seq=|participant=..., occurrence=)`
+  rebuilds a past moment — the working set actually held then (nearest
+  trace+snapshot), what was warm (activation at_seq), the period's
+  records, elected diary act-frames, identity AS OF the anchor, the
+  identity EVOLUTION since (added/closed — the maintainer's nuance as
+  data: the evolved self reads the past), and the tensions open at that
+  time (closures fold as-of the anchor: later closures never leak into
+  the past). Relational anchors resolve "when I first/last met X".
+  PURE READ, everything labeled `admission="historical"`, deposits
+  nothing; `SituateBudget` declares every bound.
+- **Lessons layer conventions** (0035, fork 095/490): `applies_when` /
+  `caveats` optional-but-validated on lesson/instruction records, with
+  applies_when tokens JOINING the keywords (findability, never gating);
+  `evidence_class` ∈ {proposed, single_source, corroborated, validated,
+  disputed} and instruction `category` ∈ {rule, instruction, process}
+  validated loudly when present, absent = honest unlabeled; tending
+  gains `unsourced_lessons` (a lesson with no derivation edges and no
+  import provenance is named for a waking re-digestion — never refused:
+  real teachings arrive without machine-readable sources).
+- **sleep_pass is now four phases** — resolution → maintenance →
+  world_models → dream (the night reviews the day, tends the graph,
+  refines understanding, then dreams); result carries all four
+  self-describing sub-results. `COMPONENT_RELATIONS` gains `refines`
+  (derivation family).
+
+Two adversarial reviews (fable5, one per lane) attacked the wave; all
+findings absorbed:
+
+- **Dreams/world-models lane**: resolution now reads an EVIDENCE-GRADE
+  report (`structural_report(evidence_grade=True)` — closures folded,
+  maintenance candidates excluded): sleep's own artifacts can no longer
+  resolve dreams (P0), retracted stories stop joining islands, closed
+  endpoints leave tensions standing (P0). Continuation dreams STAND
+  (`continued` joins the unresolved filter) so lineage resolution is
+  reachable. The bridge-attractor guard applied in full: a
+  DISCRIMINATIVE-participant gate (`person_bridge_max_fraction`) — the
+  owner and any constant companion never bridge alone, never promote
+  questions, never land in dream participants (the deployed
+  every-record-stamped shape is pinned: zero proposal flood, no
+  resurface-every-turn). Lived-use resolution needs co-use across
+  ≥`resolution_trail_min_traces` distinct traces (one co-display is
+  co-appearance, not association). World-model revision close is
+  unconditional + a standing-duplicates repair heals crash-interrupted
+  supersedes; evidence folds hidden bindings; `unchanged` checked before
+  budget; blank owner refuses. Every sleep-lane write phase refuses
+  `as_of` anchors loudly (report_only stays legal; anchored nights skip
+  the current-state world-model phase honestly). `DISPOSAL_RELATIONS`
+  decoupled from COMPONENT_RELATIONS (the `refines` widening must not
+  make revision chains confirmable claims).
+- **Situate/lessons lane** (no P0s): `tensions_then` now folds the diary
+  lane's REFERENCE-resolution semantics as-of the anchor (a question
+  answered before the anchor — by `attributes.answers/resolves` or an
+  authored answers/resolves edge — was not an open tension of that
+  moment); activity uses the engine's own per-scope-then-MAX activation
+  fold (cross-scope summing double-counted); the moment's trace must
+  scope-overlap the request and its snapshot read is anchored (a commit
+  after the anchor never leaks into the past); `SituateBudget` refuses
+  negatives and zero means NOTHING (the `window_records=0` slice bug
+  served almost everything); relational anchors resolve over the single
+  digest scan (no per-binding query storm); then-identity deduplicates
+  across ladder scopes; transient identity (formed and closed after the
+  anchor) labels `added_and_closed_since`; results carry
+  `period_axis="formation_seq"` + `token_exhausted` honesty labels.
+  Tending's import-provenance read matches the REAL archive-importer
+  shape (`seeded_from` + `provenance.archive_path` — its own lessons
+  were being flagged unsourced); non-Latin `applies_when` warns
+  `#FALLBACK` instead of silently adding no findability.
+
+45 new test pins across `test_dream_resolution`, `test_world_model`,
+`test_situate`, `test_lessons_layer` (incl. SQLite-backend purity/anchor
+coverage); full suite 711 green + the cross-package emergence gate 9/9
+against this tree.
+
+### Added (active reconstruction + disposal wave, 2026-07-12 — maintainer-directed fork adoptions)
+
+Four memory processes from the fork-comparison adoption ledger (backlog
+0030), built/tested/adversary-reviewed in one wave. The orchestration
+story they complete: PASSIVE recall at turn open (the emergent working
+set) → ACTIVE reach when the mind knows what it is looking for (probe,
+effort-sized) → EXPANSION along edges (the second disclosure step) →
+COMMIT of what was displayed (the one strengthening path) → SLEEP
+proposes (dream/tending) → WAKING EVIDENCE disposes (confirm / promote /
+reject / dissolve) → the DECISION READS explain any felt absence.
+
+- **`probe()` + `probe_expand()`** (`probe.py`; 0022 via the fork's
+  battle-tested 090/091 shape): the deliberate reach, EXEMPT from the
+  shelf race — channels-only active reconstruction (no identity seats, no
+  STM union, no activation boost; relevance-pure ranking so a never-used
+  record can win). `reason` is MANDATORY and lands as the trace's
+  escalation_reason (audited deliberate acts). Efforts are the Mnemosyne
+  vocabulary — quick / standard / deep (`PROBE_EFFORTS` presets over
+  `ProbeBudget`; more or less room by available time). Expansion walks
+  record edges BOTH directions, bounded by depth/count/tokens, honoring
+  closure/hidden folds; its trace records the parent probe. Pure reads:
+  probes deposit nothing (listed/expanded audit events only); hits carry
+  BOTH id namespaces (record_id=row/commit currency, graph_id=edge
+  currency — the observer's join lesson).
+- **Concept anchoring** (`concept_anchor.py`; memory_anchor.rs port):
+  edge-free associative recall — variant normalization (camelCase/snake/
+  kebab split + joined bigrams: "auto memory" ≈ "auto-memory" ≈
+  "autoMemory"), a mid-frequency DISCRIMINATIVE gate ([min_sources,
+  max_sources] — below is noise, above is a stop-concept), and rarity-
+  weighted co-occurrence admissions: a record sharing a discriminative
+  concept with a seed surfaces even when the query never contained the
+  term. Attacks cue dilution and keyword-less young episodes directly.
+  OFF by default in passive recall (`ReconstructConfig.concept_expansion`;
+  golden results stay byte-stable), ON by default in probe().
+- **Recall-decision reads** (`recall_reads.py`; fork 605): "why was X
+  (never) recalled" as a query — `recall_history` classifies the record's
+  part per trace (selected with admission label / dropped with the
+  recorded reason / candidate-only / absent) across probe and reconstruct
+  traces; `absence_diagnosis` names STRUCTURAL barriers in mechanism terms
+  (closed, hidden, wrong scope, no formation keywords → keyword channel
+  limits, no stored vector → reembed backfills). Facade:
+  `MemorySystem.recall_history(record_id, scope=...)`.
+- **Disposal — waking evidence decides** (`disposal.py`; fork 690+360+470):
+  `confirm_relation` turns a sleep proposal into a REAL typed edge
+  (engraved vocabulary only — unregistered predicates refuse naming the
+  semantics-registry path; evidence mandatory; the proposing dream can
+  never self-evidence; idempotent by endpoints; `cited` audit events —
+  judging is not using). `promote_candidate` enforces INDEPENDENT-ORIGIN
+  corroboration — origins = (provenance source, actor, session); ≥2
+  distinct origins different from the candidate's own, so self-retellings
+  can never corroborate themselves into promotion (the bridge-attractor
+  counter, refusing with the mechanism named). `reject_candidate` records
+  the honest no without erasure. `dispose_dream` composes the verdict:
+  confirmed → edge + supersede closure (the dream leaves the standing
+  set); dissolved → retract. Promotion never flips prompt_state
+  implicitly (warm-core flips must be said).
+- **Archive import** (`archive_import.py`; fork 720 — the lineage path):
+  manifest-driven (the operator's word per file, never heuristic
+  classification), two-stage (plan_import = pure dry run; apply_import =
+  idempotent batched formation). Identity is NEVER imported sideways —
+  value/purpose/trait/capability/self-model files become a DRAFT SPARK
+  returned for operator review (the engram stays the only identity seed);
+  feelings become PROPOSED appraisals (never applied — valence rides its
+  gated channels); verbatims map to payload_ref references; every record
+  pins provenance path+sha256 with origin_date as an attribute
+  (observed_at stays import time — append-only truth). Idempotency is
+  ORDER-INDEPENDENT (batches sort by content key: a reordered manifest
+  re-runs into the same records); paths escaping the archive root refuse.
+  NEVER run by an agent on its own initiative; tests use synthetic
+  fixtures only.
+
+Two adversarial reviews (fable5) attacked the wave and their findings are
+absorbed — one lane each:
+
+- **Disposal/import lane**: order-independent import idempotency (batches
+  sort by content key — a reordered manifest was minting duplicate
+  records); archive-root path containment for verbatim/index reads;
+  `min_origins` floor validation; disposal accepts BOTH id namespaces via
+  `resolve_digest_assertion`; `DISPOSAL_RELATIONS` tightened to component
+  vocabulary (mentions/written_amid are context, not confirmable claims);
+  re-confirmation with NEW evidence gets its own audit event (evidence
+  hash in the event id).
+- **Active-reconstruction lane**: `probe_expand` roots now resolve through
+  BOTH namespaces and unknown roots refuse loudly (the works-or-loud rule
+  — a probe hit's row id used to walk into a silent zero-hit expansion);
+  scopeless expansion derives containment from the roots' own scopes and
+  honors the HIDDEN fold (was closures-only, and cross-scope edges pulled
+  foreign digests); the walk is bounded per node and by a discovery cap
+  (a hub node no longer triggers O(degree) unbounded scans); ranking is
+  by CONNECTION COUNT descending (more distinct edges = stronger evidence;
+  the old key ranked least-connected strangers first); `recall_history` /
+  `absence_diagnosis` join traces through both namespaces so one input id
+  answers both halves (the hidden-fold diagnosis could never fire on a
+  graph id — assertion-id fold); probe results label window saturation
+  (keyword/concept scans cover the newest candidate window per scope —
+  honest reach, FTS5/0019 is the lift); supplied-trace-id probe/expand
+  audit events carry derived event_ids (at-least-once replay dedupe);
+  probe validates `as_of` boundaries like reconstruct.
+
+33 new test pins across `test_probe.py`, `test_recall_reads.py`,
+`test_disposal.py`, `test_archive_import.py`; full suite 663 green.
+
+### Fixed (fork-parity dream salience, 2026-07-12)
+
+A maintainer-directed comparison against the codex fork (two adversarial
+audits: capability mining + port-fidelity) caught a silent drift in
+`dream_pass`: the fork's continuation-anchor and maintenance-ops salience
+terms were missing while `sleep_policy.py` claimed "fork parity at
+defaults". Restored: standing unresolved dreams and the night's tending
+operations now feed salience (`SleepTuning.salience_anchor_weight`,
+`salience_ops_cap` — ops capped so a busy night is a signal, never a
+multiplier); an anchors-only night forms a CONTINUATION dream
+(`continuation_state="continued"`) sourced from the standing dream — the
+recurring-dream mechanic; `sleep_pass` threads the tending ledger's
+operation count into the dream. The comparison's full adoption ledger
+(probe/expansion, disposal surface, archive import, concept anchoring,
+recall-decision reads — plus the folklore corrections: the fork has NO
+valence code and its attention fold IS our hyperbolic fold) is backlog
+0030. Pinned by `test_continuation_anchors_and_ops_feed_salience` and
+`test_anchors_only_night_forms_a_continuation_dream`.
+
 ### Added (embedding-pin incident hardening, 2026-07-11)
 
 Follow-through on the Mnemosyne incident (a first-write pin recorded an
@@ -33,6 +267,22 @@ table (neutrality rule):
   (`tests/test_embedding_pin.py`). Repair rehearsal artifacts (runbook +
   runnable fixture rehearsal) under
   `untracked/incident-2026-07-11-mnemosyne-embedding-pin/`.
+- **Vector channel degrades on ANY embed failure** (`channels.py`): the
+  embedder is a network client whose provider stack raises its own
+  exception types — the live incident's `LMStudio API error (400)`
+  subclassed neither `ValueError` nor `RuntimeError`, escaped the old
+  narrow catches, and turned a misconfigured embedding route into a dead
+  entity turn. Both vector-channel sites (pipeline embed of the cue, and
+  `store.query` whose `query_text` arm embeds through the store's own
+  client) now catch `Exception`, label `#FALLBACK: vector channel
+  unavailable` with the store-pin suffix, and let the recall proceed on
+  the remaining channels. The engine cannot enumerate provider exception
+  types (import boundary forbids abstractcore), so catch-everything at
+  this enrichment-only boundary IS the general contract. Exact/keyword
+  channels stay strict. Pinned by
+  `test_provider_error_degrades_vector_channel_never_kills_recall`
+  (both arms, incident shape: healthy at write time, rogue at query
+  time).
 
 ### Changed (adversarial-review wave — vocabulary/parameters/abstractions, 2026-07-10)
 Three independent adversarial reviews (vocabulary neutrality, parameter

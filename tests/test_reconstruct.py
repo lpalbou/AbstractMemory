@@ -160,6 +160,51 @@ def test_vector_channel_unavailable_falls_back_labeled() -> None:
     assert {h.record_id for h in result.handles} == {"v-1"}
 
 
+def test_provider_error_degrades_vector_channel_never_kills_recall() -> None:
+    """2026-07-11 incident pin: the embedder is a NETWORK CLIENT whose
+    provider stack raises its own exception types (the live failure was
+    `LMStudio API error (400)` — neither ValueError nor RuntimeError). The
+    old narrow catch let it escape run_vector_channel and turn a
+    misconfigured embedding route into a dead entity turn. Contract: ANY
+    embed failure degrades the vector channel with a labeled #FALLBACK and
+    the recall proceeds on the remaining channels."""
+
+    class ProviderAPIError(Exception):
+        """Stands in for abstractcore's provider exceptions (import boundary
+        forbids importing the real one here — the point IS that the engine
+        cannot enumerate provider types)."""
+
+    class RefusingEmbedder:
+        def embed_texts(self, texts):
+            raise ProviderAPIError(
+                'LMStudio API error (400): {"error": "Invalid model identifier ..."}'
+            )
+
+    # Pipeline-embed arm (the incident's live path): injected embedder 400s.
+    store = InMemoryTripleStore(embedder=None)
+    store.add([_assertion("p-1", "alice", "wrote", "report", 1)])
+    result, trace = _run(store, Stimulus(cue_text="report"), embedder=RefusingEmbedder())
+    assert any(
+        w.startswith("#FALLBACK: vector channel unavailable:") and "LMStudio API error (400)" in w
+        for w in result.warnings
+    )
+    assert "vector" not in trace.channels
+    assert {h.record_id for h in result.handles} == {"p-1"}  # recall survived
+
+    # Store-embed arm (query_text through the store's OWN embedder): same
+    # provider class, same degradation contract. The incident shape exactly:
+    # rows were WRITTEN while the provider was healthy; the route went rogue
+    # before the query — so the store embeds fine at add time and 400s at
+    # query time.
+    store2 = InMemoryTripleStore(embedder=TopicEmbedder())
+    store2.add([_assertion("p-2", "alice", "read", "novel", 1)])
+    store2._embedder = RefusingEmbedder()
+    result2, trace2 = _run(store2, Stimulus(cue_text="novel"))
+    assert any(w.startswith("#FALLBACK: vector channel unavailable:") for w in result2.warnings)
+    assert "vector" not in trace2.channels
+    assert {h.record_id for h in result2.handles} == {"p-2"}
+
+
 def test_vector_channel_with_embedder_normalized_scores() -> None:
     emb = TopicEmbedder()
     store = InMemoryTripleStore(embedder=emb)
