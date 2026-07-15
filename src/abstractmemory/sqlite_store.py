@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Sequence
 
 from .embedding_pin import (
     annotate_embed_failure,
@@ -156,6 +156,98 @@ class SQLiteTripleStore:
             f"CREATE TABLE IF NOT EXISTS {self._table}_meta "
             "(key TEXT PRIMARY KEY, value TEXT)"
         )
+        # KEYWORD INDEX (0019's FTS5 half): an external-content FTS5 table
+        # over the canonical `text` column, maintained append-only via a
+        # high-water rowid cursor (`fts_high_water` in the meta sidecar).
+        # Capability-DETECTED: a Python/sqlite build without FTS5 leaves the
+        # store fully functional — the keyword channel keeps its labeled v1
+        # scan (same posture as vectorless rows). Backfill runs at open for
+        # pre-FTS homes (in-place-upgrade precedent, same as the embedding
+        # column above); the cursor makes it idempotent and O(new rows).
+        try:
+            cur.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS {self._table}_fts "
+                f"USING fts5(text, content={self._table}, content_rowid=rowid)"
+            )
+            self._fts_supported = True
+        except sqlite3.OperationalError:
+            self._fts_supported = False
+        if self._fts_supported:
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                self._sync_fts_index(cur)
+                cur.execute("COMMIT")
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
+
+    def _sync_fts_index(self, cur: sqlite3.Cursor) -> None:
+        """Index rows above the high-water rowid (caller owns the
+        transaction). Append-only makes this exact: new rows always carry a
+        higher rowid, and INSERT OR IGNORE duplicates never re-insert, so
+        the cursor can never skip or double-index a row. Edge/bookkeeping
+        assertions are excluded — parity with the embedding rule (graph
+        structure is not prose)."""
+        if not getattr(self, "_fts_supported", False):
+            return
+        row = cur.execute(
+            f"SELECT value FROM {self._table}_meta WHERE key = 'fts_high_water'"
+        ).fetchone()
+        high_water = int(row[0]) if row and str(row[0]).lstrip("-").isdigit() else 0
+        cur.execute(
+            f"INSERT INTO {self._table}_fts (rowid, text) "
+            f"SELECT rowid, COALESCE(text, '') FROM {self._table} "
+            "WHERE rowid > ? "
+            "AND json_extract(COALESCE(attributes_json, '{}'), '$.record_edge') IS NULL "
+            "AND json_extract(COALESCE(attributes_json, '{}'), '$.bookkeeping') IS NULL",
+            (high_water,),
+        )
+        new_high = cur.execute(
+            f"SELECT COALESCE(MAX(rowid), ?) FROM {self._table}", (high_water,)
+        ).fetchone()[0]
+        cur.execute(
+            f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
+            "VALUES ('fts_high_water', ?)", (str(int(new_high)),))
+
+    @property
+    def supports_keyword_search(self) -> bool:
+        """True when the FTS5 keyword index is available on this store —
+        the keyword channel's discovery capability check (0019)."""
+        return bool(getattr(self, "_fts_supported", False))
+
+    def query_keywords(
+        self, tokens: Sequence[str], *, scope: str,
+        owner_id: Optional[str] = None, limit: int = 32,
+    ) -> List[TripleAssertion]:
+        """Keyword DISCOVERY over the FTS5 index: rows in (scope, owner)
+        matching ANY of the tokens, best-match first (BM25). Pure read.
+        Tokens are matched as quoted terms (the caller tokenizes — one
+        tokenizer for scan and discovery keeps scoring consistent). Raises
+        if the store lacks FTS5 — callers gate on supports_keyword_search."""
+        if not self.supports_keyword_search:
+            raise ValueError(
+                "SQLiteTripleStore: FTS5 keyword index unavailable on this "
+                "build — gate on supports_keyword_search before calling"
+            )
+        terms = [str(t).strip().replace('"', "") for t in tokens]
+        terms = [t for t in terms if t]
+        if not terms or int(limit) <= 0:
+            return []
+        match = " OR ".join(f'"{t}"' for t in terms)
+        owner_clause = "AND t.owner_id = ?" if owner_id is not None else "AND t.owner_id IS NULL"
+        params: List[Any] = [match, str(scope)]
+        if owner_id is not None:
+            params.append(str(owner_id))
+        params.append(int(limit))
+        with self._lock:
+            rows = self._conn.cursor().execute(
+                f"SELECT t.* FROM {self._table}_fts f "
+                f"JOIN {self._table} t ON t.rowid = f.rowid "
+                f"WHERE {self._table}_fts MATCH ? AND t.scope = ? {owner_clause} "
+                f"ORDER BY bm25({self._table}_fts), t.rowid DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [self._row_to_assertion(r) for r in rows]
 
     def embedding_pin(self) -> Optional[dict]:
         """The store's embedding-space pin `{model_id, dimension, source,
@@ -268,6 +360,11 @@ class SQLiteTripleStore:
                     """,
                     rows,
                 )
+                # Keyword index rides the SAME transaction: a rolled-back
+                # batch indexes nothing; the high-water cursor makes the
+                # sync exact under OR IGNORE dedup (skipped rows sit below
+                # the cursor already).
+                self._sync_fts_index(cur)
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")

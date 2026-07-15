@@ -103,6 +103,11 @@ class ProbeBudget:
     token_budget: int = 2400      # digest tokens across returned hits
     concept_expansion: bool = True
     concept_tuning: ConceptAnchorTuning = DEFAULT_CONCEPT_TUNING
+    # Keyword DISCOVERY (0019's FTS5 half): probe is the deliberate reach,
+    # so discovery defaults ON at every effort — one indexed query per
+    # scope pair (sub-ms measured on the Castor archive), capability-
+    # detected (stores without FTS5 keep the scan + honest labels).
+    keyword_discovery: bool = True
     # Expansion defaults consumed by probe_expand when the caller passes
     # this budget through (kept here so ONE object sizes the whole reach).
     expand_depth: int = 1
@@ -278,12 +283,15 @@ def _channel_pass(
     excluded: Set[str],
     embedder: Any,
     config: ReconstructConfig,
+    keyword_discovery: bool = False,
 ) -> _ChannelPass:
     """The store-facing candidate pass probe() and familiarity() share: the
     recents-window gather + exact/vector/keyword/participants admission
     loop. Pure read; relevance only (no activation, no seats, no STM).
-    Extracted verbatim from probe() — its behavior is pinned by the probe
-    suite and must stay byte-identical for that caller."""
+    Extracted verbatim from probe(); keyword_discovery (0019 FTS5) is the
+    one additive knob since — probe passes its budget's default-ON flag,
+    familiarity deliberately keeps it OFF (its density bars were live-
+    calibrated on the scan universe; widening it needs an A/B re-run)."""
     warnings: List[str] = []
     # RecallBudget carries the per-channel fetch bound the channel runners
     # read (max_candidates); the rest of the shelf budget is irrelevant to
@@ -317,17 +325,24 @@ def _channel_pass(
             if kept >= cap:
                 window_saturated.append(scope)
                 break
+    discovery_live = bool(keyword_discovery) and bool(
+        getattr(store, "supports_keyword_search", False))
     if window_saturated:
-        # Honest reach label (adversary F6): the keyword/participants/
-        # concept scans cover the newest window only — an OLD vectorless
-        # keyword-only record is beyond them at any effort. Exact anchors
-        # and vector search still reach the whole store; FTS5 (0019) is
-        # the standing fix for whole-store lexical reach.
-        warnings.append(
-            f"probe window saturated in scope(s) {sorted(set(window_saturated))}: "
-            f"keyword/concept scans cover the newest {cap} records per scope — "
-            "older records are reachable via exact anchors or vector search only "
-            "(deep effort widens the window; FTS5/0019 lifts it)")
+        # Honest reach label (adversary F6), in two truthful variants: with
+        # FTS5 discovery live, LEXICAL reach is store-wide and only the
+        # participants/concept scans stay window-bound; without it, the
+        # original label stands (FTS5/0019 named as the standing fix).
+        if discovery_live:
+            warnings.append(
+                f"probe window saturated in scope(s) {sorted(set(window_saturated))}: "
+                f"participants/concept scans cover the newest {cap} records per scope — "
+                "keyword discovery (FTS5), exact anchors and vector search reach the whole store")
+        else:
+            warnings.append(
+                f"probe window saturated in scope(s) {sorted(set(window_saturated))}: "
+                f"keyword/concept scans cover the newest {cap} records per scope — "
+                "older records are reachable via exact anchors or vector search only "
+                "(deep effort widens the window; FTS5/0019 lifts it)")
 
     # --- store-facing channels (relevance only; no activation, no seats) --
     exact_results, exact_found, exact_ran = run_exact_channel(
@@ -354,9 +369,15 @@ def _channel_pass(
     # --- universe-facing channels (recents + discoveries) ------------------
     scan_universe: Dict[str, TripleAssertion] = dict(gathered)
     scan_universe.update(universe)
-    kw_results, kw_ran = run_keyword_channel(stimulus.cue_text, scan_universe, warnings)
+    kw_results, kw_found, kw_ran = run_keyword_channel(
+        stimulus.cue_text, scan_universe, warnings,
+        store=store if discovery_live else None,
+        scope_pairs=scope_pairs,
+        discovery_limit=cap if discovery_live else 0,
+    )
     if kw_ran:
         channels_run.append("keyword")
+    scan_universe.update(kw_found)  # discovered rows join the later scans too
     for r in kw_results:
         a = scan_universe.get(r.record_id)
         if a is not None:
@@ -409,7 +430,8 @@ def probe(
     cpass = _channel_pass(
         store, stimulus=stimulus, scope_pairs=scope_pairs,
         max_candidates=int(budget.max_candidates), excluded=excluded,
-        embedder=embedder, config=config)
+        embedder=embedder, config=config,
+        keyword_discovery=bool(budget.keyword_discovery))
     universe = cpass.universe
     relevance = cpass.relevance
     cues = cpass.cues

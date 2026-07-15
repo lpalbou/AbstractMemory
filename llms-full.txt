@@ -913,7 +913,7 @@ store = SQLiteTripleStore("memory.sqlite3")
 journal = SQLiteJournal("memory.sqlite3")
 system = MemorySystem(store=store, journal=journal)
 
-eid = "entity:castor@<home-id>"   # the entity id, from manifest.json
+eid = "entity:castor"   # the entity id, from manifest.json (entity:<name>)
 ```
 
 The home's scope ladder is `("self", eid)` for identity, `("diary", eid)` for diary projections, and `("life", eid)` for lived episodes. Everything below is a **pure read** — nothing you do here strengthens, weakens, or touches the entity's memory (reading is not using; only `commit_selection` deposits).

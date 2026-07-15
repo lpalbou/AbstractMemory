@@ -237,13 +237,18 @@ def run_reconstruction(
 
         # Keyword + participants run last, over the full universe (recents +
         # exact + vector discoveries), so no channel-found candidate misses
-        # their scores. Both are universe re-scores (no store discovery).
-        keyword_results, keyword_ran = run_keyword_channel(
-            stimulus.cue_text, {rid: c.assertion for rid, c in universe.items()}, warnings
+        # their scores. Keyword gains store DISCOVERY when the host opts in
+        # (config.keyword_discovery + an FTS5-capable store, 0019);
+        # participants stays a universe re-score.
+        keyword_results, keyword_found, keyword_ran = run_keyword_channel(
+            stimulus.cue_text, {rid: c.assertion for rid, c in universe.items()}, warnings,
+            store=store if config.keyword_discovery else None,
+            scope_pairs=scope_pairs,
+            discovery_limit=int(budget.max_candidates) if config.keyword_discovery else 0,
         )
         if keyword_ran:
             channels_run.append("keyword")
-            _apply_channel_results(universe, keyword_results, {}, excluded_ids)
+            _apply_channel_results(universe, keyword_results, keyword_found, excluded_ids)
 
         participant_results, participants_ran = run_participants_channel(
             stimulus, {rid: c.assertion for rid, c in universe.items()}, warnings

@@ -57,7 +57,8 @@ REPLAY_FAMILIES = ("event", "binding", "closure", "trace", "snapshot", "valence"
 RESERVED_FAMILIES = frozenset({"host"})
 
 
-def _lift_scope_owner(family: str, record: Any, journal: Any, store: Any) -> tuple:
+def _lift_scope_owner(family: str, record: Any, journal: Any, store: Any,
+                      memo: Optional["_ExportMemo"] = None) -> tuple:
     """Lift (scope, owner_id) for filter-without-parse (0005 §1): direct
     fields for events/bindings/valence; traces lift from their searched-
     scopes set (single pair → it; mixed → ""). TWO SPEC GAPS fixed
@@ -67,7 +68,8 @@ def _lift_scope_owner(family: str, record: Any, journal: Any, store: Any) -> tup
     if family in ("event", "binding", "valence"):
         return record.scope, record.owner_id
     if family == "closure":
-        a = resolve_digest_assertion(store, record.assertion_id)
+        a = (memo.resolve(record.assertion_id) if memo is not None
+             else resolve_digest_assertion(store, record.assertion_id))
         return (a.scope, a.owner_id or "") if a is not None else ("", "")
     if family == "trace":
         pairs = {(str(s.get("scope") or ""), str(s.get("owner_id") or ""))
@@ -78,7 +80,7 @@ def _lift_scope_owner(family: str, record: Any, journal: Any, store: Any) -> tup
     # snapshot: resolve through the trace it references.
     rows = journal.traces(trace_id=record.trace_id, limit=1)
     if rows:
-        return _lift_scope_owner("trace", rows[0], journal, store)
+        return _lift_scope_owner("trace", rows[0], journal, store, memo)
     return "", ""
 
 
@@ -145,15 +147,60 @@ def _display_block(assertion: Any, requested_id: str) -> Dict[str, Any]:
     return block
 
 
-def _enrich(family: str, record: Any, store: Any) -> Optional[Dict[str, Any]]:
+class _ExportMemo:
+    """Per-export resolve/edges caches (entity's c2394 profiling: the N+1
+    resolve_digest_assertion + per-binding edge query were ~45% of stream
+    generation on a lived home). Records are IMMUTABLE and journal rows
+    only ever reference records that already exist at their seq, so a
+    per-export memo is exactly correct — and it additionally gives one
+    export ONE consistent edge snapshot. Scoped to a single export_replay
+    call (never module-global): size is bounded by the home's distinct
+    record count, and a fresh export always sees the current store."""
+
+    __slots__ = ("store", "resolved", "edges")
+
+    def __init__(self, store: Any) -> None:
+        self.store = store
+        self.resolved: Dict[str, Any] = {}
+        self.edges: Dict[str, Any] = {}
+
+    def resolve(self, rid: str) -> Any:
+        if rid in self.resolved:
+            return self.resolved[rid]
+        a = resolve_digest_assertion(self.store, rid)
+        self.resolved[rid] = a
+        return a
+
+    def formation_edges(self, a: Any) -> Any:
+        key = str(a.subject)
+        if key in self.edges:
+            return self.edges[key]
+        from .store import TripleQuery  # local: keep module imports lean
+
+        edges = [
+            {"relation": e.predicate, "target_graph_id": e.object}
+            for e in self.store.query(TripleQuery(subject=a.subject, scope=a.scope,
+                                                  owner_id=a.owner_id or None, limit=0))
+            if isinstance(e.attributes, dict) and e.attributes.get("record_edge")
+        ]
+        result = sorted(edges, key=lambda x: (x["relation"], x["target_graph_id"])) if edges else None
+        self.edges[key] = result
+        return result
+
+
+def _enrich(family: str, record: Any, store: Any,
+            memo: Optional["_ExportMemo"] = None) -> Optional[Dict[str, Any]]:
     """Optional display block (0005 §3) for record-bearing items, resolved
     from the store at export time. Absent when unresolvable — NEVER
-    fabricated. Records are immutable, so enrichment keeps determinism."""
+    fabricated. Records are immutable, so enrichment keeps determinism
+    (and the per-export memo keeps it CHEAP — see _ExportMemo)."""
+    resolve = memo.resolve if memo is not None else (
+        lambda rid: resolve_digest_assertion(store, rid))
     if family == "event":
         if record.pair_ids:  # co_selected: both pair members
             members = []
             for rid in record.pair_ids:
-                a = resolve_digest_assertion(store, rid)
+                a = resolve(rid)
                 if a is not None:
                     members.append(_display_block(a, rid))
             return {"pair": members} if members else None
@@ -168,7 +215,7 @@ def _enrich(family: str, record: Any, store: Any) -> Optional[Dict[str, Any]]:
         return None  # traces/snapshots: payload already carries display truth
     if not rid:
         return None
-    a = resolve_digest_assertion(store, rid)
+    a = resolve(rid)
     if a is None:
         return None
     block = _display_block(a, rid)
@@ -184,16 +231,20 @@ def _enrich(family: str, record: Any, store: Any) -> Optional[Dict[str, Any]]:
         # own graph_id); sealing it made diary connectivity invisible in
         # pixels while present at rest — the invisible-topology class.
         # Content fields stay sealed exactly as before.
-        from .store import TripleQuery  # local: keep module imports lean
+        if memo is not None:
+            edges = memo.formation_edges(a)
+        else:
+            from .store import TripleQuery  # local: keep module imports lean
 
-        edges = [
-            {"relation": e.predicate, "target_graph_id": e.object}
-            for e in store.query(TripleQuery(subject=a.subject, scope=a.scope,
-                                             owner_id=a.owner_id or None, limit=0))
-            if isinstance(e.attributes, dict) and e.attributes.get("record_edge")
-        ]
+            raw = [
+                {"relation": e.predicate, "target_graph_id": e.object}
+                for e in store.query(TripleQuery(subject=a.subject, scope=a.scope,
+                                                 owner_id=a.owner_id or None, limit=0))
+                if isinstance(e.attributes, dict) and e.attributes.get("record_edge")
+            ]
+            edges = sorted(raw, key=lambda x: (x["relation"], x["target_graph_id"])) if raw else None
         if edges:
-            block["edges"] = sorted(edges, key=lambda x: (x["relation"], x["target_graph_id"]))
+            block["edges"] = edges
     return block
 
 
@@ -238,11 +289,15 @@ def export_replay(
     scope_f = str(scope or "").strip().lower() or None
     owner_f = str(owner_id or "").strip() or None
     hi = int(until_seq) if until_seq is not None else journal.current_seq()
+    # Per-export memo (entity c2394: N+1 resolves were ~45% of generation
+    # on a lived home) — one resolve/edge-query per distinct record per
+    # export, exactly correct over immutable records (_ExportMemo doc).
+    memo = _ExportMemo(store)
 
     for family, record in journal.replay_records(since_seq=int(since_seq), until_seq=hi):
         if family not in family_set:
             continue
-        lifted_scope, lifted_owner = _lift_scope_owner(family, record, journal, store)
+        lifted_scope, lifted_owner = _lift_scope_owner(family, record, journal, store, memo)
         if scope_f is not None and lifted_scope != scope_f:
             continue
         if owner_f is not None and lifted_owner != owner_f:
@@ -262,7 +317,7 @@ def export_replay(
             "payload": record.to_dict(),  # verbatim: the ledger IS the stream
         }
         if enrich:
-            display = _enrich(family, record, store)
+            display = _enrich(family, record, store, memo)
             if display is not None:
                 envelope["display"] = display
         yield envelope

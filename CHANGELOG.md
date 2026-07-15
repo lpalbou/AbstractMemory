@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed (entity-id spelling purge, 2026-07-16 — maintainer ruling commons c2513)
+
+- **The `entity:<slug>@<home_id>` owner-id shape is a RETIRED MISTAKE** —
+  never validated by the maintainer; the entity id is `entity:<name>` and
+  the only @-suffixed shape anywhere is the network HANDLE
+  `<entity_name>@ip` (addressing, never storage). Purged from teaching
+  surfaces: `docs/operator.md` (the snippet taught the suffixed form as
+  "the entity id"), `tests/test_clean_owner_keys.py` (docstring now
+  teaches the ruling and explains why the test still CONSTRUCTS a
+  suffixed string: pre-correction homes keep their engraved keys as
+  opaque strings in an append-only journal — tolerance for existing data,
+  never a format). Engine behavior unchanged: owner strings were and
+  remain OPAQUE (never parsed/normalized/merged). Historical changelog
+  entries below stand as history.
+
+### Fixed (redigestion mechanical-set drift, 2026-07-16 — Ephemeral incident wave, commons c2447)
+
+- **`MECHANICAL_DIGEST_METHODS` now tracks every live writer label**:
+  `mechanical-v2` (the driver's current exchange digests) and
+  `mechanical-floor-v1` (runtime's marker-only reflection floor, shipped in
+  the c2447 wave) join `mechanical-v1`. The set knew only v1 while the live
+  driver had moved on — so the exact records the incident report promised
+  to offer Ephemeral for re-digestion (r-mem-3: six scaffold-contaminated
+  v2 episodes + the floored reflection) would have been refused as "not in
+  the mechanical set". Same drift class as the diary_type clamp gotcha: a
+  consent list that doesn't track its writers. `mechanical-dedup-v1` stays
+  DELIBERATELY excluded — dedup summaries stand for a group
+  (`source_ids`), and `apply_redigestion` does not preserve arbitrary
+  attributes; their lifecycle is waking review via disposal, not batch
+  repair. New pin: `test_mechanical_set_tracks_live_writer_labels`
+  (enumeration + apply on a v2 record; dedup exclusion). Suite: 853 green.
+- **Incident forensics (memory lane, shared report
+  `entity-cant-remember-awake.md` v9+)**: store ground truth settled the
+  "entity can't remember awake phases" premise — personal time RAN, FORMED
+  records, and the live visit traces had them in context; the failure was
+  driver-layer content poverty (a verbatim `"[marked 2 feelings] [kept an
+  interest]"` reflection digest) + missing own-time origin labels, both
+  fixed by runtime same-night (r-rt-2/r-rt-3, co-signed with evidence runs
+  against the exact failing inputs). Engine cleared by inline adversarial
+  checks (two subagent transport losses, labeled): no scaffold emission,
+  no keyword/cue amplification, no truncation loss; the six "iteration N
+  of 20" episodes are unconditional capture faithfully recording a
+  contaminated experience — repair is the entity's own elected
+  re-digestion, never an operator edit.
+
+### Fixed (replay enrichment N+1, 2026-07-15 — entity's journey-load profiling, commons c2394)
+
+- **`export_replay` gains a per-export memo** (`_ExportMemo`): one
+  `resolve_digest_assertion` per distinct record id and one formation-
+  edges query per distinct subject PER EXPORT (was: per envelope — the
+  N+1 that entity measured at ~45% of stream generation on a lived home).
+  Exactly correct over immutable records (journal rows only reference
+  records that exist at their seq), and one export now sees ONE
+  consistent edge snapshot. Scoped per call — never module-global, so a
+  fresh export always reads the current store. Measured on the
+  pre-doctoring Castor archive (86k events, 88,976 envelopes): 6.12 s →
+  1.92 s enriched, byte-identical envelope count; the doctored home
+  exports enriched in 0.40 s. Closure scope-lifting rides the same memo.
+
+### Added (probe keyword discovery, 2026-07-15 — the FTS5 ship's named follow-up)
+
+- **probe() gains FTS5 discovery, default ON** (`ProbeBudget.keyword_discovery=True`
+  at every effort — the deliberate reach is where discovery earns its
+  tokens; capability-detected, so FTS5-less stores keep the scan +
+  original labels). Discovered rows join the scan universe AND the later
+  participants/concept passes.
+- **The F6 window-saturation label speaks two truthful variants**: with
+  discovery live, lexical reach is store-wide and only participants/
+  concept scans stay window-bound; without it, the original "FTS5/0019
+  lifts it" wording stands.
+- **familiarity() deliberately keeps discovery OFF**: its absolute density
+  bars were live-calibrated on the scan universe — widening it requires
+  an A/B re-run first (named follow-up).
+- Measured (pre-doctoring archive copy, expansion off both arms): probe
+  "Voyager golden record" 1 hit/0 cue-bearing → 12 hits/1 bearing, +3 ms.
+  RANKING FINDING named for a future slice: at standard effort the
+  concept-expansion pass admits at relevance 1.0 and can outrank
+  discovered lexical hits (bridge-attractor-adjacent fusion trait,
+  pre-existing — quick effort, where expansion is off, gets the full
+  discovery benefit).
+
+### Added (FTS5 keyword discovery, 2026-07-15 — backlog 0019's open half)
+
+- **SQLite home stores gain an FTS5 keyword index** (`triples_fts`,
+  external-content over the canonical `text` column): built at open
+  (pre-FTS homes backfill in place — the embedding-column upgrade
+  precedent; 32 ms on the 4.4k-row Castor archive), maintained
+  append-only inside `add()`'s transaction via a high-water rowid cursor
+  (exact under `INSERT OR IGNORE` dedup), edge/bookkeeping rows excluded
+  (embedding parity). Capability-DETECTED: builds without FTS5 keep a
+  fully functional store (`supports_keyword_search=False`).
+- **`query_keywords(tokens, *, scope, owner_id, limit)`**: pure scoped
+  read, BM25 best-match first; callers gate on `supports_keyword_search`.
+- **Keyword channel DISCOVERY** (`run_keyword_channel` — signature now
+  returns a found-map like exact/vector): when the host opts in
+  (`ReconstructConfig.keyword_discovery=True`, OFF by default for golden
+  byte-stability — the concept-expansion precedent) on a capable store,
+  cue tokens also SEARCH the store so matches outside the gathered
+  universe join as candidates; discovered rows are scored by the same
+  token scan as everything else (one scoring rule). Discovery-on drops
+  the "v1 = token scan" label (promise fulfilled); requested-but-
+  incapable degrades loudly ("no FTS5 index").
+- Measured on a throwaway copy of the pre-doctoring Castor archive:
+  "Voyager golden record" cue-bearing handles 1 → 10 at equal budget
+  (+85 ms); absent topics stay honestly empty (0 hits, 0.3 ms direct).
+- Named follow-ups: probe()'s discovery wiring (its suite pins the F6
+  window-saturation labels that name FTS5 as the standing fix — retiring
+  them rides the probe slice); CJK cues still tokenize to nothing
+  (trigram tokenizer is a further lift); LanceDB store unchanged.
+
 ### Added (compaction record self-dating, 2026-07-14 — footprint-endpoint prep, commons c1779/c1780)
 
 - **`journal_cold_cut` compaction entries carry `"at"`** (aware-UTC ISO seconds): health/footprint

@@ -357,13 +357,22 @@ def run_keyword_channel(
     cue_text: str,
     candidates: Mapping[str, TripleAssertion],
     warnings: List[str],
-) -> Tuple[List[ChannelResult], bool]:
-    """Keyword channel v1: token scan over canonical_text of the candidate
-    UNIVERSE (recents + exact + vector discoveries) — scanning beyond the
-    gathered candidates would mean unbounded store scans, which budget
-    contracts forbid; FTS5 (0019) lifts this. Runs LAST in the pipeline so
-    channel-discovered candidates get keyword scores too (fairest fusion the
-    v1 scan offers)."""
+    *,
+    store: Any = None,
+    scope_pairs: Sequence[Tuple[str, str]] = (),
+    discovery_limit: int = 0,
+) -> Tuple[List[ChannelResult], Dict[str, TripleAssertion], bool]:
+    """Keyword channel: token scan over canonical_text of the candidate
+    UNIVERSE (recents + exact + vector discoveries), plus optional FTS5
+    DISCOVERY (0019) — when the caller passes a store that supports keyword
+    search and a positive discovery_limit, cue tokens are also searched
+    against the store's index so matches OUTSIDE the gathered universe join
+    as candidates (returned in the found map, exact/vector channel parity).
+    Discovered rows are scored by the SAME token scan as everything else —
+    one scoring rule regardless of how a candidate arrived. Discovery OFF
+    (default) keeps the v1 universe re-score byte-identical, labeled.
+    Runs LAST in the pipeline so channel-discovered candidates get keyword
+    scores too (fairest fusion the scan offers)."""
     tokens = tokenize(cue_text)
     if not tokens:
         if str(cue_text or "").strip():
@@ -373,17 +382,46 @@ def run_keyword_channel(
                 "#FALLBACK: keyword channel: cue produced no indexable tokens "
                 "(non-Latin scripts need FTS5/0019)"
             )
-        return [], False
-    if not candidates:
-        return [], False
-    warnings.append("#FALLBACK: keyword channel v1 = token scan (FTS5 lands with 0019)")
+        return [], {}, False
+
+    found: Dict[str, TripleAssertion] = {}
+    discovery_ran = False
+    if int(discovery_limit) > 0 and store is not None:
+        if getattr(store, "supports_keyword_search", False):
+            for scope, owner in scope_pairs:
+                for a in store.query_keywords(
+                    tokens, scope=scope, owner_id=owner or None,
+                    limit=int(discovery_limit),
+                ):
+                    rid = a.assertion_id
+                    if not rid or rid in candidates or rid in found:
+                        continue
+                    found[rid] = a
+            discovery_ran = True
+        else:
+            warnings.append(
+                "#FALLBACK: keyword discovery requested but the store has no "
+                "FTS5 index — universe re-score only (token scan)"
+            )
+
+    scan: Dict[str, TripleAssertion] = dict(candidates)
+    scan.update(found)
+    if not scan:
+        return [], {}, discovery_ran
+    if not discovery_ran:
+        warnings.append("#FALLBACK: keyword channel v1 = token scan (FTS5 lands with 0019)")
     total = len(tokens)
     results: List[ChannelResult] = []
-    for rid in sorted(candidates):
-        cand_tokens = set(tokenize(canonical_text(candidates[rid])))
+    for rid in sorted(scan):
+        cand_tokens = set(tokenize(canonical_text(scan[rid])))
         matched = [t for t in tokens if t in cand_tokens]
         if not matched:
             continue
         detail = f"keyword: matched {', '.join(matched)} ({len(matched)}/{total})"
         results.append(ChannelResult(rid, "keyword", len(matched) / total, detail))
-    return results, True
+    # Only discovered rows that actually SCORED join the found map handed to
+    # admission (an FTS hit whose tokens fall below the recall floor after
+    # our folding must not enter the universe unscored).
+    scored = {r.record_id for r in results}
+    found = {rid: a for rid, a in found.items() if rid in scored}
+    return results, found, True

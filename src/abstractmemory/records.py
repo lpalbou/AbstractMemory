@@ -687,6 +687,13 @@ class ReconstructConfig:
     # (the real type is concept_anchor.ConceptAnchorTuning; None = defaults).
     concept_expansion: bool = False
     concept_tuning: Any = None
+    # Keyword DISCOVERY (0019's FTS5 half): when True and the store carries
+    # the FTS5 index, the keyword channel also SEARCHES the store (per scope
+    # pair, budget-bounded) instead of only re-scoring the gathered
+    # universe. OFF by default for the same golden byte-stability reason as
+    # concept_expansion; probe() turns it on by its own default (the
+    # deliberate reach is where discovery earns its tokens).
+    keyword_discovery: bool = False
 
     def kind_of(self, assertion: TripleAssertion) -> str:
         attrs = assertion.attributes if isinstance(assertion.attributes, dict) else {}

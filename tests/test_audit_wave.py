@@ -490,11 +490,11 @@ def test_tokenizer_accent_folds_and_labels_non_latin_cues() -> None:
     """Audit f6: 'café' and 'cafe' never matched; CJK cues died silently."""
     assert tokenize("café über élan") == tokenize("cafe uber elan") == ["cafe", "uber", "elan"]
     fr = _assertion("fr-1", "ex:m", "dcterms:abstract", "le café préféré du député", 1, literal=True)
-    hits, _ = run_keyword_channel("cafe prefere", {"fr-1": fr}, [])
+    hits, _found, _ = run_keyword_channel("cafe prefere", {"fr-1": fr}, [])
     assert hits and hits[0].score == 1.0  # unaccented cue matches accented text
 
     warnings_list: List[str] = []
-    results, ran = run_keyword_channel("数据库连接池决定", {"fr-1": fr}, warnings_list)
+    results, _found, ran = run_keyword_channel("数据库连接池决定", {"fr-1": fr}, warnings_list)
     assert results == [] and ran is False
     assert any("no indexable tokens" in w and "FTS5" in w for w in warnings_list)
 

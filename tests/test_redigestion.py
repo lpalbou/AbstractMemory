@@ -241,3 +241,44 @@ def test_apply_deposits_nothing(system) -> None:
     ], actor="entity-reflection")
     counts = system.access_counts([ids["marker_only"]])["records"]
     assert counts[ids["marker_only"]] == 0  # repair is not use (D2 of repair)
+
+
+# ---------------------------------------------------------------------------
+# mechanical-set drift (Ephemeral incident, c2447 wave)
+# ---------------------------------------------------------------------------
+
+def test_mechanical_set_tracks_live_writer_labels(system) -> None:
+    """The consent set must cover every writer's mechanical label — the live
+    driver forms mechanical-v2 and the c2447 floor fix forms
+    mechanical-floor-v1; a set knowing only v1 silently refuses the exact
+    records the incident repair path (r-mem-3) exists for. Dedup summaries
+    stay excluded: they stand for a group and are disposal's lane."""
+    from abstractmemory import MECHANICAL_DIGEST_METHODS
+
+    assert {"mechanical-v1", "mechanical-v2", "mechanical-floor-v1"} <= MECHANICAL_DIGEST_METHODS
+    assert "mechanical-dedup-v1" not in MECHANICAL_DIGEST_METHODS
+
+    [v2] = system.remember_many([
+        MemoryRecordInput(
+            kind="episode", title="v2 contaminated",
+            digest="person:admin: hello. me: The loop indicator is still there (iteration 3 of 20).",
+            payload_ref="artifact-v2",
+            attributes={"digest_method": "mechanical-v2"}),
+    ], scope=SCOPE, owner_id=OWNER, idempotency_key="drift-v2")
+    [floored] = system.remember_many([
+        MemoryRecordInput(
+            kind="summary", title="floored reflection",
+            digest="[marked 2 feelings] [kept an interest] - Look-back over 1 moment(s): quiet session.",
+            edges=(("summarizes", v2),),  # engine guard: a summary names its sources
+            attributes={"digest_method": "mechanical-floor-v1"}),
+    ], scope=SCOPE, owner_id=OWNER, idempotency_key="drift-floor")
+
+    report = redigestion_candidates(system, scopes=SCOPES)
+    got = {c.record_id for c in report["candidates"]}
+    assert v2 in got and floored in got  # both current labels enumerate
+
+    result = apply_redigestion(system, [
+        {"record_id": v2,
+         "digest": "The visitor greeted me; I mentioned a loop indicator I kept noticing."},
+    ], actor="entity-reflection")
+    assert result["outcomes"][0]["outcome"] == "applied"  # v2 is repairable

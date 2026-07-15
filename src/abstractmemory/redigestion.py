@@ -74,7 +74,25 @@ __all__ = [
 # batch) or unlabeled legacy (pre-labeling records; excluded because the
 # label is the CONSENT marker: only debt that declared itself mechanical is
 # batch-repairable).
-MECHANICAL_DIGEST_METHODS = frozenset({"mechanical-v1"})
+#
+# DRIFT LESSON (Ephemeral incident, c2447 wave): this set must track every
+# WRITER's mechanical label or the repair path silently loses reach — the
+# live driver had moved to mechanical-v2 and the floor fix added
+# mechanical-floor-v1 while this set still knew only v1, so the exact
+# records the incident report promised to offer for re-digestion would
+# have been refused ("not in the mechanical set"). Same class as the
+# diary_type clamp gotcha: a copy that doesn't track its source.
+#
+# mechanical-dedup-v1 is DELIBERATELY absent: dedup summaries stand for a
+# GROUP (attributes.source_ids carries the membership) and apply_redigestion
+# does not preserve arbitrary attributes — re-digesting one would orphan the
+# group semantics. Their lifecycle is waking review via disposal
+# (promote/reject), not batch repair.
+MECHANICAL_DIGEST_METHODS = frozenset({
+    "mechanical-v1",        # driver v1 truncation digests (Castor's debt)
+    "mechanical-v2",        # driver's current mechanical exchange digest
+    "mechanical-floor-v1",  # runtime's marker-only reflection floor (c2447)
+})
 
 # Kinds a batch may never re-digest (rationale per kind in the module
 # docstring — elected words, identity acts, born-digest artifacts).

@@ -1,18 +1,21 @@
 """M3 — clean internal keys (plan items 2 + 6, memory half).
 
-The plan: NEW homes engrave `entity:<name>` (name-uniqueness per door makes
-the random home-id suffix pointless as a KEY); EXISTING homes (Castor,
-`entity:<slug>@<home_id>`) keep their engraving — the journal is append-only
-and the door maps handle -> home, so nothing is renamed.
+THE RULED SPELLINGS (maintainer, commons c2513): an entity's internal id is
+`entity:<name>`, and the only @-suffixed shape that exists anywhere is the
+NETWORK HANDLE `<entity_name>@ip` (addressing, never storage). The
+@home_id-suffixed owner string was a MISTAKE — retired, never minted again,
+and never to be taught as a format.
 
-What the ENGINE must therefore guarantee, pinned here: owner strings are
-OPAQUE — never parsed, never normalized across forms, never merged. The
-clean form and the legacy suffixed form each round-trip identically through
-engram -> formation -> recall -> commit -> gradation -> replay, and two
-owners whose strings share a prefix ("entity:castor" vs
-"entity:castor@home-abc") are fully distinct identities in one store. The
-gateway's mint change then needs ZERO engine work — exactly the seam the
-plan assigns (memory M3 + gateway manifest mint).
+Why this test still constructs one: existing homes were engraved with the
+mistake before it was retired, and the journal is append-only — the bad
+string cannot be renamed out of those lives. The ENGINE guarantee pinned
+here is what makes that tolerable: owner strings are OPAQUE — never parsed,
+never normalized across forms, never merged. A clean-id home and a
+mistake-engraved home each round-trip identically through engram ->
+formation -> recall -> commit -> gradation -> replay, and two owners whose
+strings share a prefix ("entity:castor" vs "entity:castor@home-abc") are
+fully distinct identities in one store. New minting is the door's job and
+mints ONLY `entity:<name>`.
 """
 
 from __future__ import annotations
