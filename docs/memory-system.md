@@ -77,14 +77,14 @@ Conventions the engine enforces and reads:
 
 **Sleep proposes; waking evidence disposes.** The dream never writes a load-bearing edge; unresolved dreams chain and stand as `unresolved_dreams(...)` — recurring dreams about unresolved tension, another wake reason. Maintenance deposits nothing: the pass never touches counters.
 
-### Phase 1: data-quality tending
+### The night's sub-phases and data-quality tending
 
-The dream is sleep's second phase. Phase 1 (`maintenance.py`) tends the graph first — organize the day's memories, name metadata issues, propose relationship repairs:
+One full night (`sleep_pass`) runs FOUR sub-phases in canonical order — **resolution → tending → world models → dream** (these are the night's internal stages, not the entity's four life phases): standing dreams the day's lived experience already answered close softly (`resolve_dreams_pass`), then the graph is tended, then world-model orientation cards refine, then the dream forms over the tended graph. The tending machinery (`maintenance.py`):
 
 - `maintenance_report(store, journal, scopes=...)` is a pure read: metadata gaps (missing keywords/intents/outcomes — named for waking re-digestion, never filled while asleep), duplicate-title groups (same kind only), near-duplicate pairs (token-set Jaccard ≥ 0.65, or stored-vector cosine ≥ 0.90 for paraphrase duplicates), shared-source groups, isolated-link candidates (≥ 2 shared facets, proposal only), and edge-suppression candidates (duplicate or `mentions`-shadowed edges, reported as append-only closure candidates for waking acts).
-- `consolidation_pass(system, scopes=..., owner_id=...)` is phase 1's one write: at most N (default 2) low-risk duplicate-title groups become **inactive, review-gated** `kind="summary"` candidates with `summarizes` edges to every source — idempotent by source set, sources byte-untouched, nothing merged or removed while asleep. Maintenance candidates are excluded from the next pass's inputs (tending never re-tends its own output).
+- `consolidation_pass(system, scopes=..., owner_id=...)` is the tending write: at most N (default 2) low-risk duplicate-title groups become **inactive, review-gated** `kind="summary"` candidates with `summarizes` edges to every source — idempotent by source set, sources byte-untouched, nothing merged or removed while asleep. Maintenance candidates are excluded from the next pass's inputs (tending never re-tends its own output).
 - `maintenance_due(store, journal, scopes=...)` is the deterministic cadence predicate ("enough new records, or new material plus standing fragmentation"); when to sleep — late local time, the sleep window — stays the host's clock.
-- `sleep_pass(system, scopes=..., owner_id=...)` runs one full sleep in the canonical order: tend, then dream over the tended graph.
+- `sleep_pass(system, scopes=..., owner_id=..., should_continue=...)` runs one full night. **Graceful cancellation** (the one-active-phase ruling: entity phases — visit/work/personal/sleep — are mutually exclusive, and entering one properly ends sleep's processes): the host wires its yield signal as the zero-arg `should_continue` callable, checked at sub-phase boundaries only — the sub-phase that started finishes its writes (never torn), later sub-phases skip with a named reason, and the result carries `cancelled_after`. A cancelled night is a valid night: every sub-phase is idempotent, so the next sleep resumes where this one stopped.
 
 ## Observability: the replay stream and the identity card
 

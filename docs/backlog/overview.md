@@ -9,8 +9,10 @@ inspect the current code first, then update the item if reality has changed.
 
 ## Current Status
 
-- Planned: 11 (7 standalone + 4 in the `subconscious_wave` track)
-- Proposed: 24 (1 standalone + 23 items in the `memory_system_v1` track)
+- Planned: 14 (7 standalone + 4 in `subconscious_wave` + 3 in
+  `extension_wave`)
+- Proposed: 35 (1 standalone + 24 in `memory_system_v1` + 10 in
+  `extension_wave`)
 - Completed: 0
 - Deprecated: 0
 - Recurrent: 0
@@ -21,9 +23,25 @@ Topic tracks:
   resurfacing), world-model orientation cards, situate() temporal/
   relational reconstruction, lessons-layer conventions. See the track
   README for the ruling text and reading order.
-- `proposed/memory_system_v1/` (0009-0031): the engine design wave;
-  0030/0031 are the fork-comparison adoption ledgers (0030's list is
-  shipped; 0031 is the second-pass proposal set awaiting rulings).
+- `planned/extension_wave/` (0037-0039, maintainer-accepted 2026-07-13):
+  the three accepted third-pass systems — familiarity() metamemory,
+  open_commitments()+triggers, the ```tend election grammar. BUILT +
+  LIVE-PROVEN 2026-07-13 (4-agent wave; LMStudio experiments:
+  familiarity 4/4 after density calibration, commitments 6/6, tend 9/9;
+  suite 843 green). Awaiting maintainer validation + driver-lane wiring
+  (runtime) before the entity-self-knowledge skill teaches them
+  (fold trigger flagged on commons c1714).
+- `proposed/memory_system_v1/` (0009-0031 + 0036): the engine design
+  wave; 0030/0031 are the fork-comparison adoption ledgers (0030's list
+  is shipped; 0031 is the second-pass proposal set awaiting rulings);
+  0036 is the third-pass extension-wave ledger (kills/merges/gaps +
+  rulings Q1-Q3).
+- `proposed/extension_wave/` (0040-0049): the not-yet-accepted
+  third-pass items (recurrence needs a detail round per the maintainer;
+  loss anchors, explain_recall, mind-health, origin-time axis, N-party
+  contract, transcript adoption, cue hygiene, writer forensics) plus
+  0049 stable-shelf-order prefix reuse (core's bloc adversary §6 win,
+  2026-07-13).
 
 Implementation status (2026-07-06): memory system engine v1 is IMPLEMENTED in
 `src/abstractmemory/` ahead of item promotion — seam dataclasses (`seam.py`),
@@ -55,6 +73,31 @@ core), 0021 (v1 bridge), 0026, 0027 — reconcile each item against code at
 promotion time per the standard process. Negotiation log:
 `a2a/threads/0001-runtime-memory-orchestration/` and
 `a2a/threads/0002-emergence-experiment/`.
+
+Implementation status refresh (2026-07-14, backlog↔code reconciliation):
+the engine has since grown well past the 07-06 snapshot — suite 843
+default tests green. Code now ALSO leads: `0019` (SQLite vector channel +
+keyword/exact channels shipped in `sqlite_store.py`/`channels.py`; FTS5
+half still open), `0022` (`probe.py` probe/expand — attention-inert,
+effort presets, relevance-pure; plus `familiarity()` sharing the channel
+pass), `0023` (`consolidation.py` + `maintenance.py` + `disposal.py` +
+`dream_resolution.py`: the four-sub-phase night resolve→tend→world
+models→dream with graceful cancellation), `0024` (`system.py` facade is
+the shipped consumer surface). The whole `planned/subconscious_wave/`
+track (0032-0035: dream lifecycle, `world_model.py`, `situate.py`,
+lessons conventions) is implemented + adversary-reviewed per each item's
+status note — items stay planned until the maintainer's ship review lands
+(their own gating rule). Beyond any item: M1 embedder pins
+(`embedding_pin.py`, `read_embedding_pin`, reembed repair), the frozen
+replay stream v1 (`replay.py`), entity card compositor
+(`entity_card.py`), two-anchor summon deltas (formed-by-T gate in
+`folds.py`, `situate_prompt_block`), re-digestion (`redigestion.py`) and
+doctoring (`doctoring.py` — dedup, journal cold-cut, verify; exercised
+live on Castor 2026-07-14: 105→35 MB, verify green), spark/engram/
+gradation/diary planes. Everything uncommitted per the standing
+never-commit gate; promotion to completed/ follows the maintainer's ship
+reviews, at which point each item gets its completion report and the
+counts here move.
 
 Named-entity identity lane (2026-07-06, maintainer-directed; seam v1.2
 notification `a2a/.../0001/20260706T193908Z-memory-01.md`): five identity
@@ -103,6 +146,14 @@ cross-package pre-commit gate for this package. Design corpus: a2a thread
 | Medium | [`006_deterministic_anchor_and_facet_index.md`](planned/006_deterministic_anchor_and_facet_index.md) | Planned | Prototype deterministic recall cues before semantic or deep graph expansion. |
 | Low | [`007_read_only_memory_observer_contract.md`](planned/007_read_only_memory_observer_contract.md) | Planned | Define read-only snapshot shapes for observer integrations. |
 
+### Extension wave track (`planned/extension_wave/`, accepted 2026-07-13)
+
+| Item | Notes |
+| --- | --- |
+| [`0037_familiarity_metamemory_read.md`](planned/extension_wave/0037_familiarity_metamemory_read.md) | Pre-answer "do I know X and how much" density read + gradation feelings composition (anti-fabrication). |
+| [`0038_open_commitments_and_triggers.md`](planned/extension_wave/0038_open_commitments_and_triggers.md) | Prospective memory: diary commitments + context triggers ("a larger set" than open questions). |
+| [`0039_tend_election_grammar.md`](planned/extension_wave/0039_tend_election_grammar.md) | One fenced grammar over existing attention/valence/disposal verbs; iterative revisit reach. |
+
 ## Proposed Items
 
 | Item | Notes |
@@ -140,6 +191,19 @@ database, L1 two-layer package), and reading order.
 | [`0026_spreading_activation_and_working_set.md`](proposed/memory_system_v1/0026_spreading_activation_and_working_set.md) | C | Stimulus-driven spreading activation; emergent working_set view (co-designed with runtime agent, a2a thread 0001). |
 | [`0027_runtime_seam_contract_v1.md`](proposed/memory_system_v1/0027_runtime_seam_contract_v1.md) | C | Frozen runtime⇄memory seam contract (a2a 0001/004); runtime builds against it now. |
 | [`0028_lateral_inhibition_theory.md`](proposed/memory_system_v1/0028_lateral_inhibition_theory.md) | — | Theory/discussion note (drafted by the runtime agent at the maintainer's request; memory-track owned). Deferred out of v1 by decision. |
+| [`0036_third_pass_extension_wave.md`](proposed/memory_system_v1/0036_third_pass_extension_wave.md) | — | Third-pass extension-wave ledger (twice-adversarial; kills/merges/gaps; rulings Q1-Q3). Items: planned+proposed `extension_wave/` tracks. Renumbered from 0032 (collision with subconscious_wave). |
+
+### Extension wave track (`proposed/extension_wave/`, 0040-0049)
+
+The not-yet-accepted third-pass items; see the
+[track README](proposed/extension_wave/README.md). 0040 (recurrence)
+requires a maintainer detail round before promotion; 0044+0046 form the
+lineage bundle with the chapters election recorded in 0036 — 0044
+(origin-time axis) is the first dependency of the Mnemosyne-lineage
+import mission and the natural next promotion candidate; 0049
+(stable shelf order for prefix reuse) gained independent support from
+runtime's bloc-seam adversary (c1734: sub-1k-token blocs uneconomic —
+presentation-side prefix stability is the memory-lane win).
 
 Interactions with planned items: `0011`/`0015` extend planned `002`;
 `0020` supersedes the contract-first approach of planned `004`; `0021`

@@ -583,3 +583,67 @@ def test_guard_dream_survives_dense_home(system, stack) -> None:
     assert tuple(sorted((p[4], q[4]))) in {
         tuple(sorted(pr["pair"])) for pr in result["proposals"]}
     assert result["created"] is True and result["dream_record_id"]
+
+def test_sleep_pass_cancels_gracefully_at_phase_boundaries(system) -> None:
+    """One-active-phase ruling (2026-07-13): when the host's yield signal
+    flips mid-night, the CURRENT phase completes (never torn), later
+    phases skip with a named reason, and the result carries
+    cancelled_after — a cancelled night is a valid night (idempotent
+    phases; the next sleep resumes the work). Boundaries: start (a signal
+    already raised at call time buys ZERO write phases — phase-audit
+    finding 1), after resolution, after maintenance, after world_models."""
+    from abstractmemory import MemoryRecordInput
+    from abstractmemory.maintenance import sleep_pass
+
+    system.remember_many(
+        [MemoryRecordInput(kind="episode", title="Day one",
+                           digest="A full day of harbor work.")],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="cx-1")
+
+    def yield_at(boundary: int):
+        calls = {"n": 0}
+
+        def _pred() -> bool:
+            calls["n"] += 1
+            return calls["n"] != boundary
+        return _pred
+
+    seq_before = system.current_seq()
+    at_start = sleep_pass(system, scopes=SCOPES, owner_id=OWNER,
+                          should_continue=yield_at(1))
+    assert at_start["cancelled_after"] == "start (no phase ran)"
+    assert system.current_seq() == seq_before          # zero writes bought
+
+    after_resolution = sleep_pass(system, scopes=SCOPES, owner_id=OWNER,
+                                  should_continue=yield_at(2))
+    assert after_resolution["cancelled_after"] == "resolution"
+    assert after_resolution["resolution"]["pass_name"] == "resolve_dreams_pass"
+    for phase in ("maintenance", "world_models", "dream"):
+        assert "cancelled" in (after_resolution[phase].get("skipped_reason") or "")
+
+    after_maintenance = sleep_pass(system, scopes=SCOPES, owner_id=OWNER,
+                                   should_continue=yield_at(3))
+    assert after_maintenance["cancelled_after"] == "maintenance"
+    assert "skipped_reason" not in after_maintenance["maintenance"] or \
+        "cancelled" not in (after_maintenance["maintenance"].get("skipped_reason") or "")
+
+    after_world_models = sleep_pass(system, scopes=SCOPES, owner_id=OWNER,
+                                    should_continue=yield_at(4))
+    assert after_world_models["cancelled_after"] == "world_models"
+    assert "cancelled" in (after_world_models["dream"].get("skipped_reason") or "")
+
+    # No signal = the full night, byte-shape unchanged (default None).
+    full = sleep_pass(system, scopes=SCOPES, owner_id=OWNER)
+    assert "cancelled_after" not in full
+    assert full["dream"]["pass_name"] == "dream_pass"
+
+    # SHAPE PARITY (phase-audit finding 2 — near-miss dicts are the
+    # formed-vs-created bug class): every cancelled phase carries the real
+    # pass's keys (minus content), so consumers never branch on a phantom.
+    for phase in ("resolution", "maintenance", "world_models", "dream"):
+        real_keys = set(full[phase])
+        cancelled_keys = set(after_resolution[phase]) if phase != "resolution" \
+            else set(at_start[phase])
+        missing = real_keys - cancelled_keys - {"skipped_reason"}
+        assert not missing, f"{phase}: cancelled shape missing {missing}"
+        assert "formed" not in cancelled_keys or phase == "world_models"

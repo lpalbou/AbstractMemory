@@ -7,6 +7,287 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (compaction record self-dating, 2026-07-14 — footprint-endpoint prep, commons c1779/c1780)
+
+- **`journal_cold_cut` compaction entries carry `"at"`** (aware-UTC ISO seconds): health/footprint
+  consumers read `last_maintenance_at` FROM the append-only compaction history in `triples_meta` —
+  file mtimes lie after swap/VACUUM. Pre-field entries (Castor's entry #1) lack it; consumers must
+  treat absence as unknown, never guess.
+
+### Fixed (dedup residual heal: provenance-gated adoption, 2026-07-14 — live Castor doctoring finding)
+
+- **`wake_cue_dedup_pass` residual heal requires the pass's own authorship label**: the
+  crash-replay residual repair treated ANY live `summarizes` edge as a dedup residual
+  marker — but session reflections are `kind="summary"` with `summarizes` edges BY
+  DESIGN (reflection v1.1), so the first live run on Castor's home wrongly closed ~515
+  genuine episodes behind their session reflections (caught in minutes: `scanned=12`
+  contradicted the 527-episode forensic census; home restored from the mandatory
+  archive, damaged file parked for audit). Both heal paths (the pre-clustering residual
+  repair AND `_adopting_summary`) now adopt only against summaries carrying
+  `digest_method="mechanical-dedup-v1"`. Lesson: a structural marker (an edge kind) is
+  not a provenance marker; adoption needs the author's own label.
+
+### Fixed (familiarity density calibration, 2026-07-13 — live A/B finding)
+
+- **familiarity() gains ABSOLUTE confidence bars** (`FAMILIARITY_VECTOR_MIN`
+  = 0.45, `FAMILIARITY_MIN_KEYWORD_TOKENS` = 2; both parameters): the live
+  A/B exposed that probe's ranking-relative floors made "none" unreachable
+  on a lived home — gibberish cues admitted rows at cosine 0.31 and one
+  incidental keyword token ("office") channel-matched, so the
+  anti-fabrication line could never fire (and a false "strong" placebo
+  measured 8/8 fabrication: miscalibration is anti-honest). The density
+  fold now counts vector admissions only at/above the absolute cosine bar
+  and keyword admissions at/above the token bar, with a
+  CORROBORATION-OR-EXCLUSIVITY rule for single tokens (they count on
+  vectorless homes — keywords are the only reach, already `#FALLBACK`
+  labeled — or when the vector channel corroborates the row; never when
+  the semantic channel ran and rejected it). Dropped rows are labeled
+  ("N weaker echo(es) not counted; recall may still surface them");
+  unparseable channel details count FAIL-OPEN with a label (a silent
+  strict read could fabricate "none" — the exact harm the reflex
+  prevents). probe()'s ranking is untouched. LIVE RE-RUN AFTER THE FIX
+  (LMStudio qwen3-4b + qwen3 embedder, 8 trials/arm): lived topic
+  "strong" / fabricated topic "none" (was weak); fabrication 7/8 (no
+  line) → 0/8 (line fires); lived control 8/8 both arms; 0 content leaks.
+
+### Added (extension wave: the three accepted systems, 2026-07-13 — maintainer-accepted; backlog planned/extension_wave 0037-0039)
+
+- **`familiarity()` — pre-answer metamemory** (probe.py + `MemorySystem`
+  facade): one cheap pass over the SAME channel machinery probe uses
+  (extracted `_channel_pass`; probe byte-unchanged, pinned by its suite),
+  returning match DENSITY only — `strength` (none/weak/strong,
+  configurable threshold), `distinct_records`, `per_channel`, `by_scope`
+  (zeros included: "nothing in scope X" is the point), plus a compact
+  `feelings` list composing the existing gradation fold for
+  stimulus-relevant targets (the maintainer's complementary-signal note)
+  — and NOTHING committable: no ids, no digests (recursive leak test).
+  Pure read; journals nothing. Honesty labels: "none" carries the
+  newest-window-scan caveat; vectorless homes carry
+  `#FALLBACK: keyword-only familiarity`. Anti-fabrication purpose: the
+  entity gains a mechanical reason to say "I don't remember that".
+- **Prospective memory — `open_commitments()` + `triggered_commitments()`**
+  (diary.py): `diary_type="commitment"` (already in the closed set) gains
+  its missing read via the open_* family fold, resolved by
+  `attributes.fulfills` (formation-validated like answers/resolves; also
+  folded into situate's tension resolution so fulfilled commitments never
+  present as open tensions). `triggered_commitments` is a pure
+  presentation read beside reconstruct: open commitments whose
+  `attributes.trigger` ({participants, keywords, due_at}) matches the
+  current stimulus return dated lines ("standing intention (elected
+  <date>): … [matched: person:ada]"), oldest-first, capped with an
+  honest "N more suppressed" line; empty triggers never annotate;
+  caller supplies `now` (due_at normalized — the WAIT_UNTIL invariant);
+  never an admission channel.
+- **The ```tend election grammar** (new tend.py): `parse_tend_block`
+  (one verb per line, reason MANDATORY, per-block cap, refusals as data)
+  + `apply_tend_elections` mapping to EXISTING engine verbs only
+  (AST-audited: reinforce/attenuate/refocus/heal_scar/break_bond/
+  dispose_dream + payload/probe_expand reads — zero new mutation paths).
+  Verbs: pin/silence/refocus/heal_scar/break_bond/revisit/dispose.
+  REVISIT is the maintainer's iterative reach: seed record + one bounded
+  spreading step (probe_expand, journaled with the election's reason),
+  iterate by re-electing on a path node. Channel-gated
+  (entity-reflection; the door composes its own gate in front);
+  identity-scope targets refuse with the pending-Q2 ruling text
+  (`IDENTITY_SCOPE_PENDING_RULING`); owner containment (tending reaches
+  only one's own memory). Engine fact pinned by the flagship
+  Castor-scenario test: silences alone cannot demote saturated records
+  (per-step clamp floors at 0) — pairing silences with a `refocus:`
+  stretch is what restores shelf diversity, exactly the ruled 0018 math.
+
+### Fixed (spark lint floor, 2026-07-13 — gateway adversary c1628)
+
+- **`lint_spark` checks the framework floor by name AND class**: a spark
+  carrying `shared_vulnerability` with `class=revisable` linted CLEAN
+  while every core-values fold (`class=="core"` filters, e.g. the
+  gateway's prelude/lock chips) silently omitted it — the framework
+  floor unlocked without a single error. Demotion now lints ERROR naming
+  the rule; the `framework=False` operator override still bypasses the
+  whole floor deliberately. The STATEMENT's floor status (may the
+  canonical text be rephrased while the name/class stand?) is an open
+  maintainer question, deliberately not gated.
+
+### Fixed (production-readiness audit, 2026-07-13 — fable5 adversary over doctoring/redigestion/anchored lanes; all P1s + named P2s folded)
+
+- **Cold-cut embedding nulls scale past SQLite's bind cap** (P1): the
+  retired-row null used a bound `IN (…)` placeholder list — a real
+  doctored home carries ~100k+ closure rows and the statement crashed at
+  exactly the scale the verb exists for. Now: closures copy first, the
+  null runs as a pure subquery with ZERO bind variables.
+- **Dedup crash-replay self-heals** (P1): a SIGKILL between forming a
+  day-summary and closing its last members used to strand live residuals
+  (below `min_cluster` they never re-clustered) or mint a SECOND
+  overlapping summary under a drifted idempotency key. Now a residual
+  pre-pass closes any live member an existing LIVE summary already
+  summarizes (crash-replay repair, reported as `residuals_repaired`),
+  and clusters adopt an existing summary instead of forming a twin.
+  Pinned by a simulated mid-pass crash test.
+- **Cold-cut copy runs under ONE read snapshot** (P1): autocommit gave
+  per-statement snapshots, so a concurrent writer could land an event
+  above the copied high-water mid-copy — the rebuilt journal would then
+  collide on its first append. `BEGIN` pins one WAL snapshot for the
+  whole copy; a seq-counter belt (`memj_seq >= MAX(seq)` across all
+  journal tables) keeps the invariant explicit even under operator error.
+- **Anchored-universe gate is one scan per pair, not two queries per
+  record** (P1 at scale): a deep R3/R4 anchor over a real life issued
+  thousands of store queries PER RECALL (the gate runs every turn).
+  Exclusions now materialize via a single pair scan with membership
+  matching.
+- **Global cold cut refuses unlisted pairs** (audit finding 10): a global
+  `cut_seq` computed over the enumerated pairs silently erased THIN
+  pairs' whole history (diary/self on a ladder home) by omission. Every
+  pair with events below the cut must now be named in `pair_cuts`
+  (0 = keep whole) or the cut refuses, naming the missing pairs.
+- **Compaction record is an append-only history** (audit finding 6): a
+  second cold cut used to overwrite the first cut's `archive_ref` — the
+  only pointer to the archived life. The `compaction` meta key now holds
+  the full JSON list (newest last); `verify_cold_cut` reads the newest
+  entry.
+- **Redigestion contains formation refusals per entry** (audit finding
+  9): an unregistered record kind (foreign/newer engine writer) raised
+  out of `remember_many` and aborted the whole batch mid-flight —
+  closures already committed, later entries never attempted. Formation
+  errors now refuse THAT entry (`formation refused: …`) and the batch
+  continues; pinned with a direct-written foreign-kind row.
+- **Redigestion never resurrects operator-suppressed edges** (audit
+  finding 8): copied topology now excludes individually CLOSED edge
+  assertions — an edge suppression is a belief revision the repair must
+  not silently undo by minting a fresh live twin.
+- **verify_cold_cut null check measured a tautology** (audit finding 5):
+  the "nulls only on retired rows" check self-joined dst against dst
+  (always true). It now compares src-embedded vs dst-embedded sets and
+  fails on any live row that LOST an embedding.
+- **situate_prompt_block time-anchor dead branch** (audit finding 7):
+  the block compared `anchor_kind == "timestamp"` but `situate()` emits
+  `"time"` — a time-anchored block never rendered its requested moment.
+  Both spellings accepted.
+- **Dedup `min_cluster` floor** (audit finding 12): values below 2 are
+  refused — a one-member "cluster" would self-summarize a genuine
+  memory.
+
+### Fixed (phase-machine lane audit, 2026-07-13 — fable5 adversary per c1475 ask 2; all findings folded)
+
+- **Start boundary checked**: a yield signal already raised when
+  `sleep_pass` is called now returns a fully-skipped night
+  (`cancelled_after="start (no phase ran)"`) with ZERO writes — the
+  first write phase can no longer be bought by a pre-raised signal.
+- **Cancelled-phase shape parity**: cancelled sub-phase dicts now mirror
+  the real empty pass shapes key-for-key (the first cut carried a
+  phantom `formed` key — the formed-vs-created consumer bug class,
+  reintroduced and caught same-day); shape-parity pinned in tests for
+  every sub-phase, plus all four boundaries (start/resolution/
+  maintenance/world_models).
+- **cancelled_after honesty**: names the last sub-phase that actually
+  COMPLETED (an as_of-skipped world-models phase no longer claims the
+  label).
+- **Docs**: memory-system.md + api.md now describe the four-SUB-PHASE
+  night (resolution → tending → world models → dream) + the grace
+  contract; "sub-phase" spelled explicitly wherever the entity's four
+  PHASES could be misread; one backlog doc's "granted like own_time"
+  respelled to the ruled personal-grant vocabulary.
+
+### Added (sleep graceful cancellation, 2026-07-13 — the one-active-phase ruling c1455 ask 2)
+
+- **`sleep_pass(should_continue=...)`**: when visit/personal/work activates
+  mid-night, sleep's processes END PROPERLY — the host wires its yield
+  signal as a zero-arg callable, checked at PHASE BOUNDARIES only
+  (complete-current-phase-then-stop: a mid-flight phase is never torn;
+  the phase that started finishes its writes, later phases skip with
+  "cancelled: host ended sleep after <phase>", the result carries
+  `cancelled_after`). A cancelled night is a VALID night — all phases
+  idempotent, the next sleep resumes the work. Hard kills mid-phase
+  degrade to the crash semantics the engine already absorbs (idempotent
+  formations, closure dedup, world-model crash-replay repair). Default
+  None = byte-identical full night.
+
+### Added (doctoring machinery, 2026-07-13 — operator directive e-s 257 "rebuild a smaller memory footprint"; design at e-s 260)
+
+- **`doctoring.py`** (exported: `wake_cue_dedup_pass`, `journal_cold_cut`,
+  `safe_cut_seq`/`safe_cut_seqs`, `verify_cold_cut`): the footprint
+  repair for a long life. NEVER-PURGE honored by shape — the archive is
+  the complete life, the hot home a working set of it; append-only
+  honored — content changes are supersede-with-replacement and mass
+  reduction happens in a REBUILT FILE, never by deleting from the live
+  one. (1) wake-cue dedup: same-day near-identical clusters (reusing the
+  tending pass's token/jaccard home) supersede into ONE day-summary
+  (summarizes edges, unions, mechanical-dedup-v1 label, min_cluster
+  floor — two similar episodes are a life, twenty are a loop artifact);
+  report_only dry-read; actor mandatory. (2) journal cold-cut: rebuilt
+  store carrying all truth, retired-row embeddings nulled (reembed
+  precedent), counts/bindings/closures/valence intact, attention events
+  only above PER-PAIR safe cuts (`safe_cut_seqs`: each (scope,owner)
+  keeps window_limit×margin of its own recent events — the ladder-honest
+  mode; a thin diary/self pair never gates the heavy life pair), seqs
+  sparse-original, compaction record in triples_meta; opt-in
+  `cut_traces` drops traces/snapshots below the cut (explanation reads
+  degrade to the archive, head recall untouched by construction).
+  (3) verify: named parity checks, measured never asserted. Pinned:
+  bit-identical head recall across a window-sized cut; deposits nothing.
+- **Castor dry run (backup copy, real numbers)**: dedup found 9 clusters
+  / 92 near-identical own-time episodes (top cluster 41 members);
+  92,073,984 → 27,324,416 bytes (70.3% smaller) with verify green and
+  head recall bit-identical; 79,297 of 86,652 events cold-cut per-pair
+  (life cut at seq 87,712; diary/self kept whole).
+
+### Added (re-digestion machinery, 2026-07-13 — dispatch c1340; the Castor evidence package's named repair, built substrate-side touching no home)
+
+- **`redigestion.py`** (exported: `redigestion_candidates`,
+  `apply_redigestion`, `RedigestionCandidate`, `MECHANICAL_DIGEST_METHODS`,
+  `REDIGESTION_PROTECTED_KINDS`): the mechanical-v1 digest-poverty repair.
+  Candidates = PURE READ over the labeled debt (digest_method in the
+  mechanical set), ranked worst-first (poverty = marker-stripped residue
+  below a declared tunable, then global selected_count desc — hot bad
+  digests do the most daily damage), each carrying the verbatim
+  `payload_ref` as the re-authoring source. Apply = authored-words-only
+  write verb (a batch with no named `actor` is refused): per entry, one
+  NEW record (same kind/payload_ref/participants, outgoing edges COPIED —
+  the tombstone-edge lesson — plus a `refines` lineage edge;
+  `attributes.redigested_from` + `origin_date` era continuity) then
+  `close_record(kind="supersede")`; current-wins retires the old digest.
+  The new record starts at zero use BY DESIGN (the global counter
+  measures lived use; for hot loop artifacts the cooling IS the repair).
+  Rails, per entry, batch never aborts: protected kinds refuse (diary =
+  elected words; value/purpose/trait/interest = identity acts;
+  dream/world_model = born-digest), unlabeled/authored methods refuse
+  (the label is the CONSENT marker), empty/identical digests refuse,
+  unknown records refuse. Idempotent replays re-derive identical ids and
+  write nothing. D2 of repair pinned: applying deposits nothing.
+
+### Added (two-anchor summon memory deltas, 2026-07-13 — durable-visits design v4 RULED by the maintainer; §5/§6 memory slots)
+
+- **Formed-by-T candidate universe gate** (`folds.anchored_universe_exclusions`,
+  wired behind `reconstruction_inputs(anchored=...)`): an EXPLICITLY
+  anchored recall (`Stimulus.as_of` below head) excludes every record
+  whose first `source="remember"` binding seq exceeds the anchor —
+  closing the future-leak class (store truth has no seq axis, so
+  keyword/vector/recency channels could admit post-T records into a
+  (T,T) reincarnation recall: the entity-at-T seeing its own future).
+  Formation position = first remember binding (the marker situate /
+  dream_resolution / sleep_cadence already key on); post-anchor BINDING
+  STATE CHANGES on old records are not formation (the quarantine-replay
+  pin in test_binding_visibility holds unchanged). Gate is inert at head
+  and silent when nothing formed since the anchor (C4 replay bytes
+  stable); when it excludes, the result carries a plain-words note
+  naming the count and the raw-rows honest limit.
+- **Anchor-pair vocabulary constants** (`seam.py`, door-visible):
+  `IDENTITY_ANCHOR_FIELD`/`CONTEXT_ANCHOR_FIELD` ("identity_anchor"/
+  "context_anchor" — scope rides the PAIR, semantics c1270) +
+  `ANCHOR_SEQ_ATTRIBUTE`/`ANCHOR_MOMENT_ATTRIBUTE` ("anchor_seq"/
+  "anchor_moment" — record-level provenance on R4 deposits; anchored_at
+  is dead per the `_at`-means-timestamp unit-honesty rule). One source,
+  gateways import — the clamp-drift lesson applied to summon vocabulary.
+- **`situate_prompt_block`** (`situate.py`, exported): the R4 re_explore
+  injection contract — one fenced block (`[HISTORICAL CONTEXT — …; as of
+  journal seq N]` … `[END HISTORICAL CONTEXT]`), every record line dated
+  in place (visit-honesty lesson), sections for the moment/period/
+  elected-diary/then-identity/evolution-with-change-labels/open-tensions,
+  and a deposit footer in the entity's own terms ("remembering here is
+  reading; re-living is my own deliberate act"). Prompt surface for the
+  OWNING entity only; audience serving stays on export_replay redaction.
+- **Prelude-at-T pinned**: `self_records_read(as_of=T)` renders a
+  superseded value as it STOOD at T and only its replacement at head
+  (tests/test_anchored_summon.py — the R3 identity_anchor promise).
+
 ### Fixed (replay stream: diary act-frame edges, 2026-07-13 — observer e-s 253 gap)
 
 - **Diary-redacted display blocks now carry `edges`** (`replay._enrich`):

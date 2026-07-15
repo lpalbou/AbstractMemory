@@ -146,6 +146,61 @@ def binding_states(
     return states, frozenset(hidden), tuple(prompt_active)
 
 
+def anchored_universe_exclusions(
+    store: Any, journal: MemoryJournal, scope_pairs: Sequence[Tuple[str, str]], as_of: int
+) -> Tuple[frozenset, int]:
+    """FORMED-BY-T candidate universe gate (durable-visits design §5,
+    commons c1269 — closes the future-leak class): store truth has no seq
+    axis, so relevance channels (keyword/vector/recents) can admit records
+    formed AFTER the anchor into an anchored recall — the entity-at-T
+    seeing its own future. The journal DOES know every formation: a formed
+    record's first binding seq is its formation position. This gate
+    excludes, per searched pair, every record whose binding fold exists at
+    head but NOT at ≤ as_of (formed after T), materialized to assertion
+    ids exactly like hidden bindings (digest + edge rows by subject).
+
+    Returns (excluded_assertion_ids, post_anchor_record_count).
+
+    HONEST LIMIT (the promise wording in the design doc): rows written
+    without journal bindings (raw store.add) carry no formation
+    provenance and pass ungated — the anchored promise is "the
+    journal-derived view at T over records that existed at T", never
+    "the entity exactly as it was"."""
+    excluded: set = set()
+    post_anchor_records: set = set()
+    for scope, owner in scope_pairs:
+        # Formation position = the record's FIRST source="remember" binding
+        # (the marker situate/dream_resolution/sleep_cadence already key on).
+        # Raw rows (fold=False): a folded view collapses to the LATEST
+        # binding, which loses the formation row under later state changes
+        # (promotion, quarantine) — a record bound hidden after T was not
+        # FORMED after T (test_binding_visibility pins that replay).
+        first_formed: Dict[Tuple[str, str, str], int] = {}
+        for b in journal.bindings(scope=scope, owner_id=owner, fold=False, until_seq=None):
+            if b.source != "remember":
+                continue
+            key = (b.record_id, b.scope, b.owner_id)
+            if key not in first_formed or int(b.seq) < first_formed[key]:
+                first_formed[key] = int(b.seq)
+        pair_post_anchor: set = set()
+        for (rid, _b_scope, _b_owner), formed_seq in first_formed.items():
+            if formed_seq > int(as_of):
+                pair_post_anchor.add(rid)
+        post_anchor_records |= pair_post_anchor
+        if not pair_post_anchor:
+            continue
+        # ONE pair scan, not two queries per record (production-audit
+        # finding 4): a deep anchor over a real life would otherwise issue
+        # thousands of store queries per recall — R3/R4 sessions run this
+        # gate EVERY turn. Membership matching does the per-record work.
+        for a in store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=0)):
+            if not a.assertion_id:
+                continue
+            if a.assertion_id in pair_post_anchor or a.subject in pair_post_anchor:
+                excluded.add(a.assertion_id)
+    return frozenset(excluded), len(post_anchor_records)
+
+
 @dataclass(frozen=True)
 class ReconstructionInputs:
     """Journal-derived inputs + read-mode for one reconstruction call."""
@@ -184,6 +239,7 @@ def reconstruction_inputs(
     spread_params: SpreadParams,
     pipeline_config: Optional[ReconstructConfig] = None,
     ablation: Optional[str] = None,
+    anchored: bool = False,
 ) -> ReconstructionInputs:
     """Assemble every journal-derived input one reconstruction needs, plus
     the ablation read-mode (a2a 0002/001 experiment arms).
@@ -221,6 +277,25 @@ def reconstruction_inputs(
         base, trails, contributions = activation_inputs(journal, scope_pairs, as_of, config=config)
     states, hidden, prompt_active = binding_states(store, journal, scope_pairs, as_of)
     excluded = closure_exclusions(journal, as_of) | hidden
+    anchor_notes: Tuple[str, ...] = ()
+    if anchored:
+        # Explicitly-anchored recall (as_of below head): close the
+        # future-leak class before any channel runs. Inert at head by
+        # construction (no binding's first seq exceeds current_seq).
+        future_ids, future_records = anchored_universe_exclusions(
+            store, journal, scope_pairs, as_of)
+        excluded = excluded | future_ids
+        if future_records:
+            # Note only when the gate actually excluded something: an inert
+            # anchor (nothing formed since T) stays byte-identical to the
+            # original read — the C4 replay contract and this gate are the
+            # same promise ("the view at T over records that existed at T"),
+            # and a zero-effect note would break replay bytes for nothing.
+            anchor_notes = (
+                f"anchored recall (as_of={as_of}): {future_records} record(s) formed after the "
+                "anchor excluded from the candidate universe; rows without formation bindings "
+                "are ungated (store truth has no seq axis)",
+            )
 
     # The facade-threaded config is the base (review F1: ReconstructConfig
     # used to be constructed fresh here, making the exported tuning surface
@@ -253,6 +328,6 @@ def reconstruction_inputs(
     return ReconstructionInputs(
         base=base, trails=trails, contributions=contributions, bindings=states,
         excluded=excluded, spread_params=spread_params, run_channels=run_channels,
-        run_spreading=not ablated, pipeline_config=pipeline_config, notes=notes,
+        run_spreading=not ablated, pipeline_config=pipeline_config, notes=notes + anchor_notes,
         prompt_active=prompt_active, global_count_of=_global_count_of,
     )

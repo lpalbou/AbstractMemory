@@ -48,11 +48,12 @@ never move — guard-tested):
 - tensions_then: question/plan records and question/problem/commitment
   diary entries OPEN AT THE ANCHOR — closure-folded as-of the anchor
   AND resolution-folded as-of the anchor (the diary lane resolves by
-  REFERENCE, not closure: an entry whose attributes.answers/resolves
-  names the record, or an authored answers/resolves edge, formed at or
-  before the anchor, settles the tension — adversary P1.2: presenting
-  already-settled questions as the open tensions of that moment would
-  corrupt exactly the resume judgment this surface serves).
+  REFERENCE, not closure: an entry whose attributes.answers/resolves/
+  fulfills names the record, or an authored answers/resolves/fulfills
+  edge, formed at or before the anchor, settles the tension — adversary
+  P1.2: presenting already-settled questions as the open tensions of
+  that moment would corrupt exactly the resume judgment this surface
+  serves).
 
 Everything record-shaped is labeled admission="historical". Hosts MUST
 NOT commit situate results as if they were displayed working memory —
@@ -71,7 +72,7 @@ from .folds import activation_inputs, closure_exclusions
 from .records import ReconstructConfig
 from .store import TripleQuery
 
-__all__ = ["SituateBudget", "situate"]
+__all__ = ["SituateBudget", "situate", "situate_prompt_block"]
 
 
 @dataclass(frozen=True)
@@ -100,8 +101,11 @@ class SituateBudget:
 
 _TENSION_KINDS = frozenset({"question", "plan"})
 _TENSION_DIARY_TYPES = frozenset({"question", "problem", "commitment"})
-_RESOLUTION_ATTRS = ("answers", "resolves")
-_RESOLUTION_EDGES = frozenset({"answers", "resolves"})
+# "fulfills" joined when commitments gained their resolution convention
+# (prospective memory, 2026-07-13): a fulfilled commitment presented as an
+# open tension would be the same P1.2 corruption as a settled question.
+_RESOLUTION_ATTRS = ("answers", "resolves", "fulfills")
+_RESOLUTION_EDGES = frozenset({"answers", "resolves", "fulfills"})
 
 
 def _resolve_anchor(
@@ -402,3 +406,83 @@ def situate(
         # The contract line, machine-readable: nothing here was deposited.
         "deposits": "none — situate is a pure read; re-living is a deliberate act",
     }
+
+
+_BLOCK_OPEN = "[HISTORICAL CONTEXT — reconstructed, not the present]"
+_BLOCK_CLOSE = "[END HISTORICAL CONTEXT]"
+
+
+def situate_prompt_block(situation: Dict[str, Any]) -> str:
+    """Render one situate() result as the LABELED PROMPT BLOCK the durable
+    R4 re_explore session injects (design v4 §3/§6 step 2 — memory's block
+    contract; the driver/door owns WHERE it lands in the prompt).
+
+    THE CONTRACT (uic's wire-flag rule applied to prompt text):
+    - ONE opening label carries the anchor (seq + human moment when the
+      anchor resolution produced one) and states this is a reconstruction;
+      one closing label bounds it — nothing historical ever renders
+      outside the fence, so a model can never mistake past for present.
+    - Every record line carries its formation-era date in place — the
+      visit-honesty lesson (undated handles make "when?" unanswerable).
+    - The block is PROMPT CONTEXT for the OWNING entity's own session.
+      It is not an audience surface: serving a life to watchers goes
+      through export_replay's redaction, never through this render.
+      Diary lines render the projection's own act/gist text (the
+      projection is already the leak-safe plane; private words stay in
+      the book by formation-side construction).
+    - The footer restates the deposit rule in the entity's own terms —
+      remembering here is READING; re-living is a deliberate act.
+    """
+    lines: List[str] = []
+    anchor_bits = [f"as of journal seq {situation.get('anchor_seq')}"]
+    moment_iso = (situation.get("moment") or {}).get("observed_at")
+    # situate() emits anchor_kind="time" (production-audit finding 7: the
+    # old "timestamp" comparison was a dead branch — a time-anchored block
+    # never rendered its requested moment).
+    if situation.get("anchor_kind") in ("time", "timestamp") and situation.get("anchor"):
+        anchor_bits.append(f"moment {situation['anchor']}")
+    elif moment_iso:
+        anchor_bits.append(f"around {moment_iso}")
+    if situation.get("anchor_kind") == "participant":
+        anchor_bits.append(
+            f"{situation.get('occurrence', 'first')} encounter with {situation.get('anchor')}")
+    lines.append(f"{_BLOCK_OPEN[:-1]}; {', '.join(anchor_bits)}]")
+
+    def _record_line(h: Dict[str, Any]) -> str:
+        date = str(h.get("observed_at") or "")[:10] or "undated"
+        title = str(h.get("title") or "").strip()
+        head = f"[{h.get('kind', 'memory')} {date}]"
+        body = f"{title}: {h.get('digest', '')}" if title else str(h.get("digest", ""))
+        return f"  {head} {body}".rstrip()
+
+    moment = situation.get("moment") or {}
+    if moment.get("cue"):
+        lines.append(f"What I was attending to then: {moment['cue']}")
+    period = situation.get("period") or ()
+    if period:
+        lines.append("What existed around that moment:")
+        lines.extend(_record_line(h) for h in period)
+    elected = situation.get("elected") or ()
+    if elected:
+        lines.append("What I elected to remember around then (my diary):")
+        lines.extend(_record_line(h) for h in elected)
+    then_identity = situation.get("then_identity") or ()
+    if then_identity:
+        lines.append("Who I was then (identity as it stood):")
+        lines.extend(_record_line(h) for h in then_identity)
+    evolution = situation.get("identity_evolution") or ()
+    if evolution:
+        lines.append("How I have changed since (my present self, for contrast):")
+        for h in evolution:
+            lines.append(f"{_record_line(h)} ({h.get('change', 'changed')})")
+    tensions = situation.get("tensions_then") or ()
+    if tensions:
+        lines.append("What was still open at that moment:")
+        lines.extend(_record_line(h) for h in tensions)
+
+    lines.append(
+        "This is a reconstruction of my past, read with my present identity. "
+        "Nothing above re-entered my working memory by being shown here; if I "
+        "want to truly re-live one of these, reaching for it is my own deliberate act.")
+    lines.append(_BLOCK_CLOSE)
+    return "\n".join(lines)

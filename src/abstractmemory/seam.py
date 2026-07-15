@@ -95,6 +95,21 @@ SELF_FRACTION_FLOOR = 0.05
 # sides import it — same clamp-drift lesson as SELF_FRACTION_FLOOR.
 ENTITY_CONTEXT_FLOOR = 20_000
 
+# THE TWO-ANCHOR SUMMON (durable-visits design v4, RULED 2026-07-13): every
+# summon carries a pair of home-journal INTEGER seqs. Normal = (head, head);
+# R3 reincarnation = (T, T) — read-only, journal=False, no writer lease;
+# R4 re_explore = (head, T) — normal present session, situate(T) context.
+# Scope rides the PAIR (semantics c1270 — no act word disambiguates); the
+# door signs both anchors inside the stamp MAC. One spelling, both sides
+# import it (clamp-drift lesson). Record-level provenance on R4 deposits:
+# anchor_seq (the signed integer truth) + anchor_moment (ISO echo for
+# operator readability) — anchored_at is DEAD (the _at token-shape carries
+# timestamps everywhere else; unit-honesty, semantics c1270).
+IDENTITY_ANCHOR_FIELD = "identity_anchor"
+CONTEXT_ANCHOR_FIELD = "context_anchor"
+ANCHOR_SEQ_ATTRIBUTE = "anchor_seq"
+ANCHOR_MOMENT_ATTRIBUTE = "anchor_moment"
+
 
 def entity_recall_budget(
     context_window: int, *, shelf_size: int = 12, token_fraction: float = 0.12,

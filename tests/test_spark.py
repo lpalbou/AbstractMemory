@@ -84,6 +84,23 @@ def test_lint_shared_vulnerability_required_for_framework_sparks() -> None:
     assert not any("shared_vulnerability" in i for i in lint_spark(spark, framework=False))
 
 
+def test_lint_shared_vulnerability_floor_is_name_AND_class() -> None:
+    """Gateway adversary c1628: a spark carrying shared_vulnerability with
+    class=revisable linted CLEAN while every core-values fold (class=="core"
+    filters) silently omitted it — the framework floor unlocked without a
+    single error. The floor is the name+class pair."""
+    spark = copy.deepcopy(DEFAULT_SPARK_TEMPLATE)
+    for v in spark["values"]:
+        if v["name"] == "shared_vulnerability":
+            v["class"] = "revisable"
+    issues = lint_spark(spark)
+    assert any(
+        i.startswith("ERROR values: 'shared_vulnerability' must be class=core") for i in issues
+    ), issues
+    # The operator override still bypasses the whole floor, demotion included.
+    assert not any("shared_vulnerability" in i for i in lint_spark(spark, framework=False))
+
+
 # ---------------------------------------------------------------------------
 # Diary projection attributes (dual-plane split: book vs memory-of-the-book)
 # ---------------------------------------------------------------------------

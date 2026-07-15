@@ -21,7 +21,7 @@ from .consolidation import (
     unresolved_dreams,
 )
 from .dream_resolution import resolve_dreams_pass
-from .situate import SituateBudget, situate
+from .situate import SituateBudget, situate, situate_prompt_block
 from .world_model import current_world_models, standing_world_models, world_model_pass
 from .embedding_pin import build_pin, pin_note
 from .embeddings import AbstractGatewayTextEmbedder, TextEmbedder
@@ -63,7 +63,13 @@ from .probe import PROBE_EFFORTS, ProbeBudget, ProbeHit, ProbeResult, probe, pro
 from .recall_reads import absence_diagnosis, recall_history
 from .records import ReconstructConfig
 from .sleep_policy import SleepTuning
-from .diary import open_ideas, open_problems, open_questions
+from .diary import (
+    open_commitments,
+    open_ideas,
+    open_problems,
+    open_questions,
+    triggered_commitments,
+)
 from .models import TripleAssertion
 # The closed sets are ROOT-EXPORTED as the one shared source: consumers
 # (runtime's diary_type clamp, kind-aware renderers) IMPORT them instead of
@@ -77,7 +83,26 @@ from .records import (
     diary_entry_hash,
     verify_diary_chain,
 )
+from .doctoring import journal_cold_cut, verify_cold_cut, wake_cue_dedup_pass
+from .redigestion import (
+    MECHANICAL_DIGEST_METHODS,
+    REDIGESTION_PROTECTED_KINDS,
+    RedigestionCandidate,
+    apply_redigestion,
+    redigestion_candidates,
+)
 from .replay import export_replay
+from .probe import (
+    FAMILIARITY_MIN_KEYWORD_TOKENS,
+    FAMILIARITY_STRONG_THRESHOLD,
+    FAMILIARITY_VECTOR_MIN,
+    familiarity,
+)
+from .tend import (
+    IDENTITY_SCOPE_PENDING_RULING,
+    apply_tend_elections,
+    parse_tend_block,
+)
 from .spark import (
     DEFAULT_SPARK_TEMPLATE,
     SHARED_VULNERABILITY_STATEMENT,
@@ -85,7 +110,11 @@ from .spark import (
     lint_spark,
 )
 from .seam import (
+    ANCHOR_MOMENT_ATTRIBUTE,
+    ANCHOR_SEQ_ATTRIBUTE,
+    CONTEXT_ANCHOR_FIELD,
     ENTITY_CONTEXT_FLOOR,
+    IDENTITY_ANCHOR_FIELD,
     SELF_FRACTION_FLOOR,
     ActiveMemorySnapshot,
     MemoryHandle,
@@ -100,11 +129,14 @@ from .store import TripleQuery, TripleStore
 from .system import MemorySystem
 
 __all__ = [
+    "ANCHOR_MOMENT_ATTRIBUTE",
+    "ANCHOR_SEQ_ATTRIBUTE",
     "AbstractGatewayTextEmbedder",
     "ActiveMemorySnapshot",
     "AttentionConfig",
     "CANONICAL_TEXT_VERSION",
     "COMPONENT_RELATIONS",
+    "CONTEXT_ANCHOR_FIELD",
     "CONTEXT_RELATIONS",
     "ClosureRecord",
     "ConceptAnchorTuning",
@@ -113,12 +145,18 @@ __all__ = [
     "DISPOSAL_RELATIONS",
     "ENTITY_CONTEXT_FLOOR",
     "EngramResult",
+    "FAMILIARITY_MIN_KEYWORD_TOKENS",
+    "FAMILIARITY_STRONG_THRESHOLD",
+    "FAMILIARITY_VECTOR_MIN",
     "GradationConfig",
     "GradationScore",
+    "IDENTITY_ANCHOR_FIELD",
+    "IDENTITY_SCOPE_PENDING_RULING",
     "InMemoryJournal",
     "InMemoryTripleStore",
     "KIND_RANKS",
     "LanceDBTripleStore",
+    "MECHANICAL_DIGEST_METHODS",
     "MEMORY_RECORD_KINDS",
     "MemoryEvent",
     "MemoryHandle",
@@ -130,10 +168,12 @@ __all__ = [
     "ProbeBudget",
     "ProbeHit",
     "ProbeResult",
+    "REDIGESTION_PROTECTED_KINDS",
     "RecallBudget",
     "ReconstructConfig",
     "ReconstructionResult",
     "ReconstructionTrace",
+    "RedigestionCandidate",
     "SELF_FRACTION_FLOOR",
     "SHARED_VULNERABILITY_STATEMENT",
     "SQLiteJournal",
@@ -149,6 +189,8 @@ __all__ = [
     "TripleStore",
     "ValenceEvent",
     "absence_diagnosis",
+    "apply_redigestion",
+    "apply_tend_elections",
     "build_pin",
     "canonical_spark_hash",
     "canonical_text",
@@ -165,30 +207,39 @@ __all__ = [
     "entity_recall_budget",
     "expand_by_concepts",
     "export_replay",
+    "familiarity",
     "fold_bindings",
     "identity_card",
+    "journal_cold_cut",
     "last_maintenance_seq",
     "lint_spark",
     "maintenance_due",
     "maintenance_report",
+    "open_commitments",
     "open_ideas",
     "open_problems",
     "open_questions",
+    "parse_tend_block",
     "probe",
     "probe_expand",
     "promote_candidate",
     "read_embedding_pin",
     "recall_history",
+    "redigestion_candidates",
     "reembed_home",
     "reembed_store",
     "reject_candidate",
     "resolve_dreams_pass",
     "situate",
+    "situate_prompt_block",
     "sleep_pass",
     "standing_world_models",
     "structural_report",
     "token_estimate",
+    "triggered_commitments",
     "unresolved_dreams",
+    "verify_cold_cut",
     "verify_diary_chain",
+    "wake_cue_dedup_pass",
     "world_model_pass",
 ]

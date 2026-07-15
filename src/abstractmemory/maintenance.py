@@ -614,6 +614,7 @@ def sleep_pass(
     report_only: bool = False, as_of: Optional[int] = None,
     scan_limit: Optional[int] = None,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
+    should_continue: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """One full sleep: RESOLVE first (the night reviews the day — standing
     dreams the day's lived experience already answered close softly,
@@ -628,7 +629,25 @@ def sleep_pass(
     Ordering rationale: resolution must PRECEDE tonight's dream so a
     settled tension never feeds continuation anchors again, and a
     continuation dream whose lineage closed resolves before it can re-arm
-    salience."""
+    salience.
+
+    GRACEFUL CANCELLATION (the one-active-phase ruling, 2026-07-13: when
+    the ENTITY's visit/personal/work phase activates, sleep's processes
+    must END PROPERLY — the boundaries below are the NIGHT'S SUB-PHASES,
+    not entity phases): `should_continue` is a zero-arg callable the HOST
+    wires to its yield signal (loop mode flag, lease negotiation, door
+    state). It is checked at SUB-PHASE BOUNDARIES only — including the
+    start (a signal already raised at call time buys zero write phases) —
+    complete-current-phase-then-stop is the grace contract: a mid-flight
+    sub-phase is never torn by this mechanism; the one that already
+    started finishes its writes, later ones are skipped with
+    {"skipped_reason": "cancelled: ..."} and the night's result carries
+    cancelled_after=<last completed sub-phase>. A skipped night is a
+    VALID night (all sub-phases idempotent — the next sleep picks up
+    exactly where this one stopped). HARD KILLS mid-phase degrade to
+    crash semantics the engine already absorbs (idempotent formations,
+    closure dedup, world-model crash-replay repair) — safe, but the
+    boundary check is the graceful path hosts should prefer."""
     from .dream_resolution import resolve_dreams_pass
     from .world_model import world_model_pass
 
@@ -641,9 +660,61 @@ def sleep_pass(
             "sleep_pass: as_of anchors AUDIT reads only — pass "
             "report_only=True for anchored reads (a night written against "
             "a historical anchor would forge the timeline)")
+
+    # Cancelled-phase shapes mirror the REAL empty pass shapes key-for-key
+    # (phase-audit adversary finding 2: a phantom `formed` key resurrected
+    # the documented formed-vs-created consumer bug class; near-miss dicts
+    # are how the 2026-07-09 consolidator bug happened).
+    def _cancelled(name: str, after: str, real_empty: Dict[str, Any]) -> Dict[str, Any]:
+        return {"pass_name": name,
+                "skipped_reason": f"cancelled: host ended sleep after {after} "
+                                  "(one-active-phase transition)", **real_empty}
+
+    def _cancelled_maintenance(after: str) -> Dict[str, Any]:
+        return _cancelled("consolidation_pass", after,
+                          {"report": {}, "created": [], "skipped": [], "created_count": 0})
+
+    def _cancelled_world_models(after: str) -> Dict[str, Any]:
+        return _cancelled("world_model_pass", after,
+                          {"formed": [], "unchanged": [], "skipped": [], "repaired": [],
+                           "targets_seen": 0, "eligible": [], "formed_count": 0})
+
+    def _cancelled_dream(after: str) -> Dict[str, Any]:
+        return _cancelled("dream_pass", after,
+                          {"report": {}, "proposals": [], "questions": [], "salience": 0,
+                           "vectorless_pairs": 0, "trail_associated": [],
+                           "context_associated": [],
+                           "dream_record_id": None, "created": False})
+
+    def _go() -> bool:
+        return should_continue is None or bool(should_continue())
+
+    def _skipped_night(after: str, resolution_result: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "pass_name": "sleep_pass",
+            "phases": ("resolution", "maintenance", "world_models", "dream"),
+            "cancelled_after": after,
+            "resolution": resolution_result,
+            "maintenance": _cancelled_maintenance(after),
+            "world_models": _cancelled_world_models(after),
+            "dream": _cancelled_dream(after),
+        }
+
+    cancelled_after: Optional[str] = None
+    # The start of the night is a boundary too (adversary finding 1): a
+    # yield signal already raised when the verb is called must not buy a
+    # whole write phase.
+    if not _go():
+        return _skipped_night(
+            "start (no phase ran)",
+            _cancelled("resolve_dreams_pass", "start (no phase ran)",
+                       {"examined": 0, "resolved": [], "standing": [],
+                        "as_of_seq": None, "resolved_count": 0}))
     resolution = resolve_dreams_pass(
         system, scopes=scopes, owner_id=owner_id,
         report_only=report_only, as_of=as_of, tuning=tuning)
+    if not _go():
+        return _skipped_night("resolution", resolution)
     maintenance = consolidation_pass(
         system, scopes=scopes, owner_id=owner_id, max_candidates=max_candidates,
         report_only=report_only, as_of=as_of, scan_limit=scan_limit, tuning=tuning)
@@ -653,8 +724,11 @@ def sleep_pass(
     # tend the graph, refine understanding, then dream). Under an as_of
     # anchor the phase is SKIPPED honestly (it reads current state only;
     # a mixed-frame result would be worse than an absent one).
-    if as_of is not None:
-        world_models: Dict[str, Any] = {
+    if not _go():
+        cancelled_after = "maintenance"
+        world_models: Dict[str, Any] = _cancelled_world_models("maintenance")
+    elif as_of is not None:
+        world_models = {
             "pass_name": "world_model_pass",
             "skipped_reason": "as_of anchor: world models read current state "
                               "only — phase skipped to keep the night's "
@@ -669,13 +743,22 @@ def sleep_pass(
     # The dream metabolizes the night's work: the tending ledger's operation
     # count feeds dream salience (fork parity, capped in SleepTuning — a busy
     # tending night signals change worth dreaming about).
-    ops_count = len((maintenance.get("report") or {}).get("operations") or ())
-    dream = dream_pass(
-        system, scopes=scopes, owner_id=owner_id, salience_floor=salience_floor,
-        max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
-        report_only=report_only, as_of=as_of, maintenance_ops=ops_count,
-        tuning=tuning)
-    return {
+    if cancelled_after is None and not _go():
+        # Honest label (adversary finding 6): under as_of the world-models
+        # phase was SKIPPED, not completed — cancelled_after names the last
+        # phase that actually ran.
+        cancelled_after = ("maintenance" if world_models.get("skipped_reason")
+                          else "world_models")
+    if cancelled_after is not None:
+        dream = _cancelled_dream(cancelled_after)
+    else:
+        ops_count = len((maintenance.get("report") or {}).get("operations") or ())
+        dream = dream_pass(
+            system, scopes=scopes, owner_id=owner_id, salience_floor=salience_floor,
+            max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
+            report_only=report_only, as_of=as_of, maintenance_ops=ops_count,
+            tuning=tuning)
+    result: Dict[str, Any] = {
         "pass_name": "sleep_pass",
         "phases": ("resolution", "maintenance", "world_models", "dream"),
         "resolution": resolution,
@@ -683,3 +766,6 @@ def sleep_pass(
         "world_models": world_models,
         "dream": dream,
     }
+    if cancelled_after is not None:
+        result["cancelled_after"] = cancelled_after
+    return result

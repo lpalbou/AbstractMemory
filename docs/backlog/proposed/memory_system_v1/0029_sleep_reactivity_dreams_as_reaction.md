@@ -43,7 +43,8 @@ Constraints any future design must inherit (all already ruled):
   synthesized.
 - Diary stays sole-author and awake-only (elections are an awake act).
 - Cost discipline: an LLM-backed reaction inside sleep is compute the operator
-  pays for at night — whatever ships must be operator-granted like own_time,
+  pays for at night — whatever ships must be operator-granted like the
+  personal phase grant (phases.yaml, off-by-default),
   never default-on.
 
 ## Why it is parked

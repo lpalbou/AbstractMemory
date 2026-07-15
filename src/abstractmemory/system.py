@@ -272,12 +272,17 @@ class MemorySystem(ValenceOps, AccessOps):
                 "reconstruct() on this journal, or None for latest.")
         # ONE fold assembly (folds.py) derives every journal input and owns
         # ablation read-modes (per-arm channel/activation switches + notes).
+        # anchored: an EXPLICIT below-head anchor engages the formed-by-T
+        # candidate-universe gate (durable-visits §5 — store truth has no
+        # seq axis, so channels would otherwise admit post-anchor records:
+        # the entity-at-T seeing its own future). Head anchors are inert.
         inputs = _reconstruction_inputs(
             self._store, self._journal, scope_pairs, as_of,
             config=self._attention_config,
             spread_params=self._spread_params,
             pipeline_config=self._reconstruct_config,
             ablation=self._ablation,
+            anchored=stimulus.as_of is not None and as_of < current,
         )
 
         result, trace = run_reconstruction(
@@ -368,6 +373,70 @@ class MemorySystem(ValenceOps, AccessOps):
             reason=reason, effort=effort, embedder=self._embedder,
             excluded_ids=set(inputs.excluded), config=inputs.pipeline_config,
             as_of_seq=as_of, trace_id=trace_id, write_journal=bool(journal),
+        )
+
+    def familiarity(
+        self, stimulus: Stimulus, *, scopes: Sequence[Tuple[str, str]],
+        effort: Any = "quick", strong_threshold: Optional[int] = None,
+        max_feelings: Optional[int] = None,
+        vector_min: Optional[float] = None,
+        min_keyword_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Pre-answer metamemory (the anti-fabrication reflex): one cheap
+        pass answering "do I hold ANY trace near this topic, and how
+        much?" — match DENSITY, never content. Counts the same channel
+        pass probe() ranks; returns strength ("none"|"weak"|"strong",
+        ladder configurable via strong_threshold, K=3 default), distinct/
+        per-channel/per-scope counts, a compact standing-feelings summary
+        for stimulus-relevant gradation targets (participants or
+        cue-matched — presentation only, never a density gate), and
+        honesty warnings. NO record ids, digests, or titles in the result:
+        the read cannot be mistaken for retrieval. PURE READ — no reason
+        required (a reflex, not a reach), journals nothing, deposits
+        nothing; unlike probe() there is no journal= switch because there
+        is nothing to write. Scope discipline: explicit (scope, owner)
+        pairs are still required; broad scopes need no escalation reason
+        because no content crosses the boundary — only counts do.
+        Full semantics: probe.familiarity."""
+        from .probe import (
+            FAMILIARITY_MAX_FEELINGS,
+            FAMILIARITY_MIN_KEYWORD_TOKENS,
+            FAMILIARITY_STRONG_THRESHOLD,
+            FAMILIARITY_VECTOR_MIN,
+            familiarity as _familiarity,
+        )
+
+        scope_pairs = _normalize_scopes(scopes)
+        if not scope_pairs:
+            raise ValueError("familiarity requires at least one (scope, owner_id) pair")
+        current = self._journal.current_seq()
+        as_of = current if stimulus.as_of is None else int(stimulus.as_of)
+        if not (0 <= as_of <= current):
+            raise ValueError(
+                f"Stimulus.as_of={as_of} is not a valid anchor for this journal "
+                f"(current_seq={current}) — same boundary rule as reconstruct")
+        inputs = _reconstruction_inputs(
+            self._store, self._journal, scope_pairs, as_of,
+            config=self._attention_config, spread_params=self._spread_params,
+            pipeline_config=self._reconstruct_config, ablation=self._ablation,
+        )
+        return _familiarity(
+            self._store, stimulus=stimulus, scopes=scope_pairs, effort=effort,
+            embedder=self._embedder, excluded_ids=set(inputs.excluded),
+            config=inputs.pipeline_config,
+            # The system's journal makes feelings work by default; the
+            # gradation fold follows the facade's threaded tuning.
+            journal=self._journal, gradation_config=self._gradation_config,
+            as_of_seq=as_of,
+            strong_threshold=(FAMILIARITY_STRONG_THRESHOLD
+                              if strong_threshold is None else int(strong_threshold)),
+            max_feelings=(FAMILIARITY_MAX_FEELINGS
+                          if max_feelings is None else int(max_feelings)),
+            vector_min=(FAMILIARITY_VECTOR_MIN
+                        if vector_min is None else float(vector_min)),
+            min_keyword_tokens=(FAMILIARITY_MIN_KEYWORD_TOKENS
+                                if min_keyword_tokens is None
+                                else int(min_keyword_tokens)),
         )
 
     def probe_expand(

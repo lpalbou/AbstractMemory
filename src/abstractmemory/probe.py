@@ -34,10 +34,28 @@ count-bounded, honoring closure/hidden folds. It answers "show me what is
 CONNECTED to this" without a second query — the fork's expand, in seam
 terms. Expansion traces ride trace_kind="expand" with the parent probe's
 trace id in `need`.
+
+FAMILIARITY (`familiarity`) is the pre-answer metamemory reflex (accepted
+2026-07-13): one cheap pass answering "do I hold ANY trace near this
+topic, and how much?" — match DENSITY, never content. It COUNTS the same
+channel pass probe() RANKS (`_channel_pass`: the recents-window gather +
+exact/vector/keyword/participants admission loop) and returns a
+none/weak/strong strength plus per-channel/per-scope distinct counts,
+with NO record ids, digests, or titles anywhere in the result — the read
+cannot be mistaken for retrieval, which is the anti-fabrication property
+(a visitor claims shared history; "none" gives the mind a mechanical
+reason to say "I don't remember that" instead of inventing). Alongside
+density it surfaces a compact feelings summary for stimulus-relevant
+gradation targets (participants or cue-matched) — "I know about X, and I
+hold feelings toward it" — read from the existing valence fold; feelings
+are presentation only and NEVER gate density. familiarity is a REFLEX,
+not a reach: no reason required, no journal writes, no trace, no audit
+events, no deposits.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
@@ -52,8 +70,10 @@ from .channels import (
 from .concept_anchor import (
     DEFAULT_CONCEPT_TUNING,
     ConceptAnchorTuning,
+    concept_terms,
     expand_by_concepts,
 )
+from .gradation import GradationConfig, compute_gradation
 from .journal import MemoryEvent, ReconstructionTrace
 from .models import TripleAssertion
 from .records import ReconstructConfig
@@ -61,10 +81,14 @@ from .seam import RecallBudget, Stimulus
 from .store import TripleQuery
 
 __all__ = [
+    "FAMILIARITY_MIN_KEYWORD_TOKENS",
+    "FAMILIARITY_STRONG_THRESHOLD",
+    "FAMILIARITY_VECTOR_MIN",
     "PROBE_EFFORTS",
     "ProbeBudget",
     "ProbeHit",
     "ProbeResult",
+    "familiarity",
     "probe",
     "probe_expand",
 ]
@@ -103,6 +127,34 @@ PROBE_EFFORTS: Mapping[str, ProbeBudget] = {
                         expand_depth=2, expand_max_records=24,
                         expand_token_budget=3200),
 }
+
+# familiarity() strength ladder — deterministic and CONFIGURABLE (the
+# `strong_threshold` parameter, K): distinct_records == 0 -> "none",
+# 1..K -> "weak", > K -> "strong". K=3 default: a single trace (or a couple)
+# is acquaintance, not command of a topic — more than three independent
+# admitted records is enough density to answer from memory rather than
+# hedge. A named module constant, never a literal buried in the fold.
+FAMILIARITY_STRONG_THRESHOLD = 3
+
+# Presentation bound for the familiarity feelings summary (compact by
+# contract — a reflex must stay cheap to render). Callers widen/narrow via
+# the `max_feelings` parameter.
+FAMILIARITY_MAX_FEELINGS = 8
+
+# DENSITY-HONEST admission floors (live A/B finding, 2026-07-13): probe's
+# channel floors are RANKING-relative — the vector floor admits the top of
+# ANY field (measured: gibberish cues admitted rows at cosine 0.31/0.27
+# with a real qwen3 embedder), and one incidental keyword token ("office",
+# "from") channel-matches — so "none" was unreachable on a lived home and
+# the anti-fabrication signal could never fire. Familiarity therefore
+# counts an admission toward DENSITY only above absolute confidence bars;
+# probe()'s ranking behavior is untouched (these floors exist only in the
+# counting fold). Exact anchors and door-stamped participants always count
+# (identity-grade signals). Both bars are parameters; the defaults are
+# calibrated against the measured gibberish baseline (~0.31) vs on-topic
+# matches (>0.55) for qwen3-class embedders.
+FAMILIARITY_VECTOR_MIN = 0.45
+FAMILIARITY_MIN_KEYWORD_TOKENS = 2
 
 
 @dataclass(frozen=True)
@@ -176,42 +228,67 @@ def _kind_of(a: TripleAssertion, config: ReconstructConfig) -> str:
     return config.kind_of(a)
 
 
-def probe(
+def _admit_candidate(
+    universe: Dict[str, TripleAssertion],
+    relevance: Dict[str, Dict[str, float]],
+    cues: Dict[str, List[str]],
+    excluded: Set[str],
+    rid: str,
+    a: TripleAssertion,
+    channel: str,
+    score: float,
+    detail: str,
+) -> None:
+    """One admission into the candidate universe (shared by the channel
+    pass and probe's concept expansion). Universe key = ASSERTION id (the
+    trace/commit currency — same as the reconstruction pipeline);
+    exclusion folds live in that namespace too."""
+    if not (isinstance(rid, str) and rid) or rid in excluded:
+        return
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+    if attrs.get("record_edge") or attrs.get("bookkeeping"):
+        return
+    universe.setdefault(rid, a)
+    rel = relevance.setdefault(rid, {})
+    rel[channel] = max(rel.get(channel, 0.0), float(score))
+    bucket = cues.setdefault(rid, [])
+    line = detail if detail else channel
+    if line not in bucket:
+        bucket.append(line)
+
+
+@dataclass
+class _ChannelPass:
+    """Everything one channel pass produced. probe() RANKS this; familiarity()
+    COUNTS it — one pass, two readings."""
+
+    universe: Dict[str, TripleAssertion]
+    relevance: Dict[str, Dict[str, float]]
+    cues: Dict[str, List[str]]
+    channels_run: List[str]
+    warnings: List[str]
+
+
+def _channel_pass(
     store: Any,
-    journal: Any,
     *,
     stimulus: Stimulus,
-    scopes: Sequence[Tuple[str, str]],
-    reason: str,
-    effort: Any = "standard",
-    embedder: Any = None,
-    excluded_ids: Optional[Set[str]] = None,
-    config: ReconstructConfig = ReconstructConfig(),
-    as_of_seq: int = 0,
-    trace_id: Optional[str] = None,
-    write_journal: bool = True,
-) -> ProbeResult:
-    """One deliberate reach. Pure read over the store; journal writes are
-    the trace + inert audit events (write_journal=False writes nothing).
-
-    The caller (facade) owns fold assembly: `excluded_ids` must already
-    carry closure/hidden exclusions and `as_of_seq` the replay anchor —
-    the same division of labor as run_reconstruction."""
-    reason_text = _require_reason(reason)
-    budget = _resolve_budget(effort)
-    excluded = set(excluded_ids or ())
-    scope_pairs = [(str(s or "").strip().lower(), str(o or "").strip())
-                   for s, o in (scopes or ()) if str(s or "").strip()]
-    if not scope_pairs:
-        raise ValueError("probe requires at least one (scope, owner_id) pair")
-    tid = (trace_id.strip() if isinstance(trace_id, str) and trace_id.strip()
-           else uuid.uuid4().hex)
-
+    scope_pairs: Sequence[Tuple[str, str]],
+    max_candidates: int,
+    excluded: Set[str],
+    embedder: Any,
+    config: ReconstructConfig,
+) -> _ChannelPass:
+    """The store-facing candidate pass probe() and familiarity() share: the
+    recents-window gather + exact/vector/keyword/participants admission
+    loop. Pure read; relevance only (no activation, no seats, no STM).
+    Extracted verbatim from probe() — its behavior is pinned by the probe
+    suite and must stay byte-identical for that caller."""
     warnings: List[str] = []
     # RecallBudget carries the per-channel fetch bound the channel runners
     # read (max_candidates); the rest of the shelf budget is irrelevant to
     # a probe and deliberately unused.
-    channel_budget = RecallBudget(max_candidates=int(budget.max_candidates))
+    channel_budget = RecallBudget(max_candidates=int(max_candidates))
 
     universe: Dict[str, TripleAssertion] = {}
     relevance: Dict[str, Dict[str, float]] = {}
@@ -219,25 +296,11 @@ def probe(
     channels_run: List[str] = []
 
     def _admit(rid: str, a: TripleAssertion, channel: str, score: float, detail: str) -> None:
-        # Universe key = ASSERTION id (the trace/commit currency — same as
-        # the reconstruction pipeline); exclusion folds live in that
-        # namespace too.
-        if not (isinstance(rid, str) and rid) or rid in excluded:
-            return
-        attrs = a.attributes if isinstance(a.attributes, dict) else {}
-        if attrs.get("record_edge") or attrs.get("bookkeeping"):
-            return
-        universe.setdefault(rid, a)
-        rel = relevance.setdefault(rid, {})
-        rel[channel] = max(rel.get(channel, 0.0), float(score))
-        bucket = cues.setdefault(rid, [])
-        line = detail if detail else channel
-        if line not in bucket:
-            bucket.append(line)
+        _admit_candidate(universe, relevance, cues, excluded, rid, a, channel, score, detail)
 
     # --- candidate gathering (recents per scope, the pipeline's baseline
     # source — keyword/participants scan a UNIVERSE, not the store) --------
-    cap = int(budget.max_candidates)
+    cap = int(max_candidates)
     gathered: Dict[str, TripleAssertion] = {}
     window_saturated: List[str] = []
     for scope, owner in scope_pairs:
@@ -307,6 +370,52 @@ def probe(
         if a is not None:
             _admit(r.record_id, a, "participants", r.score, r.detail)
 
+    return _ChannelPass(universe=universe, relevance=relevance, cues=cues,
+                        channels_run=channels_run, warnings=warnings)
+
+
+def probe(
+    store: Any,
+    journal: Any,
+    *,
+    stimulus: Stimulus,
+    scopes: Sequence[Tuple[str, str]],
+    reason: str,
+    effort: Any = "standard",
+    embedder: Any = None,
+    excluded_ids: Optional[Set[str]] = None,
+    config: ReconstructConfig = ReconstructConfig(),
+    as_of_seq: int = 0,
+    trace_id: Optional[str] = None,
+    write_journal: bool = True,
+) -> ProbeResult:
+    """One deliberate reach. Pure read over the store; journal writes are
+    the trace + inert audit events (write_journal=False writes nothing).
+
+    The caller (facade) owns fold assembly: `excluded_ids` must already
+    carry closure/hidden exclusions and `as_of_seq` the replay anchor —
+    the same division of labor as run_reconstruction."""
+    reason_text = _require_reason(reason)
+    budget = _resolve_budget(effort)
+    excluded = set(excluded_ids or ())
+    scope_pairs = [(str(s or "").strip().lower(), str(o or "").strip())
+                   for s, o in (scopes or ()) if str(s or "").strip()]
+    if not scope_pairs:
+        raise ValueError("probe requires at least one (scope, owner_id) pair")
+    tid = (trace_id.strip() if isinstance(trace_id, str) and trace_id.strip()
+           else uuid.uuid4().hex)
+
+    # The shared channel pass (also familiarity's counting substrate).
+    cpass = _channel_pass(
+        store, stimulus=stimulus, scope_pairs=scope_pairs,
+        max_candidates=int(budget.max_candidates), excluded=excluded,
+        embedder=embedder, config=config)
+    universe = cpass.universe
+    relevance = cpass.relevance
+    cues = cpass.cues
+    channels_run = cpass.channels_run
+    warnings = cpass.warnings
+
     # --- concept co-occurrence expansion (probe default ON) ---------------
     if budget.concept_expansion and universe:
         seeds = dict(universe)
@@ -317,9 +426,10 @@ def probe(
             channels_run.append("concept")
         warnings.extend(notes)
         for adm in admissions:
-            _admit(adm["record_id"], adm["assertion"], "concept",
-                   adm["score"],
-                   "shared concepts: " + ", ".join(adm["concepts"][:6]))
+            _admit_candidate(universe, relevance, cues, excluded,
+                             adm["record_id"], adm["assertion"], "concept",
+                             adm["score"],
+                             "shared concepts: " + ", ".join(adm["concepts"][:6]))
 
     # --- relevance-pure ranking -------------------------------------------
     def fused(rid: str) -> float:
@@ -412,6 +522,290 @@ def probe(
         warnings=tuple(dict.fromkeys(warnings)),
         budget_spent=budget_spent,
     )
+
+
+# Warning texts the familiarity contract pins verbatim (tests assert these
+# exact strings — honesty behaviors, not decoration).
+_FAMILIARITY_NONE_WARNING = (
+    "nothing within reach (newest-window scan; exact/vector reach whole store)")
+_FAMILIARITY_VECTORLESS_WARNING = "#FALLBACK: keyword-only familiarity"
+
+# Channel-detail formats are engine-pinned (channels.py writes them; channel
+# tests assert them) — familiarity parses its OWN wire, never guesses.
+_VECTOR_DETAIL_RE = re.compile(r"^vector: cosine ([0-9.]+)")
+_KEYWORD_DETAIL_RE = re.compile(r"^keyword: matched .+ \((\d+)/\d+\)$")
+
+
+def _familiarity_counts(
+    cpass: "_ChannelPass",
+    scope_pairs: Sequence[Tuple[str, str]],
+    *,
+    vector_min: float,
+    min_keyword_tokens: int,
+    warnings: List[str],
+) -> Tuple[int, Dict[str, int], Dict[str, int]]:
+    """The density fold with ABSOLUTE confidence bars (module constants'
+    rationale above). Per admitted row, a channel admission COUNTS iff:
+    exact/participants — always (identity-grade); vector — raw cosine
+    (parsed from the channel's own pinned detail string) >= vector_min;
+    keyword — matched-token count >= min_keyword_tokens. A detail string
+    that fails to parse COUNTS (fail-open + label): of the two failure
+    modes, over-counting reads "weak" where "none" was true, while
+    silent strictness would fabricate "none" — and a false "I don't
+    remember" is the exact harm this reflex exists to prevent.
+
+    Returns (distinct, per_channel, by_scope) over COUNTING admissions;
+    appends the weaker-echo honesty label when the bars dropped rows."""
+    per_channel: Dict[str, int] = {ch: 0 for ch in cpass.channels_run}
+    by_scope: Dict[str, int] = {scope: 0 for scope, _ in scope_pairs}
+    vector_ran = "vector" in cpass.channels_run
+    distinct = 0
+    dropped = 0
+    parse_failures = 0
+    for rid, rel in cpass.relevance.items():
+        details = cpass.cues.get(rid, ())
+        counting: List[str] = []
+        vector_counted = False
+        # Vector decided FIRST: the keyword single-token rule below reads it.
+        if "vector" in rel:
+            m = next((_VECTOR_DETAIL_RE.match(d) for d in details
+                      if d.startswith("vector:")), None)
+            if m is None:
+                parse_failures += 1
+                vector_counted = True
+            elif float(m.group(1)) >= float(vector_min):
+                vector_counted = True
+            if vector_counted:
+                counting.append("vector")
+        for ch in rel:
+            if ch == "vector":
+                continue  # decided above
+            if ch in ("exact", "participants"):
+                counting.append(ch)
+                continue
+            if ch == "keyword":
+                m = next((_KEYWORD_DETAIL_RE.match(d) for d in details
+                          if d.startswith("keyword:")), None)
+                if m is None:
+                    parse_failures += 1
+                    counting.append(ch)
+                    continue
+                matched = int(m.group(1))
+                if matched >= int(min_keyword_tokens):
+                    counting.append(ch)
+                elif matched >= 1 and (not vector_ran or vector_counted):
+                    # CORROBORATION-OR-EXCLUSIVITY (live A/B calibration):
+                    # a single-token lexical match is honest familiarity
+                    # when keywords are the only channel a home HAS
+                    # (vectorless — already labeled #FALLBACK), or when
+                    # the semantic channel corroborates the row; but when
+                    # the vector channel RAN and rejected this row, one
+                    # incidental token ("office", "from") must not read
+                    # as knowing the topic — that is exactly how "none"
+                    # was unreachable on the lived home.
+                    counting.append(ch)
+                continue
+            counting.append(ch)  # unknown future channel: fail-open
+        if counting:
+            distinct += 1
+            a = cpass.universe.get(rid)
+            if a is not None:
+                by_scope[a.scope] = by_scope.get(a.scope, 0) + 1
+            for ch in counting:
+                per_channel[ch] = per_channel.get(ch, 0) + 1
+        else:
+            dropped += 1
+    if dropped:
+        warnings.append(
+            f"familiarity counts high-confidence matches only (vector cosine >= "
+            f"{float(vector_min):g}; >= {int(min_keyword_tokens)} matched keywords) — "
+            f"{dropped} weaker echo(es) not counted; recall may still surface them")
+    if parse_failures:
+        warnings.append(
+            f"#FALLBACK: {parse_failures} channel detail(s) unparseable — counted "
+            "fail-open (a silent strict read could fabricate 'none')")
+    return distinct, per_channel, by_scope
+
+
+def _stimulus_feelings(
+    store: Any,
+    journal: Any,
+    stimulus: Stimulus,
+    scope_pairs: Sequence[Tuple[str, str]],
+    *,
+    gradation_config: GradationConfig,
+    as_of_seq: Optional[int],
+    max_feelings: int,
+    warnings: List[str],
+) -> List[Dict[str, Any]]:
+    """Compact standing-feelings summary for STIMULUS-RELEVANT gradation
+    targets (the maintainer's "complementary, wouldn't cost more" note):
+    fold the searched pairs' valence streams once (the existing gradation
+    fold — no new machinery) and keep targets that are either named
+    participants or whose NAME part (after the "namespace:" prefix)
+    shares a concept term with the cue text.
+
+    Presentation info ONLY — never consulted by the density count (valence
+    never gates, ruled). Targets that resolve to STORED RECORDS are skipped
+    silently: a record id in the output would break the no-content property
+    (record-targeted feelings belong to record-rendering surfaces, not to a
+    density reflex). No journal -> empty, labeled."""
+    if journal is None:
+        warnings.append(
+            "#FALLBACK: feelings skipped (no journal available; gradation "
+            "reads the valence stream)")
+        return []
+    from .records import resolve_digest_assertion
+
+    # One fold per searched pair, merged narrow-first (the caller passes
+    # scopes narrow->broad; the narrowest scope's standing wins on
+    # conflict — the same tie rule as the activation merge in folds.py).
+    merged: Dict[str, Any] = {}
+    for scope, owner in scope_pairs:
+        events = journal.valence_events(
+            scope=scope, owner_id=owner, until_seq=as_of_seq, limit=0)
+        if not events:
+            continue
+        for target, score in compute_gradation(events, config=gradation_config).items():
+            merged.setdefault(target, score)
+
+    participants = set(stimulus.participants)
+    cue_terms = set(concept_terms(stimulus.cue_text))
+    out: List[Dict[str, Any]] = []
+    for target in sorted(merged):
+        if target in participants:
+            matched = True
+        else:
+            # Gradation targets are "namespace:name" free strings (open
+            # vocabulary); the namespace is a category label, not a topic
+            # word — match the NAME part only, with the identifier-aware
+            # concept tokenizer ("tool:web_search" matches "web search").
+            name = target.split(":", 1)[1] if ":" in target else target
+            matched = bool(set(concept_terms(name)) & cue_terms)
+        if not matched:
+            continue
+        if resolve_digest_assertion(store, target) is not None:
+            continue  # record-targeted feeling: never leak a record id
+        score = merged[target]
+        standing = ("scar+bond" if score.scarred and score.bonded
+                    else "scar" if score.scarred
+                    else "bond" if score.bonded
+                    else "none")
+        out.append({"target": target, "net": float(score.net), "standing": standing})
+    # Strongest feelings first (|net| desc), deterministic tie-break.
+    out.sort(key=lambda f: (-abs(f["net"]), f["target"]))
+    return out[: max(0, int(max_feelings))]
+
+
+def familiarity(
+    store: Any,
+    *,
+    stimulus: Stimulus,
+    scopes: Sequence[Tuple[str, str]],
+    effort: Any = "quick",
+    embedder: Any = None,
+    excluded_ids: Optional[Set[str]] = None,
+    config: ReconstructConfig = ReconstructConfig(),
+    journal: Any = None,
+    gradation_config: GradationConfig = GradationConfig(),
+    as_of_seq: Optional[int] = None,
+    strong_threshold: int = FAMILIARITY_STRONG_THRESHOLD,
+    max_feelings: int = FAMILIARITY_MAX_FEELINGS,
+    vector_min: float = FAMILIARITY_VECTOR_MIN,
+    min_keyword_tokens: int = FAMILIARITY_MIN_KEYWORD_TOKENS,
+) -> Dict[str, Any]:
+    """Pre-answer metamemory: "do I hold ANY trace near this topic, and how
+    much?" — match DENSITY, never content (module docstring: the
+    anti-fabrication reflex).
+
+    Runs the SAME channel pass probe() ranks (`_channel_pass`: recents
+    gather + exact/vector/keyword/participants) and counts it. No concept
+    expansion at any effort — expansion serves ranking, and a density
+    reflex stays one pass. `effort` sizes only the candidate window
+    (quick/standard/deep presets or a custom ProbeBudget).
+
+    Returns a plain dict (no record ids, digests, or titles anywhere):
+    - strength: "none" (0) | "weak" (1..strong_threshold) | "strong"
+      (> strong_threshold; K is the documented, configurable parameter —
+      default FAMILIARITY_STRONG_THRESHOLD = 3);
+    - distinct_records: distinct admitted candidate rows across channels;
+    - per_channel: {channel: distinct count} for every channel that RAN
+      (0 means "ran, matched nothing"; absent means "did not run");
+    - by_scope: {scope: distinct count} over admitted rows — every
+      searched scope reported, zero included ("nothing in scope X" is a
+      statement this reflex exists to make); counts fold across owners
+      sharing a scope name (the ladder convention keeps scope names
+      unique per call);
+    - feelings: compact standing summary for stimulus-relevant gradation
+      targets ({target, net, standing}) — presentation only, requires
+      `journal` (skipped + labeled without one), NEVER gates density;
+    - warnings: honesty labels. Pinned behaviors: strength "none" carries
+      "nothing within reach (newest-window scan; exact/vector reach whole
+      store)" (keyword/participant scans cover only the newest candidate
+      window per scope); a semantic cue that could not vector-search
+      (no embedder / store refuses vectors) carries
+      "#FALLBACK: keyword-only familiarity".
+
+    PURE READ, structurally: no trace, no audit events, no deposits — the
+    only journal touch is the read-only valence fold for feelings. The
+    caller (facade) owns fold assembly: `excluded_ids` carries closure/
+    hidden exclusions, `as_of_seq` anchors the feelings read — the same
+    division of labor as probe()."""
+    if int(strong_threshold) < 1:
+        raise ValueError(
+            f"strong_threshold must be >= 1 (got {strong_threshold!r}) — with K=strong_threshold "
+            "the ladder is none=0, weak=1..K, strong>K")
+    budget = _resolve_budget(effort)
+    excluded = set(excluded_ids or ())
+    scope_pairs = [(str(s or "").strip().lower(), str(o or "").strip())
+                   for s, o in (scopes or ()) if str(s or "").strip()]
+    if not scope_pairs:
+        raise ValueError("familiarity requires at least one (scope, owner_id) pair")
+
+    cpass = _channel_pass(
+        store, stimulus=stimulus, scope_pairs=scope_pairs,
+        max_candidates=int(budget.max_candidates), excluded=excluded,
+        embedder=embedder, config=config)
+    warnings = list(cpass.warnings)
+
+    # COUNT the pass (density, never content) — with the ABSOLUTE
+    # confidence bars (FAMILIARITY_VECTOR_MIN / _MIN_KEYWORD_TOKENS
+    # rationale above: ranking-relative floors made "none" unreachable on
+    # a lived home). Every searched scope is REPORTED, zero included:
+    # "nothing in scope X" is exactly the statement the anti-fabrication
+    # reflex exists to make.
+    distinct, per_channel, by_scope = _familiarity_counts(
+        cpass, scope_pairs,
+        vector_min=vector_min, min_keyword_tokens=min_keyword_tokens,
+        warnings=warnings)
+
+    if int(strong_threshold) < distinct:
+        strength = "strong"
+    elif distinct > 0:
+        strength = "weak"
+    else:
+        strength = "none"
+
+    # Honesty rules (contract text, verbatim strings pinned by tests).
+    had_semantic_cue = bool(stimulus.cue_text) or stimulus.embedding is not None
+    if had_semantic_cue and "vector" not in cpass.channels_run:
+        warnings.append(_FAMILIARITY_VECTORLESS_WARNING)
+    if strength == "none":
+        warnings.append(_FAMILIARITY_NONE_WARNING)
+
+    feelings = _stimulus_feelings(
+        store, journal, stimulus, scope_pairs,
+        gradation_config=gradation_config, as_of_seq=as_of_seq,
+        max_feelings=max_feelings, warnings=warnings)
+
+    return {
+        "strength": strength,
+        "distinct_records": distinct,
+        "per_channel": per_channel,
+        "by_scope": by_scope,
+        "feelings": feelings,
+        "warnings": list(dict.fromkeys(warnings)),
+    }
 
 
 def probe_expand(

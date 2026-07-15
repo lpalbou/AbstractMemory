@@ -13,16 +13,38 @@ autonomy." diary_type="question" is first-class; resolution is append-only
 and mirrors heal/break — an ANSWERING entry references the question via
 attributes.answers (the question's graph record id or its book entry_id).
 Resolved questions stay retrievable: "I wondered, then I learned."
+
+PROSPECTIVE MEMORY (maintainer acceptance 2026-07-13, "it completes the
+system for pending questions and the need to resolve them but goes beyond
+— it's a larger set"): diary_type="commitment" is the entity's OWN
+remembered promise ("next time I talk to Ada, ask about her paper").
+Nothing executes it — open_commitments lists the standing set (fulfillment
+is append-only via attributes.fulfills, mirroring answers/resolves) and
+triggered_commitments SURFACES the ones whose elected trigger matches the
+current stimulus (person appears, topic matches, date passes) so the
+entity can keep its word or consciously let it go. The lived failure this
+repairs: visit commitments died at the next generic wake cue.
 """
 
 from __future__ import annotations
 
 import hashlib
+import warnings as _warnings
 from typing import Any, Dict, List, Optional
 
+from .journal_common import normalize_iso_ts
 from .store import TripleQuery
+from .text_tokens import TOKEN_RE, fold_text
 
-__all__ = ["diary_entry_hash", "open_ideas", "open_problems", "open_questions", "verify_diary_chain"]
+__all__ = [
+    "diary_entry_hash",
+    "open_commitments",
+    "open_ideas",
+    "open_problems",
+    "open_questions",
+    "triggered_commitments",
+    "verify_diary_chain",
+]
 
 # Binding lifecycles that mean "still incubating" for an idea entry (the
 # formation default is inactive_candidate; reviewed = seen, undecided).
@@ -185,3 +207,175 @@ def open_problems(
     return _open_unresolved(store, scope=scope, owner_id=owner_id,
                             diary_type="problem", ref_attr="resolves",
                             limit=limit, journal=journal)
+
+
+def open_commitments(
+    store: Any, *, scope: str, owner_id: str, limit: int = 100,
+    journal: Any = None,
+) -> List["Any"]:
+    """The entity's standing PROMISES (prospective memory): diary_type=
+    "commitment" entries that no other diary entry fulfills
+    (attributes.fulfills — the commitment's graph record id or its book
+    entry_id, mirroring answers/resolves). Fulfilled commitments stay
+    retrievable ("I promised, then I kept my word"). Like the question/
+    problem reads, this is a wake-reason surface: "do I have open
+    commitments?" is a reason to wake. Fold semantics: _open_unresolved."""
+    return _open_unresolved(store, scope=scope, owner_id=owner_id,
+                            diary_type="commitment", ref_attr="fulfills",
+                            limit=limit, journal=journal)
+
+
+def _trigger_matches(
+    trigger: Dict[str, Any], *,
+    stimulus_participants: frozenset,
+    cue_tokens: frozenset,
+    now_norm: Optional[str],
+    due_warnings: List[str],
+    record_id: str,
+) -> List[str]:
+    """Match ONE commitment's elected trigger against the current stimulus.
+    Returns kind-prefixed matched tokens ("participant:person:ada",
+    "keyword:paper", "due:<canonical-iso>") — empty when nothing matches.
+
+    - participants: exact stripped-string intersection with the stimulus
+      (the run_participants_channel convention — identity strings are
+      opaque, never tokenized).
+    - keywords: every folded word of the elected keyword must appear in
+      the folded cue-text tokens (case/accent-insensitive word match via
+      text_tokens.fold_text; NO length floor — the recall floor is a
+      stopword surrogate for free text, wrong for the entity's own
+      deliberately elected trigger terms like "gpu").
+    - due_at: canonical-ISO lexicographic compare (the WAIT_UNTIL
+      invariant) against the CALLER-supplied now; now=None means due
+      triggers never fire (the engine never reads the clock). An
+      unparseable stored due_at degrades that channel only (collected
+      into due_warnings — aged data must not kill the read).
+    Shapes follow the participants channel's strictness: list/tuple
+    values only; anything else contributes nothing.
+    """
+    matched: List[str] = []
+
+    raw_participants = trigger.get("participants")
+    if isinstance(raw_participants, (list, tuple)):
+        wanted = {str(p).strip() for p in raw_participants if str(p or "").strip()}
+        for p in sorted(wanted & stimulus_participants):
+            matched.append(f"participant:{p}")
+
+    raw_keywords = trigger.get("keywords")
+    if isinstance(raw_keywords, (list, tuple)) and cue_tokens:
+        for kw in raw_keywords:
+            kw_text = str(kw or "").strip()
+            if not kw_text:
+                continue
+            kw_tokens = TOKEN_RE.findall(fold_text(kw_text))
+            if kw_tokens and all(t in cue_tokens for t in kw_tokens):
+                matched.append(f"keyword:{kw_text}")
+
+    raw_due = trigger.get("due_at")
+    if now_norm is not None and isinstance(raw_due, str) and raw_due.strip():
+        try:
+            due_norm = normalize_iso_ts(raw_due)
+        except ValueError:
+            due_warnings.append(f"{record_id} due_at={raw_due!r}")
+        else:
+            if due_norm <= now_norm:
+                matched.append(f"due:{due_norm}")
+
+    return matched
+
+
+def _render_commitment_line(entry: Any, matched: List[str]) -> str:
+    """One presentation line for a triggered commitment. Dated handles are
+    a visit-honesty requirement (undated handles make "when did I promise
+    this?" unanswerable), so the line leads with the election date. In the
+    [matched: ...] tail, participant tokens show their bare identity value
+    (already self-namespaced — "person:ada"); keyword tokens keep their
+    kind prefix (a bare word would be ambiguous); due tokens show the
+    date part (the full canonical ISO stays in the machine-readable
+    matched list)."""
+    elected = str(entry.observed_at or "")[:10] or "undated"
+    gist = str(entry.object or "").strip()
+    display: List[str] = []
+    for token in matched:
+        if token.startswith("participant:"):
+            display.append(token[len("participant:"):])
+        elif token.startswith("due:"):
+            display.append("due:" + token[len("due:"):][:10])
+        else:
+            display.append(token)
+    return f"standing intention (elected {elected}): {gist} [matched: {', '.join(display)}]"
+
+
+def triggered_commitments(
+    store: Any, journal: Any, *, stimulus: Any, scope: str, owner_id: str,
+    max_lines: int = 3, now: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Prospective-memory annotation — a PURE READ the host calls beside
+    reconstruct: which OPEN commitments does the current stimulus trigger?
+    Nothing executes a commitment; this SURFACES it at the right moment
+    (person appears, topic matches, date passes) so the entity can keep
+    its word or consciously let it go.
+
+    Returns a list of {"entry": <the open-commitment row open_commitments
+    returns>, "matched": [kind-prefixed tokens], "line": <one rendered
+    presentation line>}, oldest-first (the longest-standing promise
+    leads), capped at `max_lines`; when more commitments matched than the
+    cap allows, ONE final summary element {"entry": None, "matched": [],
+    "line": "N more open commitments suppressed"} names the overflow (the
+    over-fire containment — a stimulus matching everything must not flood
+    the prompt).
+
+    Trigger shape (dict written into attributes.trigger at election time):
+    {"participants": [...], "keywords": [...], "due_at": iso-optional}.
+    An empty or absent trigger NEVER annotates (such commitments are
+    listed by open_commitments only). Matching semantics: _trigger_matches.
+
+    `now` is caller-supplied (the engine never reads the clock); None
+    disables due matching. `journal` folds closures/hidden bindings out of
+    the open set (None = layer-1 read, sibling semantics). This is
+    presentation-only: NOT an admission channel — no shelf change, no
+    deposit, no journal write.
+    """
+    if int(max_lines) < 0:
+        raise ValueError("triggered_commitments max_lines must be >= 0 "
+                         "(0 = summary-only; negative bounds are refused, never wrapped)")
+    now_norm = normalize_iso_ts(now) if now is not None else None  # loud on garbage: boundary input
+
+    stimulus_participants = frozenset(
+        str(p).strip() for p in (getattr(stimulus, "participants", None) or ())
+        if str(p or "").strip())
+    cue_tokens = frozenset(TOKEN_RE.findall(fold_text(
+        str(getattr(stimulus, "cue_text", "") or ""))))
+
+    due_warnings: List[str] = []
+    annotated: List[Dict[str, Any]] = []
+    suppressed = 0
+    for entry in open_commitments(store, scope=scope, owner_id=owner_id,
+                                  limit=0, journal=journal):
+        trigger = entry.attributes.get("trigger")
+        if not isinstance(trigger, dict) or not trigger:
+            continue  # empty/absent trigger never annotates (listed-only commitment)
+        matched = _trigger_matches(
+            trigger, stimulus_participants=stimulus_participants,
+            cue_tokens=cue_tokens, now_norm=now_norm,
+            due_warnings=due_warnings, record_id=str(entry.subject))
+        if not matched:
+            continue
+        if len(annotated) < int(max_lines):
+            annotated.append({"entry": entry, "matched": matched,
+                              "line": _render_commitment_line(entry, matched)})
+        else:
+            suppressed += 1
+
+    if due_warnings:
+        _warnings.warn(
+            "#FALLBACK: triggered_commitments skipped unparseable trigger.due_at on "
+            f"{len(due_warnings)} record(s) ({'; '.join(due_warnings)}) — the due "
+            "channel needs a canonical ISO timestamp; other trigger channels still ran",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if suppressed:
+        annotated.append({"entry": None, "matched": [],
+                          "line": f"{suppressed} more open commitments suppressed"})
+    return annotated

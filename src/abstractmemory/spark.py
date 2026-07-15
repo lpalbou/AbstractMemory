@@ -154,10 +154,27 @@ def lint_spark(spark: Mapping[str, Any], *, framework: bool = True) -> List[str]
             "WARNING values: no revisable value — an identity with only core values "
             "cannot grow by evidence; leave room for revision"
         )
-    if framework and "shared_vulnerability" not in names:
-        issues.append(
-            "ERROR values: framework sparks must carry the 'shared_vulnerability' core "
-            "value (maintainer correction B) — lint with framework=False only as a "
-            "deliberate operator override for non-framework identities"
-        )
+    if framework:
+        sv = next((v for v in values
+                   if str(v.get("name") or "").strip().lower() == "shared_vulnerability"),
+                  None)
+        if sv is None:
+            issues.append(
+                "ERROR values: framework sparks must carry the 'shared_vulnerability' core "
+                "value (maintainer correction B) — lint with framework=False only as a "
+                "deliberate operator override for non-framework identities"
+            )
+        elif str(sv.get("class") or "").strip().lower() != "core":
+            # The floor is the NAME + CLASS pair, not the name alone (gateway
+            # adversary c1628): class=revisable lints the name present while
+            # every core_values fold (class=="core" filters) silently omits
+            # it — the framework floor unlocks without a single error. The
+            # STATEMENT's floor status is deliberately NOT gated here: it is
+            # an open maintainer question (relayed), and a byte or heuristic
+            # gate would forbid legitimate rephrasing before he rules.
+            issues.append(
+                "ERROR values: 'shared_vulnerability' must be class=core — demoting the "
+                "framework floor to revisable makes every core-values fold silently omit "
+                "it (maintainer correction B; the floor is name AND class)"
+            )
     return issues

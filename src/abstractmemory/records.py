@@ -100,11 +100,13 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
 })
 
 # Identity-kind attribute conventions (validated at formation). "question"
-# (curiosity, round 4) and "problem" (something WRONG needing a fix, round
-# 6 — distinct priority and emotional weight) are first-class autonomy
-# drivers: the heartbeat's "do I have open questions/problems?" is a wake
-# reason, and resolved ones stay part of the story (diary.open_questions /
-# open_problems).
+# (curiosity, round 4), "problem" (something WRONG needing a fix, round
+# 6 — distinct priority and emotional weight) and "commitment" (the
+# entity's own remembered promise — prospective memory, accepted
+# 2026-07-13) are first-class autonomy drivers: the heartbeat's "do I have
+# open questions/problems/commitments?" is a wake reason, and resolved
+# ones stay part of the story (diary.open_questions / open_problems /
+# open_commitments).
 VALUE_CLASSES = frozenset({"core", "revisable"})
 DIARY_TYPES = frozenset({"note", "idea", "commitment", "reflection", "question", "problem"})
 
@@ -249,11 +251,13 @@ class MemoryRecordInput:
                     f"kind='diary' attributes.entry_id must be a non-empty string when present "
                     f"(got {entry_id!r}) — it names the book's chain entry"
                 )
-            # Question/problem resolution mirrors heal/break (append-only):
-            # an entry ANSWERING a question references it via
+            # Question/problem/commitment resolution mirrors heal/break
+            # (append-only): an entry ANSWERING a question references it via
             # attributes.answers; one RESOLVING a problem via
-            # attributes.resolves (graph record id or book entry_id).
-            for ref_attr, target_kind in (("answers", "question"), ("resolves", "problem")):
+            # attributes.resolves; one FULFILLING a commitment via
+            # attributes.fulfills (graph record id or book entry_id).
+            for ref_attr, target_kind in (("answers", "question"), ("resolves", "problem"),
+                                          ("fulfills", "commitment")):
                 ref = attributes.get(ref_attr)
                 if ref is not None and not (isinstance(ref, str) and ref.strip()):
                     raise ValueError(
