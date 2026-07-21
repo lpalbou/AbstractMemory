@@ -75,7 +75,17 @@ MEMORY_RECORD_KINDS = frozenset(
      # understanding of ONE target (person/object/location/time/problem/
      # idea/concept) across time — sleep-formed, source-linked,
      # revision-chained, ORIENTATION never authority (world_model.py).
-     "world_model"}
+     "world_model",
+     # Noticed-not-distilled (laurent dm#84, 2026-07-20): "a lesson must
+     # be actionable — a resolution to a problem, a better way, trap
+     # prevention; wisdom+experience"; most of what was minting as
+     # lessons is OBSERVATION — something noticed and worth keeping that
+     # carries no directive. Distinct kind so the wisdom shelf stays
+     # wisdom (lesson keeps rank 0; observation ranks with episodes) and
+     # formation teaching can hold the bar. Actionability is a WORDS
+     # judgment the engine cannot validate — the bar lives in the
+     # reflection teaching (runtime), never as an engine refusal.
+     "observation"}
 )
 
 # 0020 kind priority (lower rank orders earlier): identity kinds (value <
@@ -95,6 +105,9 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
     # rank-0-loud — derived artifacts never gate or dominate recall here).
     # world_model = same derived-artifact band: orientation competes as a
     # summary peer, never outranking lessons or lived episodes (0033).
+    # observation = episode peer (dm#84: noticed-not-distilled — it keeps
+    # its keep as lived material, never competes with the wisdom rank).
+    "observation": 3,
     "plan": 4, "summary": 5, "interest": 5, "dream": 5, "world_model": 5,
     "answer": 6, "question": 7, "claim": 8, "memory": 9,
 })
@@ -108,7 +121,16 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
 # ones stay part of the story (diary.open_questions / open_problems /
 # open_commitments).
 VALUE_CLASSES = frozenset({"core", "revisable"})
-DIARY_TYPES = frozenset({"note", "idea", "commitment", "reflection", "question", "problem"})
+# "lesson" joined 2026-07-19 (iteration-2 lived adversary: the entity
+# elected kind=lesson in his diary and the clamp downgraded his sharpest
+# self-corrections to generic notes — the one lesson system HE drives
+# lost to the machine-formed one). A lesson diary ENTRY is his own words
+# in his book; the kind=lesson RECORD lane (reflection election) is the
+# graph twin — both stand, distinct planes. Closed-set sync rule: any
+# widening here must reach runtime's projection clamp + semantics'
+# vocabulary pass the same wave (announced room-wide, this one at
+# iteration-2 c3126).
+DIARY_TYPES = frozenset({"note", "idea", "commitment", "reflection", "question", "problem", "lesson"})
 
 # Lesson-layer conventions (0035, maintainer 2026-07-12: lessons are
 # "something actionable that can reference actual memories and serve as
@@ -687,6 +709,21 @@ class ReconstructConfig:
     # (the real type is concept_anchor.ConceptAnchorTuning; None = defaults).
     concept_expansion: bool = False
     concept_tuning: Any = None
+    # Orientation admission (world-model mention => instant card,
+    # 2026-07-18 maintainer directive): when True, a CURRENT world-model
+    # card whose target is MENTIONED (cue tokens or door-stamped
+    # participants) admits with direct-hit relevance — "if I talk with the
+    # entity, it retrieves my card; if he thinks about continuity, the
+    # continuity card is in context". ON by default: homes without cards
+    # are byte-unchanged (nothing to admit — the golden fixture carries no
+    # cards), and a mentioned understanding SHOULD be instant (the whole
+    # point of the card). Bounded: newest-window scan + admission cap
+    # (world_model.ORIENTATION_* defaults; adversary findings 6/7 — the
+    # scan must not grow O(life) on the hot path, and mention cards must
+    # not evict the genuinely matched answer under tight budgets).
+    orientation_admission: bool = True
+    orientation_scan_limit: int = 400
+    orientation_max_cards: int = 3
     # Keyword DISCOVERY (0019's FTS5 half): when True and the store carries
     # the FTS5 index, the keyword channel also SEARCHES the store (per scope
     # pair, budget-bounded) instead of only re-scoring the gathered

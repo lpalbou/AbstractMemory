@@ -22,7 +22,30 @@ from .consolidation import (
 )
 from .dream_resolution import resolve_dreams_pass
 from .situate import SituateBudget, situate, situate_prompt_block
-from .world_model import current_world_models, standing_world_models, world_model_pass
+from .world_model import (
+    author_world_model,
+    current_world_models,
+    standing_world_models,
+    world_model_pass,
+    world_model_update,
+)
+from .world_model_alias import (
+    ALIAS_OVERLAP_FLOOR,
+    alias_candidates,
+    alias_map,
+    alias_world_model,
+)
+from .alive_drives import alive_drives
+from .candidate_miner import mine_candidates_pass, resolve_questions_pass
+from .drive_grouping import (
+    GROUP_BOOST_STEP,
+    GROUP_MIN_SHARED_TERMS,
+    GROUP_OFFER_FLOOR,
+    drive_groups,
+    open_drive_partition,
+)
+from .drive_pressure import DRIVE_PRESSURE_BOUND, drive_pressure
+from .feelings_reads import feelings_about, stimulus_feelings
 from .embedding_pin import build_pin, pin_note
 from .embeddings import AbstractGatewayTextEmbedder, TextEmbedder
 from .embeddings_openai_compat import OpenAICompatTextEmbedder
@@ -51,6 +74,7 @@ from .maintenance import (
     maintenance_report,
     sleep_pass,
 )
+from .cognition_health import cognition_health
 from .concept_anchor import ConceptAnchorTuning, concept_terms, expand_by_concepts
 from .disposal import (
     DISPOSAL_RELATIONS,
@@ -59,8 +83,14 @@ from .disposal import (
     promote_candidate,
     reject_candidate,
 )
+from .origin_diversity import (
+    ORIGIN_DOMINANCE_FLOOR,
+    ORIGIN_MIN_COUNTED,
+    origin_diversity,
+)
 from .probe import PROBE_EFFORTS, ProbeBudget, ProbeHit, ProbeResult, probe, probe_expand
 from .recall_reads import absence_diagnosis, recall_history
+from .recent_records import RECENT_RECORDS_DEFAULT_LIMIT, recent_records
 from .records import ReconstructConfig
 from .sleep_policy import SleepTuning
 from .diary import (
@@ -91,6 +121,7 @@ from .redigestion import (
     apply_redigestion,
     redigestion_candidates,
 )
+from .render_order import stable_render_order
 from .replay import export_replay
 from .probe import (
     FAMILIARITY_MIN_KEYWORD_TOKENS,
@@ -129,6 +160,7 @@ from .store import TripleQuery, TripleStore
 from .system import MemorySystem
 
 __all__ = [
+    "ALIAS_OVERLAP_FLOOR",
     "ANCHOR_MOMENT_ATTRIBUTE",
     "ANCHOR_SEQ_ATTRIBUTE",
     "AbstractGatewayTextEmbedder",
@@ -143,11 +175,15 @@ __all__ = [
     "DEFAULT_SPARK_TEMPLATE",
     "DIARY_TYPES",
     "DISPOSAL_RELATIONS",
+    "DRIVE_PRESSURE_BOUND",
     "ENTITY_CONTEXT_FLOOR",
     "EngramResult",
     "FAMILIARITY_MIN_KEYWORD_TOKENS",
     "FAMILIARITY_STRONG_THRESHOLD",
     "FAMILIARITY_VECTOR_MIN",
+    "GROUP_BOOST_STEP",
+    "GROUP_MIN_SHARED_TERMS",
+    "GROUP_OFFER_FLOOR",
     "GradationConfig",
     "GradationScore",
     "IDENTITY_ANCHOR_FIELD",
@@ -163,11 +199,14 @@ __all__ = [
     "MemoryJournal",
     "MemoryRecordInput",
     "MemorySystem",
+    "ORIGIN_DOMINANCE_FLOOR",
+    "ORIGIN_MIN_COUNTED",
     "OpenAICompatTextEmbedder",
     "PROBE_EFFORTS",
     "ProbeBudget",
     "ProbeHit",
     "ProbeResult",
+    "RECENT_RECORDS_DEFAULT_LIMIT",
     "REDIGESTION_PROTECTED_KINDS",
     "RecallBudget",
     "ReconstructConfig",
@@ -189,11 +228,17 @@ __all__ = [
     "TripleStore",
     "ValenceEvent",
     "absence_diagnosis",
+    "alias_candidates",
+    "alias_map",
+    "alias_world_model",
+    "alive_drives",
     "apply_redigestion",
     "apply_tend_elections",
+    "author_world_model",
     "build_pin",
     "canonical_spark_hash",
     "canonical_text",
+    "cognition_health",
     "compute_gradation",
     "concept_terms",
     "confirm_relation",
@@ -202,12 +247,15 @@ __all__ = [
     "diary_entry_hash",
     "dispose_dream",
     "dream_pass",
+    "drive_groups",
+    "drive_pressure",
     "engram",
     "entity_card",
     "entity_recall_budget",
     "expand_by_concepts",
     "export_replay",
     "familiarity",
+    "feelings_about",
     "fold_bindings",
     "identity_card",
     "journal_cold_cut",
@@ -215,25 +263,32 @@ __all__ = [
     "lint_spark",
     "maintenance_due",
     "maintenance_report",
+    "mine_candidates_pass",
     "open_commitments",
+    "open_drive_partition",
     "open_ideas",
     "open_problems",
     "open_questions",
+    "origin_diversity",
     "parse_tend_block",
     "probe",
     "probe_expand",
     "promote_candidate",
     "read_embedding_pin",
     "recall_history",
+    "recent_records",
     "redigestion_candidates",
     "reembed_home",
     "reembed_store",
     "reject_candidate",
     "resolve_dreams_pass",
+    "resolve_questions_pass",
     "situate",
     "situate_prompt_block",
     "sleep_pass",
+    "stable_render_order",
     "standing_world_models",
+    "stimulus_feelings",
     "structural_report",
     "token_estimate",
     "triggered_commitments",
@@ -242,4 +297,5 @@ __all__ = [
     "verify_diary_chain",
     "wake_cue_dedup_pass",
     "world_model_pass",
+    "world_model_update",
 ]

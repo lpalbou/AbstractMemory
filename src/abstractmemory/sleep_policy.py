@@ -111,6 +111,19 @@ class SleepTuning:
     world_model_max_sources: int = 8
     # Recurring themes named in the card digest/keywords.
     world_model_top_facets: int = 6
+    # -- sleep-lane TARGET DISCOVERY (2026-07-19, laurent c158: cards
+    # must "accumulate AND refine a lot more models about our world") --
+    # A keyword recurring across this many DISTINCT sessions becomes a
+    # topic target at the sleep pass (recurrence = a standing subject;
+    # one chatty session never mints one).
+    world_model_discovery_sessions: int = 3
+    # Ubiquity cut: a keyword on more than this fraction of ALL scanned
+    # evidence is a stop-concept (the concept-anchor max_sources pattern
+    # — "morning"/"system"-grade residue anchors nothing).
+    world_model_discovery_max_fraction: float = 0.25
+    # New discovered targets admitted per pass (accumulation is nightly
+    # and bounded, never a flood).
+    world_model_discovery_max_targets: int = 6
 
     def resolve_scan_limit(self, scan_limit: "int | None") -> int:
         """Explicit kwarg wins; None falls to the tuned default."""

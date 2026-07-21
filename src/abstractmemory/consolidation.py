@@ -167,6 +167,18 @@ def structural_report(
     stays raw BY DESIGN: the dream pass deliberately sees the whole
     graph (closures fold at recall, not in sleep reports), and tending
     must see candidates to skip covered groups.
+
+    CANDIDATE EDGES NEVER DEFINE COMPONENTS in any grade (miner adversary
+    F8, the dream-death mechanic live): a maintenance candidate is a
+    machine row whose summarizes edges deliberately span sessions — ONE
+    interest candidate merged three edge-isolated islands into one
+    component in the repro, and candidates are nightly, capped, never
+    purged: monotonic graph fusion. Candidate NODES stay visible in the
+    default report (tending's covered-group check needs them); their
+    edges are counted (counts["candidate_edges"]) but enter neither
+    adjacency nor context pairs — machine bookkeeping is not lived
+    association, so the tensions among a theme's evidence stay
+    bridgeable.
     """
     hi = int(as_of) if as_of is not None else journal.current_seq()
     closed: frozenset = frozenset()
@@ -177,6 +189,7 @@ def structural_report(
     records: Dict[str, Dict[str, Any]] = {}       # graph id -> {title, facets, ...}
     assertion_to_record: Dict[str, str] = {}      # digest/edge assertion id -> graph id
     edges_seen: List[Tuple[str, str, str]] = []   # (predicate, subject, object)
+    candidate_ids: Set[str] = set()               # machine rows: edges never define components
 
     for scope, owner in scopes:
         for a in store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=0)):
@@ -194,6 +207,8 @@ def structural_report(
             # derived artifact must never feed the passes that derive).
             if not kind or kind in ("dream", "world_model") or attrs.get("bookkeeping"):
                 continue
+            if attrs.get("maintenance_candidate"):
+                candidate_ids.add(a.subject)
             if evidence_grade and (attrs.get("maintenance_candidate")
                                    or a.subject in closed):
                 continue
@@ -216,7 +231,15 @@ def structural_report(
     context_pairs: Set[Tuple[str, str]] = set()
     unknown_relations: Set[str] = set()
     context_edges = 0
+    candidate_edges = 0
     for predicate, subject, obj in edges_seen:
+        # Machine-candidate edges: counted, never structural (F8 — see
+        # docstring). Not context pairs either: marking a theme's evidence
+        # "already associated" would exclude those tensions from bridge
+        # proposals, the same dream-starvation through a different door.
+        if subject in candidate_ids or obj in candidate_ids:
+            candidate_edges += 1
+            continue
         pair = tuple(sorted((subject, obj)))
         if predicate in COMPONENT_RELATIONS:
             edge_pairs.add(pair)
@@ -304,7 +327,8 @@ def structural_report(
         "unknown_relations": sorted(unknown_relations),
         "counts": {"records": len(records), "components": len(components),
                    "isolated": len(isolated), "duplicates": len(duplicates),
-                   "context_edges": context_edges},
+                   "context_edges": context_edges,
+                   "candidate_edges": candidate_edges},
         "as_of_seq": hi,
     }
 
@@ -372,6 +396,17 @@ def _bridges(
             return False
         return (participant_counts.get(person, 0) / total) <= max_fraction
 
+    # PREFETCH stored vectors ONCE (live Ephemeral finding, 2026-07-20):
+    # the per-pair reader did TWO sqlite blob reads per cross-component
+    # pair — at 1,407 records / 381 components that is O(10^5..10^6)
+    # overflow-page reads and dream_pass hung for tens of minutes on the
+    # real store. One read per record (~12 MB at 1.5k x 1024 floats) is
+    # the same data, byte-identical scoring.
+    vectors: Dict[str, Any] = {}
+    if vector_reader is not None:
+        for rid_v, info_v in records.items():
+            vectors[rid_v] = vector_reader(info_v["assertion_id"])
+
     ids = sorted(records)
     for i, left in enumerate(ids):
         for right in ids[i + 1:]:
@@ -393,8 +428,8 @@ def _bridges(
             vector_score: Optional[float] = None
             if not lexical_bridge and not person_bridge:
                 if vector_reader is not None:
-                    va = vector_reader(a["assertion_id"])
-                    vb = vector_reader(b["assertion_id"])
+                    va = vectors.get(left)
+                    vb = vectors.get(right)
                     if isinstance(va, list) and isinstance(vb, list):
                         vector_score = cosine(va, vb)
                     else:
@@ -427,6 +462,7 @@ def dream_pass(
     report_only: bool = False, as_of: Optional[int] = None,
     maintenance_ops: int = 0,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
+    phase_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """One sleep pass: structural report → bridge proposals → at most ONE
     dream record (kind="dream", via remember_many — idempotent by report
@@ -443,7 +479,21 @@ def dream_pass(
     worth metabolizing, never a multiplier). A night whose ONLY pressure is
     a prior unresolved dream forms a CONTINUATION dream
     (continuation_state="continued") sourced from the standing dream —
-    the recurring-dream mechanic this module's docstring promises."""
+    the recurring-dream mechanic this module's docstring promises.
+
+    SIGNALS (laurent's Q1 ruling, dm#67/#75 — the dream IS the night's
+    maintenance echoed): `phase_results` carries the earlier phases'
+    results ({"resolution": ..., "maintenance": ..., "world_models": ...},
+    threaded by sleep_pass); each act that DID something emits a short
+    deterministic signal (see dream_signals.py), colored by ONE batched
+    read of his accumulated valence (structure decides, feelings color —
+    maintenance never deposits feelings). The bounded stream lands as
+    attributes.signals on the ONE dream record; no dream minted = no
+    stream at rest (C's novelty-keyed P0, by construction). Honest limit
+    (adversary P2-6): a night cancelled mid-way and resumed re-computes
+    acts as created=False (idempotent), so the eventual dream echoes the
+    FINAL uninterrupted attempt's acts — an earlier attempt's act rides
+    only its own night's dream, never a later one."""
     if as_of is not None and not report_only:
         # Timeline-forgery guard (adversary P1-4, matching
         # consolidation_pass): a dream formed against a historical trail
@@ -494,6 +544,47 @@ def dream_pass(
             else f"quiet night: only {len(sources)} distinct source(s) — a dream needs two"
         )
         return out
+
+    # CONTENT-NOVELTY GATE (2026-07-19, Ephemeral's dream churn — live
+    # finding): the fingerprint hashes the ISLAND PARTITION, which drifts
+    # with every record a living day forms, so under an hourly sleep
+    # cadence the same tensions re-minted as near-identical dreams (13 in
+    # one day, identical proposal sets, each standing copy pumping the
+    # next pass's salience through the anchor term — the bridge-attractor
+    # mechanic, dream-flavored). A dream forms only when the night has
+    # something NEW to say: at least one tension pair (or continuation
+    # anchor) that NO standing unresolved dream already carries. The
+    # standing dream IS the tension's record — re-minting it adds a copy,
+    # not a thought. Resolution re-opens the gate by construction: a
+    # resolved dream leaves the standing set, so the same pair re-arising
+    # later is genuinely new again (a recurring tension after settlement
+    # is a real dream). Tolerant of older dreams without stored
+    # proposals/questions: absent attrs suppress nothing.
+    carried_pairs: set = set()
+    carried_anchors: set = set()
+    for a in prior:
+        attrs = a.attributes if isinstance(a.attributes, dict) else {}
+        for entry in (*(attrs.get("proposals") or ()), *(attrs.get("questions") or ())):
+            pair = entry.get("pair") if isinstance(entry, dict) else None
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                carried_pairs.add(frozenset(str(p) for p in pair))
+        for pid in attrs.get("parent_dream_ids") or ():
+            carried_anchors.add(str(pid))
+        if str(attrs.get("continuation_state") or "") == "continued":
+            carried_anchors.add(str(a.subject))
+    if continuation_only:
+        novel = any(str(a.subject) not in carried_anchors for a in prior)
+    else:
+        tonight = {frozenset(str(p) for p in entry["pair"])
+                   for entry in (*proposals, *questions)}
+        novel = bool(tonight - carried_pairs)
+    if prior and not novel:
+        out["skipped_reason"] = (
+            f"restful night: {len(prior)} standing dream(s) already carry "
+            "tonight's tensions — nothing new to dream (the standing dream "
+            "is the record; waking evidence settles it)")
+        return out
+
     if report_only:
         out["skipped_reason"] = "report_only requested"
         return out
@@ -518,12 +609,32 @@ def dream_pass(
         top = proposals[0] if proposals else questions[0]
         left, right = top["pair"]
         title = f"Dream: {title_of(left)} beside {title_of(right)}"
+        # CONTENTFUL DIGEST (2026-07-19, the return-gap diagnosis on
+        # Ephemeral's store: 0/56 dreams EVER selected, 735 traces —
+        # dropped below_shelf at ~0.08 because the old digest was
+        # count-only boilerplate, textually identical across every dream;
+        # no channel could tell one tension from another). The digest now
+        # NAMES the top tensions verbatim from the report — deterministic,
+        # zero LLM, every word from the records it stands for — so the
+        # vector channel has real semantics and keyword/exact matching has
+        # the tension's own words. The fork register (islands, waking
+        # evidence) stays.
+        def _tension_line(entry: Dict[str, Any]) -> str:
+            l, r = entry["pair"]
+            shared = ", ".join(sorted(entry.get("shared_facets") or ())[:4])
+            via = (f" (shared: {shared})" if shared
+                   else " (kindred by meaning)" if entry.get("vector_score")
+                   else "")
+            return f"{title_of(l)!r} beside {title_of(r)!r}{via}"
+
+        named = "; ".join(_tension_line(e) for e in (*proposals, *questions)[:3])
         digest = (
-            "Two previously separate memory islands lit up together tonight. "
-            f"I noticed {len(proposals)} possible bridge(s) and "
-            f"{len(questions)} open question(s) across {report['counts']['components']} "
-            "islands of experience. Nothing is decided while asleep — these are "
-            "candidate connections for waking evidence to confirm or dissolve."
+            "Two previously separate memory islands lit up together tonight: "
+            f"{named}. "
+            f"{len(proposals)} possible bridge(s) and {len(questions)} open "
+            f"question(s) across {report['counts']['components']} islands of "
+            "experience. Nothing is decided while asleep — these are candidate "
+            "connections for waking evidence to confirm or dissolve."
         )
         # EVERY tension-bearing dream stands as "unresolved" (0032, the
         # maintainer's subconscious model): a bridge PROPOSAL is a pending
@@ -574,6 +685,46 @@ def dream_pass(
             facet = entry.get("facet")
             if facet and facet not in dream_keywords:
                 dream_keywords.append(facet)
+
+    # THE SIGNAL STREAM (laurent's Q1 ruling): fold the night's acts —
+    # the phases that ran before this dream plus tonight's own tension
+    # proposals — into short deterministic signals, colored by ONE
+    # batched gradation READ (never a write; the byte-unchanged guard
+    # is pinned in tests). Composition is bounded top-K; the stream
+    # rests ONLY on the minted dream record, so a restful/quiet night
+    # leaves nothing at rest by construction.
+    from .dream_signals import compose_signals, night_feelings
+    phases = phase_results or {}
+    # The WHOLE ladder folds (adversary P0-1): reflection lanes deposit
+    # record-target feelings into "life" while callers lead with "self" —
+    # a first-pair read made record-connection coloring unreachable.
+    feelings = night_feelings(system, scopes=scopes)
+    signal_stats: Dict[str, Any] = {}
+    signals = compose_signals(
+        resolution=phases.get("resolution"),
+        maintenance=phases.get("maintenance"),
+        world_models=phases.get("world_models"),
+        mining=phases.get("mining"),
+        proposals=() if continuation_only else proposals,
+        questions=() if continuation_only else questions,
+        report_records=report["records"],
+        feelings=feelings,
+        stats=signal_stats,
+    )
+    # Narration: the digest already names tonight's tensions; when the
+    # night ALSO acted (resolved / revised / grouped), one sentence says
+    # so in the signals' own fragments — and the stream's felt tones
+    # color the close (feelings COLOR content, never select it).
+    other_acts = [s for s in signals if s["phase"] != "dream"]
+    if other_acts:
+        digest += (" The night also moved: "
+                   + "; ".join(s["fragment"] for s in other_acts[:3]) + ".")
+    felt_tones = {s["felt"]["tone"] for s in signals
+                  if s.get("felt") and s["felt"]["tone"] != "neutral"}
+    if felt_tones:
+        tone = ("mixed" if len(felt_tones) > 1 else next(iter(felt_tones)))
+        digest += f" Something about tonight feels {tone}."
+
     dream = MemoryRecordInput(
         kind="dream",
         title=title,
@@ -594,6 +745,15 @@ def dream_pass(
             "interpretation_required": True,
             "proposals": proposals,
             "questions": questions,
+            # The night as a signal stream (derived artifact riding the
+            # review-gated dream — every dream guard covers it: waking
+            # evidence disposes, never feeds its own proof, excluded
+            # from next-pass inputs with the dream that carries it).
+            # signals_omitted: what the bounded cap COST this night
+            # (observer c3802: both live dreams saturated at 12 and the
+            # selection was silent) — 0 means the stream is complete.
+            "signals": signals,
+            "signals_omitted": int(signal_stats.get("omitted") or 0),
         },
     )
     from .records import record_id_for

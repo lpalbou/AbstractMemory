@@ -615,6 +615,7 @@ def sleep_pass(
     scan_limit: Optional[int] = None,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
     should_continue: Optional[Any] = None,
+    include_dream: bool = True,
 ) -> Dict[str, Any]:
     """One full sleep: RESOLVE first (the night reviews the day — standing
     dreams the day's lived experience already answered close softly,
@@ -647,7 +648,20 @@ def sleep_pass(
     exactly where this one stopped). HARD KILLS mid-phase degrade to
     crash semantics the engine already absorbs (idempotent formations,
     closure dedup, world-model crash-replay repair) — safe, but the
-    boundary check is the graceful path hosts should prefer."""
+    boundary check is the graceful path hosts should prefer.
+
+    include_dream=False is the MAINTENANCE-CYCLE composition (laurent
+    dm#104 personal<->sleep cycle; v12 design adversary P1-6): the ~1h
+    cycle window at every-2h cadence runs the graph-QUALITY passes
+    (resolution / tending / world models / mining) while DREAM FORMATION
+    keeps its own nightly-class cadence — naively reusing the whole
+    night per cycle window would form a dream every ~3h (salience-50
+    records piling into wake reasons, the bridge-attractor class). The
+    dream phase then reports {"skipped_reason": "cycle window: dream
+    formation keeps its nightly cadence budget"} — a valid night shape
+    every consumer already handles. The host owns WHEN dreams run (a
+    full sleep_pass nightly / at the day's last cycle window); the
+    engine stays cadence-blind."""
     from .dream_resolution import resolve_dreams_pass
     from .world_model import world_model_pass
 
@@ -677,7 +691,8 @@ def sleep_pass(
     def _cancelled_world_models(after: str) -> Dict[str, Any]:
         return _cancelled("world_model_pass", after,
                           {"formed": [], "unchanged": [], "skipped": [], "repaired": [],
-                           "targets_seen": 0, "eligible": [], "formed_count": 0})
+                           "targets_seen": 0, "eligible": [], "formed_count": 0,
+                           "alias_proposals": []})
 
     def _cancelled_dream(after: str) -> Dict[str, Any]:
         return _cancelled("dream_pass", after,
@@ -686,17 +701,25 @@ def sleep_pass(
                            "context_associated": [],
                            "dream_record_id": None, "created": False})
 
+    def _cancelled_mining(after: str) -> Dict[str, Any]:
+        return _cancelled("mine_candidates_pass", after,
+                          {"lesson_candidates": [], "interest_candidates": [],
+                           "question_proposals": [], "drive_groups": [],
+                           "created": [], "skipped": [],
+                           "created_count": 0})
+
     def _go() -> bool:
         return should_continue is None or bool(should_continue())
 
     def _skipped_night(after: str, resolution_result: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "pass_name": "sleep_pass",
-            "phases": ("resolution", "maintenance", "world_models", "dream"),
+            "phases": ("resolution", "maintenance", "world_models", "mining", "dream"),
             "cancelled_after": after,
             "resolution": resolution_result,
             "maintenance": _cancelled_maintenance(after),
             "world_models": _cancelled_world_models(after),
+            "mining": _cancelled_mining(after),
             "dream": _cancelled_dream(after),
         }
 
@@ -735,35 +758,83 @@ def sleep_pass(
                               "frames honest",
             "formed": [], "unchanged": [], "skipped": [], "repaired": [],
             "targets_seen": 0, "eligible": [], "formed_count": 0,
+            "alias_proposals": [],
         }
     else:
         world_models = world_model_pass(
             system, scopes=scopes, owner_id=owner_id,
             report_only=report_only, tuning=tuning)
+    # W2 MINING (wave-4 dispatch): lesson/interest candidates from repeated
+    # session evidence + question-resolution proposals — after
+    # understanding refines, before the dream (the dream metabolizes the
+    # mining acts through its signal stream). Same as_of rule as world
+    # models: the miner reads current diary/evidence state, so an anchored
+    # night skips it honestly.
+    if cancelled_after is None and not _go():
+        cancelled_after = ("maintenance" if world_models.get("skipped_reason")
+                          else "world_models")
+    if cancelled_after is not None:
+        mining: Dict[str, Any] = _cancelled_mining(cancelled_after)
+    elif as_of is not None:
+        mining = {
+            "pass_name": "mine_candidates_pass",
+            "skipped_reason": "as_of anchor: the miner reads current diary/"
+                              "evidence state only — phase skipped to keep "
+                              "the night's frames honest",
+            "lesson_candidates": [], "interest_candidates": [],
+            "question_proposals": [], "drive_groups": [],
+            "created": [], "skipped": [],
+            "created_count": 0,
+        }
+    else:
+        from .candidate_miner import mine_candidates_pass
+        mining = mine_candidates_pass(
+            system, scopes=scopes, owner_id=owner_id,
+            max_candidates=max_candidates, report_only=report_only,
+            scan_limit=scan_limit or 0, tuning=tuning)
     # The dream metabolizes the night's work: the tending ledger's operation
     # count feeds dream salience (fork parity, capped in SleepTuning — a busy
     # tending night signals change worth dreaming about).
     if cancelled_after is None and not _go():
-        # Honest label (adversary finding 6): under as_of the world-models
-        # phase was SKIPPED, not completed — cancelled_after names the last
+        # Honest label (adversary finding 6): under as_of the mining phase
+        # was SKIPPED, not completed — cancelled_after names the last
         # phase that actually ran.
         cancelled_after = ("maintenance" if world_models.get("skipped_reason")
-                          else "world_models")
+                          else ("world_models" if mining.get("skipped_reason")
+                                else "mining"))
     if cancelled_after is not None:
         dream = _cancelled_dream(cancelled_after)
+    elif not include_dream:
+        # Maintenance-cycle window (v12 P1-6): quality passes ran; dream
+        # formation keeps its nightly cadence budget. Same empty shape as
+        # every other honest skip.
+        dream = {
+            "pass_name": "dream_pass",
+            "skipped_reason": ("cycle window: dream formation keeps its "
+                               "nightly cadence budget (include_dream=False)"),
+            "report": {}, "proposals": [], "questions": [], "salience": 0,
+            "vectorless_pairs": 0, "trail_associated": [],
+            "context_associated": [],
+            "dream_record_id": None, "created": False,
+        }
     else:
         ops_count = len((maintenance.get("report") or {}).get("operations") or ())
         dream = dream_pass(
             system, scopes=scopes, owner_id=owner_id, salience_floor=salience_floor,
             max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
             report_only=report_only, as_of=as_of, maintenance_ops=ops_count,
-            tuning=tuning)
+            tuning=tuning,
+            # The dream metabolizes the WHOLE night (Q1 ruling): earlier
+            # phases' results become the signal stream on the dream record.
+            phase_results={"resolution": resolution, "maintenance": maintenance,
+                           "world_models": world_models, "mining": mining})
     result: Dict[str, Any] = {
         "pass_name": "sleep_pass",
-        "phases": ("resolution", "maintenance", "world_models", "dream"),
+        "phases": ("resolution", "maintenance", "world_models", "mining", "dream"),
         "resolution": resolution,
         "maintenance": maintenance,
         "world_models": world_models,
+        "mining": mining,
         "dream": dream,
     }
     if cancelled_after is not None:

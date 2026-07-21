@@ -137,6 +137,49 @@ def test_topic_attribute_surfaces_in_handle_provenance(system) -> None:
 
 
 # ---------------------------------------------------------------------------
+# M-A mint: re-entry keys are handle CONTRACT (improving-entity-capabilities
+# G1, 2026-07-16 — consumers read provenance, never assertion attributes)
+# ---------------------------------------------------------------------------
+
+
+def test_m_a_mint_lifts_entry_id_diary_type_and_phase_into_handle_provenance(stack) -> None:
+    """The diary re-entry key (entry_id, the diary_ namespace VERBATIM),
+    the act's type (diary_type) and the lived phase (phase, r-rt-3 stamp)
+    are handle contract after the M-A mint: MEMORIES lines, hint chips and
+    search results read them off provenance with zero attribute parsing.
+    Records without the attributes carry no fabricated keys."""
+    from abstractmemory.records import MemoryRecordInput
+
+    store, journal = stack
+    system = MemorySystem(store=store, journal=journal)
+    system.remember_many([
+        MemoryRecordInput(
+            kind="diary", title="Why do names persist?",
+            digest="What persists when no one is reading? (kept as a question)",
+            attributes={"entry_id": "diary_ab12cd34ef56ab12cd34ef56",
+                        "diary_type": "question"},
+            provenance={"source": "owner-direct"}),
+    ], scope=SCOPE, owner_id=OWNER, idempotency_key="ma-diary")
+    system.remember_many([
+        MemoryRecordInput(
+            kind="episode", title="own time walk",
+            digest="Walked the harbor thinking about persistence.",
+            attributes={"phase": "personal"}),
+    ], scope=SCOPE, owner_id=OWNER, idempotency_key="ma-episode")
+
+    r = system.reconstruct(Stimulus(cue_text="persist harbor names question"),
+                           scopes=SCOPES, journal=False)
+    by_kind = {h.kind: h for h in r.handles}
+    diary = by_kind["diary"]
+    assert diary.provenance["entry_id"] == "diary_ab12cd34ef56ab12cd34ef56"
+    assert diary.provenance["diary_type"] == "question"
+    assert "phase" not in diary.provenance          # no fabricated keys
+    episode = by_kind["episode"]
+    assert episode.provenance["phase"] == "personal"
+    assert "entry_id" not in episode.provenance     # key stays diary currency
+
+
+# ---------------------------------------------------------------------------
 # ablation switch — Arm B (0002/001 question 1)
 # ---------------------------------------------------------------------------
 

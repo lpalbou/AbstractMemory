@@ -23,7 +23,8 @@ EID = "entity:card-test"
 SCOPES = [("self", EID), ("diary", EID), ("life", EID)]
 
 CARD_SECTIONS = ("identity", "age_and_context", "current_state",
-                 "likes_dislikes", "questions", "key_moments", "discoveries")
+                 "likes_dislikes", "questions", "problems", "key_moments",
+                 "discoveries")
 
 
 def _remember(system, key: str, kind: str, title: str, digest: str,
@@ -78,6 +79,23 @@ def _seeded_home(system) -> Dict[str, str]:
                               attributes={"answers": ids["q-done"]},
                               provenance={"source": "owner-direct"})
 
+    # Problems (c2562 ask 2): one standing, one repaired by a later entry —
+    # the round-6 distinction (something WRONG needing a fix, not curiosity).
+    ids["p-open"] = _remember(system, "d-4", "diary", "Marker lane wedged",
+                              "My marker lane is wedged; reads misorder.", scope="diary",
+                              attributes={"diary_type": "problem"},
+                              provenance={"source": "owner-direct"})
+    ids["p-done"] = _remember(system, "d-5", "diary", "Tool ids taught wrong",
+                              "The tool contract taught me the wrong id format.",
+                              scope="diary",
+                              attributes={"diary_type": "problem"},
+                              provenance={"source": "owner-direct"})
+    ids["repair"] = _remember(system, "d-6", "diary", "Id format repaired",
+                              "The teaching was corrected; my reads resolve again.",
+                              scope="diary",
+                              attributes={"resolves": ids["p-done"]},
+                              provenance={"source": "owner-direct"})
+
     ids["dream"] = _remember(system, "dr-1", "dream", "Dream: pool beside harbor",
                              "Two islands lit up together tonight.",
                              attributes={"continuation_state": "unresolved",
@@ -118,9 +136,9 @@ def test_full_card_over_seeded_home(system) -> None:
     assert ctx["journal_seq"] == card["as_of_seq"]
     assert ctx["record_counts"]["life"]["episode"] == 2
     assert ctx["record_counts"]["life"]["dream"] == 1
-    assert ctx["record_counts"]["diary"]["diary"] == 3
+    assert ctx["record_counts"]["diary"]["diary"] == 6
     assert ctx["record_counts"]["self"]["value"] == 3
-    assert ctx["diary_entries"] == 3
+    assert ctx["diary_entries"] == 6
     assert ctx["first_observed_at"] and ctx["last_observed_at"]
     assert ctx["first_observed_at"] <= ctx["last_observed_at"]
 
@@ -155,6 +173,16 @@ def test_full_card_over_seeded_home(system) -> None:
     helper_open = {a.subject for a in open_questions(
         system._store, scope="diary", owner_id=EID, journal=system._journal)}
     assert open_ids == helper_open
+
+    # problems (c2562 ask 2): the questions fold mirrored on
+    # diary_type='problem' — open vs repaired via the same
+    # answers/resolves convention; questions and problems never mix.
+    open_p = {p["record_id"] for p in card["problems"]["open"]}
+    repaired = {p["record_id"]: p for p in card["problems"]["resolved"]}
+    assert open_p == {ids["p-open"]}
+    assert set(repaired) == {ids["p-done"]}
+    assert repaired[ids["p-done"]]["resolved_by"] == [ids["repair"]]
+    assert not (open_p & open_ids)  # a problem is not a question (round 6)
 
     # key_moments: chronological; the scar pair (appraisal + marker) at
     # magnitude 9 + first dream + first interest; never ranked.

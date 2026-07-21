@@ -123,7 +123,23 @@ class AttentionConfig:
     the maintainer's call.
     """
 
+    # (dataclasses.asdict / dataclasses.fields serve the params surface —
+    # entity dm#112 M5: the blueprint's clickable cells resolve these via
+    # AttentionConfig() defaults; every field below is a declared tunable
+    # with its unit in the trailing comment.)
     window_limit: int = 512          # read-bound working set (see docstring: declared tunable)
+    # BINDING-axis working set (alive_drives' recency horizon; declared
+    # tunable, 2026-07-20 fable5 finding 3): bindings arrive ~20-100x
+    # sparser than events (one per formed record vs dozens of usage
+    # deposits per committed turn), so window_limit cannot honestly serve
+    # both axes — at 512 bindings a young home NEVER expels a drive and
+    # the emergent quiet desk is unreachable. 256 ≈ a day of formations
+    # at observed entity cadence (~300 records/day); same cliff
+    # semantics, same philosophy (activity-relative, never wall-clock),
+    # its own density. PROVISIONAL default pending the room's ratification
+    # (posted with the alive_drives receipt); tune per home like
+    # window_limit.
+    drive_window_limit: int = 256
     decay_window: float = 20.0       # rank-distance half-ish life: 1/(1+d/20)
     refocus_multiplier: float = 6.0  # distance stretch for pre-refocus events
     max_activation: float = 25.0     # per-record/per-pair clamp ceiling

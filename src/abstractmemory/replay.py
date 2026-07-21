@@ -122,7 +122,26 @@ def _display_block(assertion: Any, requested_id: str) -> Dict[str, Any]:
         # end enforces audience; memory marks the kind so it can. Topology =
         # existence + IDENTITY + connections — the opaque graph_id is node
         # identity, not content, so the diary lane can join too.
-        return {"redacted": "diary", "graph_id": assertion.subject}
+        # diary_type (c2562 ask 3, additive): the TYPE of the elected act
+        # (question/problem/note/…) is act-frame metadata like written_amid
+        # edges — it says WHAT KIND of entry stands, never its words, so
+        # observer lenses can light question/problem nodes while the book
+        # stays sole-audience for content.
+        # entry_id (G1 re-entry key, 2026-07-16 — the M-A mint's stream
+        # twin): the KEY into the book is act-frame like graph_id — it names
+        # WHICH entry stands, never its words; serving-end audience rules
+        # decide who may open it (the operator diary door already serves by
+        # entry_id under the ruled marker-first access). Consumers (ledger
+        # hint chips) get the followable key from the stream itself instead
+        # of a side-channel correlation.
+        block = {"redacted": "diary", "graph_id": assertion.subject}
+        diary_type = str(attrs.get("diary_type") or "").strip()
+        if diary_type:
+            block["diary_type"] = diary_type
+        entry_id = str(attrs.get("entry_id") or "").strip()
+        if entry_id:
+            block["entry_id"] = entry_id
+        return block
     digest = handle_digest(assertion)
     title = str(attrs.get("title") or "").strip() or f"{assertion.subject} {assertion.predicate}"
     block: Dict[str, Any] = {
@@ -144,6 +163,16 @@ def _display_block(assertion: Any, requested_id: str) -> Dict[str, Any]:
     visit_id = attrs.get("visit_id")
     if isinstance(visit_id, str) and visit_id.strip():
         block["visit_id"] = visit_id.strip()
+    # Dream signal stream (entity's serving question, c3711 — the
+    # graph_id lesson applied at the pen instead of the consumer): the
+    # night's signals are BOUNDED BY CONSTRUCTION (<=12, fragments <=200
+    # chars) and fragment words come from the touched records' titles
+    # (act-frame for diary rows — private words never enter fragments),
+    # so the display block carries the full stream verbatim. Consumers
+    # fold from replay display blocks; making them fetch attributes
+    # through a second door would re-create the title-parsing era.
+    if attrs.get("record_kind") == "dream" and isinstance(attrs.get("signals"), list):
+        block["signals"] = attrs["signals"]
     return block
 
 

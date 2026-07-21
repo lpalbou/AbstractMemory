@@ -26,12 +26,17 @@ NO DECAY of any kind (CONCEDED to the runtime's Resolution-2, overturning
 the earlier anti-spiral line): activation = retrieval strength (decays;
 Bjork); valence = accumulated experience (persists). No calendar decay, no
 window, no rank-distance falloff. Plasticity comes ONLY from new evidence
-(appraisals move the channels), standing markers (scars/bonds), and their
-append-only resolutions (healing/break). REVALUATION MARKER (design stub,
-documented, NOT implemented): a future kind="revalued" — entity-reflection
-only, `{target, factor, reason}` — will rescale a target's channels at fold
-time for deliberate reappraisal ("agent N improved"); until it lands,
-reappraisal = new appraisals + marker resolutions.
+(appraisals move the channels), standing markers (scars/bonds), their
+append-only resolutions (healing/break), and — LANDED 2026-07-19 (W4,
+wave-4 dispatch; the stub made real) — the REVALUATION MARKER:
+kind="revalued", entity-reflection/operator actors only (facade-enforced),
+`{target, factor in 0..1, reason}` rescales BOTH accumulated channels at
+that point in the chronological walk ("the past weighs less now" — a
+deliberate reappraisal, never automatic, never decay). It contributes
+nothing itself and never touches scars/bonds (those resolve via their own
+verbs) — wave-4 D's finding motivated it: a rendered scar structurally
+starves its own counter-evidence unless deliberate reappraisal has a
+mechanism.
 
 STANDING MARKERS (symmetric by maintainer correction A — signed PEAKS, not
 "traumas"; a system that only builds durable structure from harm has a
@@ -207,6 +212,22 @@ def compute_gradation(
                 betrayed = any(seq > e.seq for seq in betrayal_seqs)
                 if not explicitly_broken and not betrayed:
                     bonded = True
+                continue
+            if e.kind == "revalued":
+                # Deliberate reappraisal (W4): rescale what has accumulated
+                # SO FAR — later appraisals land at full weight (the walk
+                # order is the semantics: "the past weighs less" applies to
+                # the past at the moment of revaluation). Formation
+                # validates factor in 0..1; foreign/legacy rows with a bad
+                # factor are skipped (data tolerance, never a crash).
+                try:
+                    factor = float(dict(e.provenance or {}).get("factor"))
+                except (TypeError, ValueError):
+                    continue
+                if 0.0 <= factor <= 1.0:
+                    positive *= factor
+                    negative *= factor
+                    reasons.append(f"revalued x{factor:g} {e.reason}")
                 continue
             if e.kind in ("healing", "break"):
                 continue  # resolutions are standing changes, not experiences

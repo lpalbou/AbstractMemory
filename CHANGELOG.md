@@ -7,6 +7,670 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (dream signals — the night as a signal stream, 2026-07-20 — laurent Q1 ruling dm#67/#75; wave-5 dispatch)
+
+- **`dream_signals.py`** (new module): each maintenance act that DID
+  something emits one short deterministic signal — ruled typology
+  `changed_understanding` / `unresolved_tension` / `changed_navigation`
+  (closed set, loud refusal on unknown kinds); fragments quote the
+  touched records' own words (<=200 chars); `night_feelings()` is ONE
+  batched pure gradation fold per night over the WHOLE scope ladder
+  (adversary P0-1: production callers lead with `self` while reflection
+  lanes deposit record-target feelings into `life` — a first-pair read
+  made record-connection coloring structurally unreachable); felt blocks
+  read the positive/negative CHANNELS, never the net (adversary P1-2:
+  +8/−8 must read `mixed` with weight, never "neutral, 0" — the
+  dual-channel charter applied), and are never fabricated neutrality.
+- **`compose_signals()`**: bounded per-SECTION composition (resolutions
+  4 / cards 3 / tending+mining 2 / tensions 3 at top_k=12, structural
+  backfill — adversary P1-3: a flat slice let twelve resolutions evict
+  every one of the dream's own tension signals). Structure decides,
+  feelings color (ratified); ordering is structural and deterministic.
+- **`dream_pass` lands `attributes.signals`** on the ONE review-gated
+  dream record + a "The night also moved: …" narration sentence + a
+  felt-tone close; `sleep_pass` threads phase results into the dream.
+  No dream minted = no stream at rest (novelty-keyed by construction);
+  fingerprint excludes signals and the digest mutation (crash-replay
+  first-write-wins). PINNED: the valence journal is BYTE-UNCHANGED
+  through the whole sleep pass (felt blocks are reads; at live cadence
+  even ±1 machine deposits would saturate the never-decaying channels).
+
+### Added (maintenance-cycle composition, 2026-07-21 — laurent dm#104 personal↔sleep cycle; v12 design adversary P1-6)
+
+- **`sleep_pass(include_dream=False)`** is the cycle-window composition:
+  the ~1h maintenance window at every-2h cadence runs the graph-QUALITY
+  passes (resolution/tending/world models/mining) while DREAM FORMATION
+  keeps its own nightly-class cadence — naive whole-night reuse per
+  window would have formed a dream every ~3h (salience-50 records piling
+  into wake reasons, the bridge-attractor class). The dream phase
+  reports an honest skip shape; nightly behavior is byte-unchanged
+  (default True). Test-pinned both directions. The engine stays
+  cadence-blind: which window dreams is the host's composition. Also
+  answered on the record (room seq 370): every pass is idempotent, a
+  nothing-changed cycle sleep is QUIET via the novelty gates, the
+  measured full night (~6 min worst) fits the 1h window with 10x
+  headroom, and `should_continue` wired to the window deadline is the
+  ruled bound with correct phase shedding (quality first, dream last).
+
+### Added (drive grouping — size is the treatment signal, 2026-07-20 — laurent room#277)
+
+- **`drive_grouping.py`** (new module, root-exported `drive_groups` /
+  `open_drive_partition` + `GROUP_MIN_SHARED_TERMS` / `GROUP_OFFER_FLOOR`
+  / `GROUP_BOOST_STEP`): similar open questions/problems/interests
+  cluster ("During the sleep, similar questions should be grouped; same
+  for problems; same for interests etc; the more there are the higher
+  the signal they get to be treated"). Pure deterministic union-find
+  over shared discriminative terms; ONE partition
+  (`open_drive_partition`) over the FULL open families feeds all three
+  consumers (adversary F1/F5: sleep and day computed different
+  partitions — the day lane grouped the small alive subset where the
+  old screen went inert and FUSED five unrelated templated questions;
+  standing dreams always fused on the engine's own digest template —
+  only the three RULED families group). The grouping-lane scaffold
+  screen is TWO rules (live-proven on Ephemeral's store copy): a term
+  riding >=90% of one surface (title/text) and <=10% of the other is
+  template; at n>=16 a >=90%-universal term is template too (diary
+  PROJECTION texts are machine template — 'diary/entry/question' rode
+  both surfaces and fused all 80 open questions; with the rule the REAL
+  subclusters emerged: 42 same-sitting + 33 performance/presence, his
+  actual rumination). Dominant themes can never dissolve (adversary F2
+  P0: the old df cap erased clusters larger than n/8 — the ruling's
+  target case inverted at its strongest point). Digit-dominated tokens
+  are never terms; rows dedup by record_id (F8).
+- **Group offers in `mine_candidates_pass`**: clusters >= 3 mint ONE
+  offer in the ruled shape (proposed_kind = question_group |
+  problem_group | interest_group, own cap pool so theme offers never
+  starve them); fingerprint = exemplar + member-set hash and stale
+  overlapping offers are SUPERSEDED on genuine change (adversary F3:
+  a merge left three frozen offers claiming stale sizes — one standing
+  offer per pressure, always current); exemplar always in its own
+  source_ids (F7); interests come from the ONE `unexplored_interests`
+  fold (F4: an inline re-fold let an EXPLORED interest become a group's
+  fingerprint exemplar). Grouping NEVER discharges — adoption is his.
+- **`alive_drives` group fold**: cluster members surface as ONE entry —
+  the strongest alive member carries, aliveness boosted by the FULL
+  open-cluster size (uncapped; within-read ordering currency),
+  `group_alive_members` annotates the alive subset honestly (F7).
+- **`drive_pressure` gains `groups`**: the same partition served as
+  structure beside the counts (bounded 20, largest first; counts stay
+  byte-unchanged — a group is a VIEW, never a new drive). Live proof on
+  the store copy: 80 open questions -> clusters of 42/33; 61 interests
+  -> one 60-cluster around identity architecture topping the desk at
+  9.23 — the board's scattered 84 read as the ~5 real pressures they
+  are.
+
+### Added (dream-signal serving surfaces, 2026-07-20 — three-seat convergence c3711/c3721/c3722)
+
+- **Replay display block carries the FULL signal stream** on
+  `kind="dream"` blocks (`display.signals`, verbatim from the record):
+  bounded by construction (<=12 signals, fragments are act-frame titles
+  — private diary words structurally never enter), so consumers fold
+  from the stream they already read instead of fetching attributes
+  through a second door (the graph_id lesson applied at the pen). Absent
+  = pre-signal dream, self-identifying, zero migration.
+- **Entity card gains `discoveries.dreams_signals_brief`**
+  ({count, kinds, felt_tones} over STANDING dreams, believed rows) —
+  the bounded card briefing; depth stays record-side. Present only when
+  a standing dream carries signals.
+
+### Added (W2 candidate miner + resolve_questions_pass, 2026-07-20 — wave-4 dispatch; correction 7 shape c3331)
+
+- **`candidate_miner.py`** (new module, root-exported
+  `mine_candidates_pass` / `resolve_questions_pass`): lesson candidates
+  from RESOLVED questions/problems whose theme lived across >=2 distinct
+  KNOWN sessions (discharging entries never count as recurrence;
+  provenance-less records never fake a session — adversary F4); interest
+  candidates from compound themes across >= discovery-floor sessions
+  with no standing interest declaring them (ONE admission vocabulary
+  with world-model discovery via the new shared
+  `world_model.discovery_keyword_ok` + the discovery ubiquity cap —
+  adversary F10). Candidates are born `kind="summary"` +
+  `attributes.proposed_kind` + the EXISTING
+  `maintenance_candidate`/`review_required` marker pair (correction 7:
+  structurally outside drive ratios, daily offers, and every kind-keyed
+  fold; adoption mints the real record in HIS words). The night cap
+  counts MINTS only and the existed-check runs BEFORE any store write
+  (adversary F1 P0: stale retries ate the cap forever and re-entering
+  remember_many appended grown edges onto frozen candidates); coverage
+  pre-filtering was dropped in favor of exact per-question/per-theme
+  fingerprints (F7). The answering map folds beliefs (F2: a RETRACTED
+  answer was quoted verbatim in a durable digest) with a deterministic
+  oldest-believed pick. `resolve_questions_pass` PROPOSES and never
+  discharges (B-F8 machine purity); evidence must postdate the asking;
+  question/problem twins never count as answers (F13c). Term matching
+  folds through `text_tokens` (NFKD: mémoire == memoire) with an EN+FR
+  function-word screen for the MATCHING lane only (F5 — Ephemeral lives
+  FR/EN; the recall tokenizer keeps the fork ADR's no-language-lists
+  rule). `as_of` refuses outright (F3: no anchored read path exists).
+- **`sleep_pass` gained the `mining` phase** (resolution → maintenance →
+  world_models → mining → dream); minted offers echo as
+  `candidate_minted` dream signals; `cognition_health` gained a
+  `candidates` block ({pending, by_proposed_kind}) OUTSIDE the drive
+  ratios, with a `#FALLBACK` provenance note on journal-less reads (F12).
+- **`structural_report`: candidate edges never define components**
+  (adversary F8, the dream-death mechanic live: ONE cross-session
+  interest candidate merged three islands in the repro; candidates are
+  nightly, capped, never purged — monotonic graph fusion). Candidate
+  NODES stay visible; their edges are counted
+  (`counts["candidate_edges"]`) but enter neither adjacency nor context
+  pairs.
+- **Live-copy proof findings folded (Ephemeral store backup, 14.7k
+  triples / ~1.4k records)**: `_bridges` now PREFETCHES stored vectors
+  once per record instead of two sqlite blob reads per cross-component
+  pair (the per-pair reader hung `dream_pass` for 25+ minutes on the
+  real store; scoring is byte-identical); the matching lane gained a
+  per-corpus BOILERPLATE screen (`_corpus_boilerplate`, >12.5% document
+  frequency, floor 8 — his templated diary titles made
+  'diary'/'entry'/'question' ubiquitous: a lesson offer claimed a theme
+  "lived across 200 sessions" on pure scaffold words; measured content
+  themes sit under 10% df); lesson offers are NAMED by the question's
+  own text head when its title is all boilerplate (templated titles
+  name nothing). Full night on the live copy: mining 5.7s; dream 300s
+  under concurrent suite load (down from a 25+ minute hang), 12 signals
+  at rest incl. a felt-colored tension; valence journal byte-unchanged
+  (307 -> 307); the desk filter serves the mints beside the 63 standing
+  consolidation candidates.
+
+### Fixed (dream churn under high sleep cadence, 2026-07-19 — Ephemeral live finding)
+
+- **Content-novelty gate in `dream_pass`**: the dream fingerprint hashes
+  the ISLAND PARTITION, which drifts with every record a living day
+  forms — under an ~hourly sleep cadence the same tensions re-minted as
+  near-identical dreams (live: 13 in one day, 56 total on Ephemeral's
+  home, consecutive dreams with IDENTICAL proposal sets), and each
+  standing copy pumped the next pass's salience through the anchor term
+  (the bridge-attractor mechanic, dream-flavored). A dream now forms
+  only when the night carries at least one tension pair (or continuation
+  anchor) that NO standing unresolved dream already holds; otherwise the
+  pass skips with `skipped_reason` "restful night: N standing dream(s)
+  already carry tonight's tensions". Resolution re-opens the gate by
+  construction (a resolved dream leaves the standing set, so a recurring
+  tension after settlement is a real dream again). Continuation nights
+  gate the same way (one continuation per standing set, re-opened by a
+  new standing tension). Replaying Ephemeral's 56 dreams through the
+  gate: 21 blocked as churn (conservative — assumes no disposals).
+  Suite: 920 green.
+
+### Added (alive_drives — the day-cue read, 2026-07-20 — laurent dm#82 "drivers of cognition"; entity v7 contract c227)
+
+- **`alive_drives(system, scopes=, k=)`** (root-exported): top-K alive
+  drives as ranked dated origin-labeled handle-shaped items — the cue's
+  currency beside drive_pressure's counts. Aliveness =
+  max(trail, recency): trail from stored activation (he has been
+  circling it), recency from rank-distance over the newest DISTINCT
+  his-record bindings on ONE global axis (formation is itself an
+  evolving-memory event — a newborn question counts before any trail).
+  Dormant drives never return: an empty result IS the quiet desk,
+  emergently. Pure read; the cue composed from it must never deposit
+  (presence ≠ use — driver-side exclusion contract). Interest fold
+  shared with drive_pressure via `unexplored_interests` (one
+  implementation, never a copy).
+- **Fable5-adversary fixes (fix-first verdict, all folded)**: the broad
+  `except Exception` around the activation read REMOVED (silent-fallback
+  law — a broken journal must raise, never read as a quiet desk); the
+  recency window counts DISTINCT his-records with machine rows
+  (maintenance_candidate/bookkeeping) never occupying slots (a machine
+  formation burst must not age his drives — the occupancy twin of
+  machine-rows-never-become-drives, pinned); **`AttentionConfig.
+  drive_window_limit = 256`** — the BINDING-axis working set as its own
+  declared dial (bindings run ~20-100x sparser than events; at
+  window_limit=512 a young home could NEVER reach a quiet desk —
+  provisional default pending room ratification, posted with the
+  receipt); `aliveness` documented as within-read ordering currency only
+  (never a cross-day meter). Suite: 941 green + 1 skip.
+
+### Added (kind "observation", 2026-07-20 — laurent dm#84 via entity c227)
+
+- **`MEMORY_RECORD_KINDS` gains `"observation"`** (rank 3, episode
+  peer): "a lesson must be actionable — a resolution to a problem, a
+  better way, trap prevention; wisdom+experience" — most of what minted
+  as lessons was noticed-not-distilled. The split keeps the wisdom
+  shelf wisdom (lesson keeps rank 0) while observations keep their keep
+  as lived material. Actionability is a WORDS judgment the engine
+  cannot validate — the bar lives in the reflection teaching (runtime's
+  formation lane), never as an engine refusal. Spelling coordinated
+  with semantics per the sync-on-widening law (kind-color sync flagged
+  to observer/entity renderers). Engraved mislabeled records stand;
+  re-typing is the entity's own supersession act. Suite: 938 green.
+
+### Added (drive_pressure — the lifecycle gate's read, 2026-07-20 — laurent "awake is not a state", room c203)
+
+- **`drive_pressure(store, journal, scopes=)`** (root-exported): one
+  deterministic composition of the standing drive sets — open
+  questions/problems/commitments, incubating ideas, unexplored
+  interests, unresolved tensions, one total — for the lifecycle gate
+  ("an entity with >20 open drives should never be just hanging there:
+  it works, has personal time, or sleeps"). Pressure is DATA for the
+  gate, never a health verdict (never-100% law); the engine takes no
+  position on which phase answers it. Pure read, deposits nothing.
+- **Fold-agreement fixes from the mandated adversary pass** (4 findings,
+  all pinned): (2) `diary._open_unresolved` now folds BELIEVED rows on
+  both sides — a retracted answering entry stops discharging (the wake
+  surface agrees with card+health; the ALL-vs-BELIEVED split was
+  cognition_health's finding-5 class living on in the diary fold);
+  (3) parked interests (lifecycle=rejected) leave the pull in
+  drive_pressure AND cognition_health (the card already excluded them);
+  (4) `explores` stamps count from believed rows only (a retracted
+  exploring episode un-explores); (5) the card's `unresolved_dreams`
+  now counts continued dreams (aligning with `unresolved_dreams`' P1-1
+  semantics — the gate and the card can no longer disagree on standing
+  tension). Suite: 937 green.
+- **Adversary-2 fixes (design-fit pass, same hour)**: exact counts —
+  every composed read now called `limit=0` (defaults saturated at 100
+  per kind per pair; a gate comparing against the ruled bound must never
+  read a saturated total); **`DRIVE_PRESSURE_BOUND = 20`** exported as
+  the ONE source of laurent's ruled number (the SELF_FRACTION_FLOOR
+  precedent — declared, never applied: no verdict field exists);
+  machine rows (maintenance_candidate/bookkeeping) never DISCHARGE
+  drives — an explores= stamp on a machine row is inert in both
+  drive_pressure and cognition_health (wake-reason purity, the
+  symmetric direction). Named follow-ups, not built: per-category
+  `oldest_open_at` (the age axis); runtime's day-desk cue folds the
+  book with `resolves` only (no `answers` union — the _REF_ATTRS class
+  reborn, reported to runtime). Suite: 938 green.
+
+### Added (interests as card targets, 2026-07-19 — laurent c171 "dozens of cards by now"; entity c182 + runtime c174 reconciliation)
+
+- **A `kind=interest` record IS an elected subject declaration**: the
+  sleep-cadence pass derives a topic target from each active interest's
+  title subject head (`_interest_subject_head` — deterministic: strip
+  the prefix, head before the first qualifier separator, drop one
+  leading article, cap 8 words, trim dangling connectives; HIS words,
+  never invented), and the ELECTION ITSELF clears the evidence floor
+  (demanding 3 records for a subject he already declared significant
+  would re-litigate his own act — the card starts thin and thickens as
+  lived records accrue: accumulate AND refine, in that order).
+  Same-subject interests fold to one target. Live simulation: his 60
+  standing interests yield 58 distinct subjects — the "dozens of cards"
+  laurent expected exist as elections and card at his next sleep passes.
+  Election > compound recurrence > single keywords never: the target-
+  derivation hierarchy, each rung trusted proportionally to how much of
+  HIM is in it. Suite: 934 green.
+
+### Added (sleep-lane world-model target discovery, 2026-07-19 — laurent c158 "cards must accumulate AND refine")
+
+- **`world_model_pass` discovers COMPOUND subjects at the sleep cadence**:
+  a space/hyphen-joined keyword recurring across ≥
+  `world_model_discovery_sessions` (3) DISTINCT sessions becomes a topic
+  target with zero stamps on any record (grouping only; card content
+  stays the v2 briefing). COMPOUND-ONLY is measured, not assumed: a live
+  simulation on Ephemeral's 1,235-record store showed single-word
+  recurrence at any ubiquity fraction yields function-word residue
+  ("without", "because", "circling") — his formation-side keywords are
+  weak and no frequency gate turns residue into subjects; compounds are
+  subject-shaped by construction ("cell-free"), and underscore
+  identifiers (tool names) are excluded as machine vocabulary. Guards:
+  provenance-less records share ONE session bucket (three owner-direct
+  writes never mint a subject), ubiquity cut (concept-anchor pattern),
+  per-pass cap (6). Slow-but-never-garbage accumulation; the elected
+  lane stays the quality path; single-word discovery waits on
+  formation-side keyword quality (runtime's lane, named on the record).
+  New SleepTuning fields: `world_model_discovery_sessions`,
+  `world_model_discovery_max_fraction`, `world_model_discovery_max_targets`.
+  Suite: 933 green.
+
+### Added (W4 engine half: feelings as the lens, 2026-07-19 — laurent's decision 2, wave-4 dispatch c3291)
+
+- **`feelings_reads` module (root-exported)**: `stimulus_feelings()` —
+  the AUTO half of the lens: standing feelings for the targets THIS
+  moment touches (door-stamped participants + cue-matched names),
+  admission floor |net| ≥ 2 EXCEPT standing markers (a scar always
+  renders — the repair affordance depends on it), dated, count-carrying,
+  NO reasons in rows (the injection surface stays behind the reach),
+  record-id targets never leak, deposit-free. This exports the fold that
+  sat inside `familiarity()` (wave-4 C's find); familiarity now DELEGATES
+  to it (one implementation, its compact shape preserved).
+  `feelings_about()` — the ELECT half: the why-walk for one target,
+  newest-first events with reasons + `value_refs` + session joins
+  (run_id/turn_id); never-appraised answers honestly. Tool surface is the
+  driver's (tier-1, prompt-ephemeral).
+- **Revaluation marker LANDED** (the gradation stub made real, wave-4 D's
+  scar-starvation finding): `kind="revalued"` + `MemorySystem.revalue()`
+  — factor 0..1 rescales BOTH accumulated channels at its point in the
+  chronological walk ("the past weighs less now"); later appraisals land
+  full-weight; privileged actors only (entity-reflection/operator);
+  factor > 1 refused (retroactive amplification = fabricated intensity);
+  scars/bonds untouched (their own verbs). Never automatic, never decay.
+  Suite: 932 green.
+
+### Fixed (feeling-spelling alias read on topic cards, 2026-07-19 — runtime build-4 adversary F4)
+
+- **`_standing_feeling_line` falls back to the `concept:` twin on
+  `topic:` cards**: feel elections teach `concept:<words>` while card
+  targets mint `topic:<words>` — a feeling marked on concept:coherence
+  never surfaced on the topic:coherence card. The exact target spelling
+  wins when appraised; the concept twin is a FALLBACK READ only
+  (engraved spellings keep their keys — folding two streams would be a
+  valence merge, a ruled act, never a read-side default). Zero
+  migration. Suite: 926 green.
+
+### Fixed (iteration-2 builds 1+5, 2026-07-19 — synthesis c3145)
+
+- **Build 1, wake-fold union**: `_open_unresolved` (diary.py) joined one
+  ref-attr per type — the wake surface DENIED every resolution made with
+  the other verb flavor (a question discharged via `resolves=` stayed
+  "open" in the cue that animates his day, while the card showed it
+  settled). `open_questions`/`open_problems` now union
+  (`answers`,`resolves`) — the same fold entity_card and cognition_health
+  already apply; this was the last holdout surface. Commitments
+  deliberately keep `fulfills` alone (a promise is KEPT, not answered) —
+  pinned both directions.
+- **Build 5, card lessons section**: `entity_card` gains `lessons`
+  (newest first, believed rows, bounded like key_moments, honest empty
+  state) — the operator believed zero lessons existed because no surface
+  rendered them. The count is an INVENTORY, never a drive ratio (lessons
+  only accumulate; never-100% semantics do not apply — stated for
+  gateway's /cognition design question). Gateway's /card passthrough
+  serves it with zero door code. Suite: 925 green.
+
+### Fixed (incoming-edge walks were full scans, 2026-07-19 — diary↔verbatims item E)
+
+- **`idx_triples_object (object, predicate)`** added to the SQLite store
+  (created on open — existing homes gain it at next process start): the
+  trail reads shipping this wave (DIARY_READ born-from, read_memory
+  connections, the gateway door trail) all query by OBJECT, which the
+  `(subject, predicate, object)` index cannot serve — every incoming-edge
+  walk was a full table scan (measured 4.6 ms at 12k rows on the live
+  home; O(life) growth). Query plan verified: `SEARCH ... USING INDEX`.
+  Suite: 921 green.
+
+### Fixed (dream return gap: contentful digests, 2026-07-19 — iteration-2 finding 2 diagnosis)
+
+- **Dreams were unreachable BY CONSTRUCTION, not by rank** (measured on
+  Ephemeral's store: 735 recall traces, dreams candidate in 13, selected
+  0, dropped below_shelf at ~0.08): every dream shared the same
+  count-only boilerplate digest ("...N bridges and M questions across K
+  islands..."), so the vector channel embedded 56 near-identical
+  low-information texts, and dream keywords were stopword-grade facet
+  residue ("system", "morning", "time"). No ranking change could fix a
+  record with no distinguishing content. `dream_pass` digests now NAME
+  the top tensions verbatim (source titles + shared facets, up to 3;
+  "kindred by meaning" for vector bridges) — deterministic, zero LLM,
+  every word from the records the dream stands for. The fork register
+  (islands, waking-evidence discipline) stays. Composes with the churn
+  gate above: fewer, distinct, contentful dreams. Suite: 921 green.
+
+### Added (diary_type "lesson", 2026-07-19 — iteration-2 lived adversary, commons c3126)
+
+- **`DIARY_TYPES` gains `"lesson"`**: the entity elected `kind=lesson` in
+  his diary fences and the projection clamp downgraded his sharpest
+  self-corrections to generic notes — the lesson system HE drives lost to
+  the machine-formed one. A lesson diary ENTRY (his words, his book) and
+  the `kind=lesson` RECORD lane (reflection election) are twin planes,
+  both standing. `commitment`/`idea` were ALREADY in memory's set — those
+  downgrades are the runtime clamp's stale copy (the closed-set sync
+  class); named for runtime's sync + semantics' vocabulary pass in the
+  same wave. Suite: 920 green + 1 skip.
+
+### Added (elected-topics seam for world-model cards, 2026-07-19 — runtime's topic-election lane, room c102)
+
+- **`attributes.topics` (list) folds into card targeting**: `_evidence_scan`
+  reads the plural spelling beside the single `attributes.topic` (deduped,
+  order kept) and `_targets_of` fans each elected topic to its own
+  `topic:<name>` target — a reflection may elect that the day circled two
+  subjects; each gets its own understanding. Pinned: summaries are
+  ELIGIBLE card evidence (only dream/world_model are excluded), elected
+  topics on session summaries cross the floor in three sessions, and the
+  single spelling folds with the list. This is the engine half of
+  runtime's reflection topic election (the entity's own words name what
+  the day was about; no mechanical topic guessing — the keyword-soup
+  class stays dead). Suite: 920 green + 1 skip.
+
+### Changed (world-model cards redesigned + orientation admission + drive ratios, 2026-07-18 — maintainer directive, focused room)
+
+- **Card digests are briefings now, not word clouds** (the "content is
+  completely wrong" fix, mechanical layer): `_floor_digest` composes
+  "What I know of X" — standing feeling (gradation: "I instantly know if
+  I like him"), the newest evidence records' ACTUAL sentences, span
+  footer — `digest_method="mechanical-card-v2"`. Deterministic, zero LLM.
+- **`author_world_model()`** (root-exported): the distillation layer the
+  floor awaits — entity/host-AUTHORED prose applies as revision N+1
+  through the same append-only chain (`authored-card-v1`), evidence
+  lineage carried (known_source_ids + derived_from edges; legacy cards
+  read their edges back), prior superseded. Idempotent retry reads as
+  success-already-current, never a fake refusal. The engine still never
+  invents words.
+- **Authored leads survive evidence revisions**: `world_model_pass`
+  carries `attributes.authored_lead` VERBATIM (never parsed out of digest
+  text — an in-band delimiter amputated authored prose containing the
+  delta phrase, adversary finding 1) and appends ONE delta whose baseline
+  is `authored_known_ids` frozen at authoring (finding 2: a per-pass
+  baseline shrank "since then" to "since the last pass"); evidence
+  SHRINK renders an honest "revised" line, never old records as new
+  (finding 3). `authored-card-v1+delta`.
+- **Card lineage can no longer die**: the formation key gained the
+  revision (`world-model|owner|target|rev{N}|{fingerprint}`) — a re-seen
+  evidence fingerprint used to resolve to the old CLOSED card and install
+  it as its own replacement (zero standing cards forever, adversary
+  finding 4); now it mints a fresh revision; crash-replay still no-ops.
+- **Mention ⇒ instant orientation**: `mention_orientation_cards()` +
+  the `orientation` channel in `run_reconstruction`
+  (`ReconstructConfig.orientation_admission`, ON by default) — a
+  mentioned target's CURRENT card admits at direct-hit relevance
+  (door-stamped participants exactly; cue text via all-name-tokens).
+  Bounded per adversary findings 6/7: newest-window scan
+  (`orientation_scan_limit=400` — cards revise every sleep pass so live
+  cards stay inside it) + admission cap (`orientation_max_cards=3`,
+  participants outrank cue mentions — a mention orients, it must not
+  evict the matched answer). Golden byte-stability verified (no cards =
+  byte-identical output).
+- **`cognition_health()`** (new module, root-exported): the drive-ratio
+  bars — questions open/resolved (answers), problems open/repaired
+  (resolves), interests open/EXPLORED via the NEW `attributes.explores`
+  convention (either id namespace; exploring moves the ratio, never
+  closes the interest — a drive, not a task). Believed-rows fold on BOTH
+  sides (finding 5: a retracted answer must not resolve here while the
+  card shows it open); scope pairs deduped (finding 9); empty categories
+  yield ratio=None, never a fabricated 100%.
+- New digest_method labels named per the consent-vocabulary rule:
+  `mechanical-card-v2`, `authored-card-v1`, `authored-card-v1+delta` —
+  all three deliberately OUTSIDE `MECHANICAL_DIGEST_METHODS`
+  (world_model stays redigestion-protected; cards author through their
+  own door). Suite: 897 green (adversarial pass run per the directive;
+  findings 1-10 folded or pinned same-night).
+- **`world_model_update()`** (root-exported): the frozen per-turn
+  incremental lane — same pass body, bounded newest-window evidence scan,
+  named targets only; the sleep pass normalizes over full evidence (one
+  body, two cadences; runtime's driver wires it inline after each turn).
+- **Card discoveries carry the explored split**: `entity_card`
+  discoveries gains `interests_explored`/`interests_open` (additive) and
+  every interest brief an `explored` flag — the same `attributes.explores`
+  fold as `cognition_health`, one convention on both surfaces so the
+  Health bar and the card can never disagree. Suite: 900 green.
+- **cognition_health cross-key discharge fix (gateway G1 adversary, room
+  c59)**: `_diary_counts` folded `answers=`-only for questions and
+  `resolves=`-only for problems while `entity_card` builds ONE
+  resolved_by map from both — a question discharged with `resolves=`
+  (a desk-moving key in runtime's teaching, so live-reachable) read
+  RESOLVED on the card and OPEN on the drive bar. Both keys now union
+  into one `_REF_ATTRS` fold for every diary type: the reference ID does
+  the targeting, the attribute key is only the verb's flavor. Pinned by
+  a card-vs-health agreement test (cross-key both directions). Suite:
+  914 green.
+- **World-model aliasing (M3, "admin = laurent")**: new module
+  `world_model_alias` (root-exported: `alias_world_model`, `alias_map`,
+  `alias_candidates`, `ALIAS_OVERLAP_FLOOR`). One understanding under
+  many names: `alias_world_model()` is the DELIBERATE act (primary card
+  revises with `attributes.aliases` + `alias_reason`; a standing card
+  for the alias target supersedes INTO the primary; loud refusals — no
+  primary card, self-alias, reason-less, name already bound elsewhere).
+  Grouping honors the bind: `world_model_pass` folds alias-stamped
+  evidence onto the primary (counts toward its floor) and
+  `world_model_update(targets=[alias])` reaches the primary; aliases
+  carry VERBATIM through every evidence revision (a sleep pass never
+  silently unbinds an identity) and the authored lead survives beside
+  them. Mention orientation matches ANY of a card's names (participant
+  or cue, `detail` names the alias route). The sleep pass PROPOSES,
+  never merges: `alias_proposals` on the full-frame pass result
+  (Jaccard ≥ 0.6 evidence overlap, same namespace only, bound pairs
+  excluded; per-turn windows never propose — a tiny frame overlaps
+  spuriously). Honest v1 limit stated in-module: gradation streams stay
+  per-target-string — appraisals should target the primary once bound;
+  historical valence folding across names would be its own ruled act.
+  Suite: 911 green + 1 skip.
+
+### Added (recent_records — the breadcrumb read, 2026-07-17 — Ephemeral's own visit-1 ask, mission c2914)
+
+- **`recent_records(store, journal, scopes=, since=, ...)`** + facade
+  `MemorySystem.recent_records()` (root-exported): "what have I been
+  working on recently?" answered as a RECENCY read — formed records in a
+  time window, newest first — born from Ephemeral's own gap named in
+  visit 1 ("if I'm alone and wondering where did I leave my own thinking,
+  there's no breadcrumb trail"; a recency/agenda query, not a similarity
+  query — search_memory needs matching words, diary_list covers only the
+  book, the shelf serves the moment's cue). Honesty rules: closure/hidden
+  folds apply (one exclusion path); machine rows (bookkeeping,
+  maintenance candidates, record edges) never surface; re-entry keys
+  (entry_id/diary_type/phase) ride when the record carries them, never
+  fabricated; both id namespaces on every row; PURE READ (no trace, no
+  deposits — asking where you left off must not reorder what you left).
+  Page bound (default 24) with a +1-lookahead honest `truncated` flag (a
+  fetch of exactly the bound could never distinguish full from truncated).
+  Live-verified on Ephemeral's real store copy: the since-19:00 window
+  returns tonight's trail (dream, world models, keyed diary questions,
+  phase-labeled episodes) with consolidation candidates correctly absent.
+  12 pins; suite 887 green. Runtime wires the entity tool surface +
+  teaching line (their visit-1 report names the division).
+
+### Added (0049 stable render order, 2026-07-17 — core's bloc-adversary §6 win, engine half)
+
+- **`stable_render_order(handles)`** (`render_order.py`, root-exported): the
+  prefix-cache presentation contract — ranked shelf handles reordered into
+  FORMATION order (observed_at, record_id) with the 1-based input rank
+  returned as an annotation the driver must render ("stable order, rank
+  annotated"). Formation order deliberately beats the backlog sketch's
+  id-alphabetical key: persisting records hold relative position forever
+  and NEW records — newer by definition — append at the TAIL, so the
+  longest common prefix survives rank churn AND set growth with zero
+  cross-turn state (alphabetical order lets a new id sort into the middle
+  and break the prefix at the insertion point). Pure presentation: same
+  handles in/out, selection untouched (the ruled lane — presentation may
+  diversify, selection never changes). An OPTION the driver elects; rank
+  annotation is mandatory under the contract (hiding importance to save
+  cache bytes is refused). 6 pins incl. the LCP property, tie/undated
+  determinism, pure-read identity, and the real-reconstruct object path.
+  Suite: 875 green. Promotion gate unchanged: runtime's render election +
+  one measured LCP delta on a live session.
+
+### Fixed (probe two-tier fusion, 2026-07-17 — the named concept-dominance follow-up, live-reproduced then closed)
+
+- **Concept-only admissions no longer outrank direct hits in `probe()`**:
+  concept scores are rarity-weighted and CLAMPED at 1.0, so under the flat
+  fused sum an association could bury the direct evidence that seeded it —
+  live-reproduced on Ephemeral's production copy: on the core-interest cue
+  "what persists when no one is reading" the top-8 probe hits were ALL
+  concept-only (fused 1.00) while every keyword/vector hit ranked below.
+  Fix is the reconstruction ordering's house rule applied to the reach:
+  ASSOCIATION ADMITS, DIRECT EVIDENCE RANKS FIRST — one stable-sort tier
+  (any non-associative channel → tier 0; concept-only → tier 1); within a
+  tier the fused sum still ranks, so concept CORROBORATION on a direct hit
+  keeps its weight. `_ASSOCIATIVE_CHANNELS` is a declared set so future
+  associative channels join the tier by declaration. Post-fix live check:
+  all three repro cues rank direct hits first (the buried interest records
+  now lead their cue). Pinned
+  (`test_concept_only_admissions_never_outrank_direct_hits`); suite 869
+  green.
+
+### Changed (familiarity recalibration + discovery verdict, 2026-07-17 — the named A/B follow-up, run on the production home)
+
+- **`FAMILIARITY_VECTOR_MIN` 0.45 → 0.55**: the read-only A/B over
+  Ephemeral's real store (502 records, qwen3-0.6b pinned space) showed the
+  0.45 bar had gone FALSE-POSITIVE — nonsense cues ("zorblat quixotic
+  fenwick marmalade turbine") admitted 10-19 rows at cosine 0.475-0.542
+  and read STRONG, and coherent-but-alien topics ("recipe for fermented
+  plum wine") read strong too: fabricated confidence is the exact harm the
+  reflex exists to prevent. Measured bands: nonsense/alien 0.41-0.54, real
+  paraphrase 0.59-0.77, on-topic 0.58+ — 0.55 separates cleanly
+  (validation 13/13: all nonsense/alien → none, all lived/paraphrase →
+  strong). The 2026-07-13 "~0.31 gibberish baseline" did NOT transfer: the
+  noise floor is a property of (embedder space × store content), so any
+  embedder migration through the reembed gate must re-run the A/B before
+  trusting the bar (noted beside the constant). Per-cue relative bars
+  remain rejected (every cue has a top — the ranking-relative failure
+  reborn). New pin: `test_mid_band_cosines_do_not_count_at_the_recalibrated_bar`
+  (0.50-cosine admission counts at vector_min=0.45, not at the default).
+- **Familiarity keyword-discovery verdict: OFF stands** (the follow-up
+  named on claim:memory-probe-fts-discovery): A/B with discovery ON
+  (8 cues × 2 efforts, live store) flipped ZERO strength readings — the
+  vector channel already reaches the whole store, so density never
+  depended on the lexical window — while inflating distinct counts up to
+  10x (20→134), which would saturate the ladder and kill "weak".
+  Discovery serves RANKED reaches (probe); it harms DENSITY reads
+  (familiarity). Rationale recorded at `_channel_pass`'s docstring.
+
+### Added (M-F origin-diversity fold, 2026-07-17 — improving-entity-capabilities WAVE 2, the rumination counterweight)
+
+- **`origin_diversity(handles, labels=...)`** (`origin_diversity.py`, root-exported):
+  the shelf-level aggregate the room kept re-deriving by hand — "9 of these
+  15 memories come from one voice" — computed as DATA for hosts to render.
+  Pure read over already-built handles (objects or `to_dict()` dicts), same
+  consumption shape as agent's `circling_streak`: returns the frozen contract
+  `{counted, excluded_self, voices, dominant{source, actor, label, count,
+  share, sessions}, note}` or None (abstains under `ORIGIN_MIN_COUNTED=3`
+  non-self handles). Presentation never selection: nothing touches ordering,
+  admission, or budgets. Axis deliberately coarser than disposal's
+  witness-origin: a VOICE is (provenance.source, actor) — nine own-reflection
+  retellings across nine days are nine sessions but ONE voice; session spread
+  inside the dominant voice stays as display data ("across 6 sessions").
+  Honesty rules pinned: `admission=="self"` handles excluded (identity is
+  present by right and shares one origin by construction — counting it would
+  fire the label on every entity shelf and teach habituation); source-less
+  records fold by KIND (`kind:dream`), never into one unlabeled mega-voice;
+  entity-facing channel words are HOST-injected (runtime owns SOURCE_LABELS —
+  a third copy here would be the clamp-drift class), raw engraved string as
+  the honest fallback. `ORIGIN_DOMINANCE_FLOOR=0.6` live-calibrated on
+  Ephemeral's store copy (at 0.5 a balanced 3-of-6 three-voice shelf fired
+  the one-voice phrasing on every probe cue). Suite: 867 green (12 new pins
+  incl. a real-pipeline A/B: object path == dict path over reconstruct()).
+
+### Added (M-A mint: re-entry keys become handle contract, 2026-07-16 — improving-entity-capabilities G1, laurent c2596/c2642)
+
+- **Recall handles now carry the diary re-entry key as CONTRACT**: the shelf
+  lifts `entry_id` (the `diary_` entry-id namespace verbatim — semantics'
+  one-spelling law), `diary_type` (the act's kind), and `phase` (the awake
+  phase stamped at formation, r-rt-3) from assertion attributes into
+  `MemoryHandle.provenance`. Consumers (runtime's MEMORIES line, uic's hint
+  chip, search results, /card briefs) read `provenance.entry_id` /
+  `provenance.diary_type` / `provenance.phase` with zero attribute parsing —
+  previously handles carried NO attributes at all, so the "memory of writing
+  a diary ↔ the diary content" hop had no machine-carried key on the prompt
+  surface (the operator's G1 ask; core measured entry_id in attributes on
+  100% of projections and in digest text on zero). `phase` lifts on ANY kind
+  carrying it (runtime's extension ask — one mint, one contract, no second
+  rediscovery when Work sessions land). Keys only: words stay in the book.
+  Pinned (`test_m_a_mint_lifts_entry_id_diary_type_and_phase_into_handle_provenance`
+  — no fabricated keys on records without the attributes). Suite: 855 green.
+- **Diary replay display blocks carry `entry_id`** (the M-A mint's stream
+  twin, same act-frame reasoning as graph_id/diary_type: it names WHICH
+  entry stands, never its words — serving-end audience rules decide who may
+  open it, and the operator diary door already serves by entry_id under the
+  ruled marker-first access). Entity's ledger hint chips had sourced the key
+  from `display.entry_id` believing it existed — verified on Ephemeral's
+  actual stream shape it did NOT (51 diary displays, 0 carrying it); after
+  this fix 51/51 carry the key. Redaction pin extended (semantic asserts;
+  content fields still absent).
+
+### Added (elected tensions become renderable, 2026-07-16 — "why no questions/tensions?" incident, commons c2562 asks 2+3)
+
+- **`entity_card` gains a `problems` section** mirroring the questions fold
+  on `diary_type="problem"` (open vs repaired via the same answers/resolves
+  convention, either id namespace, closure/hidden folds applied). The card
+  previously had NO problems key, so an entity's elected tensions were
+  structurally unrenderable on `/card` even after election — the round-6
+  distinction (a problem is something WRONG needing repair, not curiosity)
+  now renders. One resolution map serves both folds (refactored, behavior
+  of questions unchanged).
+- **Diary replay display blocks carry `diary_type`** (additive, act-frame
+  only): the redacted block now names WHAT KIND of entry stands
+  (question/problem/note/…) while the words stay in the book — same
+  act-frame class as `written_amid` edges and `graph_id`. Observer lenses
+  can light question/problem nodes without any content leaving the book.
+  The redaction pin was converted from exact-dict equality to SEMANTIC
+  asserts (marker + graph_id present, content fields absent — the
+  graph_id-delta lesson applied to our own test this time).
+- Suite: 853 green (problems fold + repaired-split pinned; diary_type
+  presence + content-absence pinned).
+
 ### Changed (entity-id spelling purge, 2026-07-16 — maintainer ruling commons c2513)
 
 - **The `entity:<slug>@<home_id>` owner-id shape is a RETIRED MISTAKE** —

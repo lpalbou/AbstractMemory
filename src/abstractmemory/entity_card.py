@@ -330,7 +330,10 @@ def entity_card(
         ),
     }
 
-    # ---- questions (belief axis; the diary resolution convention) ----------
+    # ---- questions + problems (belief axis; the diary resolution convention)
+    # One resolution map serves both folds: a later entry's answers/resolves
+    # reference discharges a question OR repairs a problem (either id
+    # namespace — graph id or book entry_id).
     diary_rows = [a for a in believed if a.attributes.get("record_kind") == "diary"]
     resolved_by: Dict[str, List[str]] = {}
     for a in diary_rows:
@@ -338,19 +341,24 @@ def entity_card(
             ref = a.attributes.get(ref_attr)
             if isinstance(ref, str) and ref.strip():
                 resolved_by.setdefault(ref.strip(), []).append(a.subject)
-    open_q: List[Dict[str, Any]] = []
-    resolved_q: List[Dict[str, Any]] = []
-    for a in diary_rows:
-        if a.attributes.get("diary_type") != "question":
-            continue
-        refs = {a.subject, str(a.attributes.get("entry_id") or "").strip()} - {""}
-        resolvers = sorted({rid for ref in refs for rid in resolved_by.get(ref, ())})
-        brief = _row_brief(a)
-        if resolvers:
-            brief["resolved_by"] = resolvers
-            resolved_q.append(brief)
-        else:
-            open_q.append(brief)
+
+    def _open_resolved(diary_type: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        open_rows: List[Dict[str, Any]] = []
+        resolved_rows: List[Dict[str, Any]] = []
+        for a in diary_rows:
+            if a.attributes.get("diary_type") != diary_type:
+                continue
+            refs = {a.subject, str(a.attributes.get("entry_id") or "").strip()} - {""}
+            resolvers = sorted({rid for ref in refs for rid in resolved_by.get(ref, ())})
+            brief = _row_brief(a)
+            if resolvers:
+                brief["resolved_by"] = resolvers
+                resolved_rows.append(brief)
+            else:
+                open_rows.append(brief)
+        return open_rows, resolved_rows
+
+    open_q, resolved_q = _open_resolved("question")
     questions = {
         "open": open_q,
         "resolved": resolved_q,
@@ -359,6 +367,24 @@ def entity_card(
             "(diary_type='question'; resolution = a later entry's answers/resolves "
             "reference, either id namespace; closure/hidden folds applied)"
             if open_q or resolved_q else "no diary questions at this anchor"
+        ),
+    }
+
+    # Problems mirror questions with the round-6 distinction intact: a
+    # problem is not a question — something is WRONG and needs repair
+    # (distinct kind, distinct priority; already a wake reason on the
+    # inspect surface). Ephemeral incident (c2562 ask 2): the card had no
+    # problems section, so elected tensions were structurally unrenderable
+    # on /card even after the entity elected them.
+    open_p, resolved_p = _open_resolved("problem")
+    problems = {
+        "open": open_p,
+        "resolved": resolved_p,
+        "provenance": (
+            f"{len(open_p)} open / {len(resolved_p)} repaired diary problems "
+            "(diary_type='problem'; repair = a later entry's answers/resolves "
+            "reference, either id namespace; closure/hidden folds applied)"
+            if open_p or resolved_p else "no diary problems at this anchor"
         ),
     }
 
@@ -397,23 +423,110 @@ def entity_card(
     }
 
     # ---- discoveries (belief axis) ------------------------------------------
-    interests = [
-        _row_brief(a) for a in believed
+    # EXPLORED split (drive ratios, maintainer 2026-07-18): any believed
+    # record carrying attributes.explores=<interest id> (either namespace)
+    # marks the interest EXPLORED — exploring moves the ratio, never closes
+    # the interest (a drive, not a task; cognition_health shares the
+    # convention so the health bar and the card can never disagree).
+    explores_refs = {
+        str(a.attributes.get("explores")).strip()
+        for a in believed
+        if isinstance(a.attributes.get("explores"), str)
+        and str(a.attributes.get("explores")).strip()
+    }
+    interest_rows = [
+        a for a in believed
         if a.attributes.get("record_kind") == "interest"
         and lifecycle_of.get(a.subject, "inactive_candidate") not in _CLOSED_INTEREST_LIFECYCLES
     ]
-    unresolved = sum(
-        1 for a in believed
-        if a.attributes.get("record_kind") == "dream"
-        and a.attributes.get("continuation_state") == "unresolved"
-    )
+    interests = []
+    explored_n = 0
+    for a in interest_rows:
+        brief = _row_brief(a)
+        explored = bool({a.subject, str(a.assertion_id or "")} & explores_refs)
+        brief["explored"] = explored
+        explored_n += int(explored)
+        interests.append(brief)
+    # Both standing states count (drive-pressure adversary finding 5,
+    # 2026-07-20, aligning with unresolved_dreams' P1-1 semantics): a
+    # CONTINUED dream re-lights standing tension — it is itself standing,
+    # and the card disagreeing with the wake fold was the gate/card
+    # divergence class.
+    unresolved = 0
+    # Dreams brief (three-seat convergence c3721/c3722/c3723, 2026-07-20):
+    # the card carries a BOUNDED signal summary for standing dreams —
+    # count + kinds + felt tones, never fragments (depth lives on the
+    # record and rides the replay display block; the card is a briefing,
+    # not a stream). Absent when no standing dream carries signals
+    # (pre-signal dreams self-identify by absence, zero migration).
+    signal_count = 0
+    signal_dreams = 0
+    signal_kinds: set = set()
+    felt_tones: set = set()
+    for a in believed:
+        if (a.attributes.get("record_kind") != "dream"
+                or a.attributes.get("continuation_state")
+                not in ("unresolved", "continued")):
+            continue
+        unresolved += 1
+        signals = [s for s in (a.attributes.get("signals") or ())
+                   if isinstance(s, dict)]
+        if signals:
+            signal_dreams += 1
+        for s in signals:
+            signal_count += 1
+            if s.get("kind"):
+                signal_kinds.add(str(s["kind"]))
+            felt = s.get("felt")
+            if isinstance(felt, dict) and felt.get("tone"):
+                felt_tones.add(str(felt["tone"]))
     discoveries = {
         "interests": interests,
+        "interests_explored": explored_n,
+        "interests_open": len(interests) - explored_n,
         "unresolved_dreams": unresolved,
         "provenance": (
-            f"{len(interests)} open interest(s) (closure/hidden/lifecycle folds "
-            f"applied) + {unresolved} unresolved dream(s) awaiting waking evidence"
+            f"{len(interests)} standing interest(s), {explored_n} explored "
+            f"(attributes.explores; exploring never closes an interest; "
+            f"closure/hidden/lifecycle folds applied) + {unresolved} "
+            "unresolved dream(s) awaiting waking evidence"
             if interests or unresolved else "no interests or unresolved dreams at this anchor"
+        ),
+    }
+    if signal_count:
+        discoveries["dreams_signals_brief"] = {
+            "count": signal_count,
+            # The unit is SIGNALS, never dreams (observer's first-night
+            # two-lane verification, c3802: 24 = 12+12 across two dreams,
+            # and a render read it as "24 dreams" for hours because prose
+            # was the only contract). The field pins it forever; `dreams`
+            # carries the other number so no consumer needs to derive it.
+            "unit": "signals",
+            "dreams": signal_dreams,
+            "kinds": sorted(signal_kinds),
+            "felt_tones": sorted(felt_tones),
+        }
+
+    # ---- lessons (wisdom axis; iteration-2 build 5, 2026-07-19) -----------
+    # The operator believed ZERO lessons existed because no surface showed
+    # them — his window renders the card, and the card had no section.
+    # Newest first (the freshest distillation leads), believed rows only,
+    # bounded like key_moments; the count is an INVENTORY, never a drive
+    # ratio (lessons only grow — never-100% semantics do not apply).
+    lesson_rows = [a for a in believed
+                   if a.attributes.get("record_kind") == "lesson"]
+    lesson_rows.sort(key=lambda a: (str(a.observed_at or ""), a.subject),
+                     reverse=True)
+    lessons = {
+        "lessons": [_row_brief(a) for a in lesson_rows[:_KEY_MOMENTS_BOUND]],
+        "total": len(lesson_rows),
+        "provenance": (
+            f"{len(lesson_rows)} lesson(s) (kind=lesson, believed rows, "
+            f"newest first, {_KEY_MOMENTS_BOUND} shown) — distilled "
+            "knowledge from lived experience; a count, never a ratio "
+            "(lessons only accumulate)"
+            if lesson_rows else "no lessons at this anchor — nothing "
+            "distilled yet, which is a young life, not a failure"
         ),
     }
 
@@ -426,8 +539,10 @@ def entity_card(
         "current_state": current_state,
         "likes_dislikes": likes_dislikes,
         "questions": questions,
+        "problems": problems,
         "key_moments": key_moments,
         "discoveries": discoveries,
+        "lessons": lessons,
     }
 
 

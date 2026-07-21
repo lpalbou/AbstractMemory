@@ -119,14 +119,112 @@ def test_guard_one_dream_per_pass_and_fingerprint_idempotency(system, stack) -> 
     first = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
     assert first["created"] is True
 
+    # Same graph state re-run: the content-novelty gate reads the standing
+    # dream as already carrying tonight's tensions — an honest restful
+    # night, nothing formed (2026-07-19; previously the fingerprint dedup
+    # returned the same id, which also formed nothing — the gate now says
+    # WHY, and fires even when the island partition drifted).
     replay = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
-    assert replay["dream_record_id"] == first["dream_record_id"]
-    assert replay["created"] is False           # fingerprint dedup via remember_many
+    assert replay["created"] is False
+    assert replay["dream_record_id"] is None
+    assert "restful night" in (replay["skipped_reason"] or "")
 
     from abstractmemory.store import TripleQuery
     dreams = [a for a in store.query(TripleQuery(scope=SCOPE, owner_id=OWNER, limit=0))
               if isinstance(a.attributes, dict) and a.attributes.get("record_kind") == "dream"]
     assert len(dreams) == 1                     # exactly one dream record exists
+
+
+def test_dream_churn_gate_blocks_reminting_when_only_the_island_partition_drifts(system, stack) -> None:
+    """Ephemeral's live churn (2026-07-19): 13 near-identical dreams in one
+    day — his loop sleeps ~hourly, each day forms unrelated records that
+    shift the ISLAND PARTITION (which the fingerprint hashes) while the
+    proposal/question content stays the same, so the same tensions
+    re-minted every sleep, and each standing copy pumped the next pass's
+    salience through the anchor term. The gate: no new tension pair =
+    restful night, nothing formed."""
+    store, journal = stack
+    _two_island_world(system)
+    first = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
+    assert first["created"] is True
+
+    # A new UNRELATED record lands between sleeps (no shared facets with
+    # anyone — a new island): the partition changes, the fingerprint
+    # would change, but tonight's tension pairs are the ones the standing
+    # dream already carries.
+    _remember(system, "drift-1", "episode", "Unrelated errand",
+              "Bought stamps at the kiosk.", keywords=("kiosk",))
+    second = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
+    assert second["created"] is False
+    assert second["dream_record_id"] is None
+    assert "restful night" in (second["skipped_reason"] or "")
+
+    from abstractmemory.store import TripleQuery
+    dreams = [a for a in store.query(TripleQuery(scope=SCOPE, owner_id=OWNER, limit=0))
+              if isinstance(a.attributes, dict) and a.attributes.get("record_kind") == "dream"]
+    assert len(dreams) == 1                     # the churn is dead
+
+    # RESOLUTION RE-OPENS THE GATE by construction: dispose the standing
+    # dream and the same tensions become genuinely new again — a recurring
+    # tension after settlement is a real dream, not churn.
+    system.close_record(first["dream_record_id"], kind="retract",
+                        reason="disposed for the reopen pin")
+    third = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
+    assert third["created"] is True
+    assert third["dream_record_id"] != first["dream_record_id"]
+
+
+def test_dream_churn_gate_lets_genuinely_new_tension_through(system, stack) -> None:
+    """One NEW cross-island pair among carried ones = a real dream night;
+    the gate only blocks zero-new-content nights."""
+    _two_island_world(system)
+    first = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
+    assert first["created"] is True
+
+    # A record bridging INTO the db island with fresh shared facets mints
+    # a new proposal pair the standing dream does not carry.
+    _remember(system, "new-bridge", "episode", "Noon pool reading",
+              "Garden pond pool reading logged at noon.",
+              keywords=("pool", "noon", "pond"))
+    second = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
+    assert second["created"] is True
+    assert second["dream_record_id"] != first["dream_record_id"]
+
+
+def test_continuation_nights_do_not_churn_either(system, stack) -> None:
+    """An anchors-only night forms ONE continuation; the next anchors-only
+    night over the same standing set is a restful night — a new standing
+    tension re-opens the continuation lane."""
+    from abstractmemory.records import MemoryRecordInput
+
+    [seed_id] = system.remember_many(
+        [MemoryRecordInput(
+            kind="dream", title="Dream: old tension",
+            digest="An unresolved tension from a prior night.",
+            attributes={"continuation_state": "unresolved",
+                        "interpretation_required": True,
+                        "parent_dream_ids": []},
+        )],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="seed-dream-churn")
+    night = dream_pass(system, scopes=SCOPES, owner_id=OWNER, maintenance_ops=1)
+    assert night["created"] is True             # first continuation forms
+
+    again = dream_pass(system, scopes=SCOPES, owner_id=OWNER, maintenance_ops=1)
+    assert again["created"] is False            # same anchors: restful night
+    assert "restful night" in (again["skipped_reason"] or "")
+
+    # A NEW standing tension (fresh unresolved dream) re-opens the lane.
+    system.remember_many(
+        [MemoryRecordInput(
+            kind="dream", title="Dream: newer tension",
+            digest="A second unresolved tension.",
+            attributes={"continuation_state": "unresolved",
+                        "interpretation_required": True,
+                        "parent_dream_ids": []},
+        )],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="seed-dream-churn-2")
+    reopened = dream_pass(system, scopes=SCOPES, owner_id=OWNER, maintenance_ops=1)
+    assert reopened["created"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -317,17 +415,14 @@ def test_anchors_only_night_forms_a_continuation_dream(system, stack) -> None:
     edges = [a for a in rows if a.attributes.get("record_edge")]
     assert {e.object for e in edges} == {seed_id}  # sourced from the standing dream
 
-    # Without the ops nudge the single anchor stays below the floor — an
-    # anchors-only quiet night remains a valid quiet night.
+    # Without the ops nudge the single anchor stays below the floor — and
+    # since 2026-07-19 the content-novelty gate also reads the formed
+    # continuation as already carrying this standing set: either way the
+    # re-run is an honest skip, never a second copy.
     again = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
-    if again["created"]:
-        # The continuation dream itself may anchor the next night once it
-        # stays unresolved — permitted; what matters is no crash and honest
-        # state. (continued-state dreams are not "unresolved", so default
-        # behavior is a quiet night; assert that when nothing formed.)
-        pass
-    else:
-        assert "quiet night" in (again["skipped_reason"] or "")
+    assert again["created"] is False
+    reason = again["skipped_reason"] or ""
+    assert "quiet night" in reason or "restful night" in reason
 
 
 # ---------------------------------------------------------------------------

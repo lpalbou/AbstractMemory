@@ -143,6 +143,19 @@ def build_handle(
     entry_id = attrs.get("entry_id")
     if isinstance(entry_id, str) and entry_id.strip():
         provenance["entry_id"] = entry_id.strip()
+    # M-A mint (improving-entity-capabilities G1, 2026-07-16): the re-entry
+    # KEY is handle CONTRACT, not assertion coincidence — consumers (MEMORIES
+    # lines, hint chips, search results) read provenance, never attributes.
+    # diary_type = what kind of entry stands (act-frame, same class as the
+    # c2572 display-block field); phase = the awake phase the record was
+    # lived in (r-rt-3 stamps it at formation; "your own time" labels render
+    # from it). Keys only — words stay in the book.
+    diary_type = attrs.get("diary_type")
+    if isinstance(diary_type, str) and diary_type.strip():
+        provenance["diary_type"] = diary_type.strip()
+    phase = attrs.get("phase")
+    if isinstance(phase, str) and phase.strip():
+        provenance["phase"] = phase.strip()
 
     spread = float(cand.spread)
     return MemoryHandle(

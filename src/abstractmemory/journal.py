@@ -286,7 +286,14 @@ class ReconstructionTrace:
         return _jsonify(asdict(self))
 
 
-VALENCE_KINDS = frozenset({"appraisal", "scar", "healing", "bond", "break"})
+# "revalued" landed 2026-07-19 (W4, wave-4 dispatch — the documented stub
+# in gradation.py made real): deliberate reappraisal that RESCALES a
+# target's accumulated channels at fold time (provenance["factor"] in
+# 0..1; entity-reflection/operator actors only, enforced at the facade).
+# It contributes nothing to the channels itself — a standing change, not
+# a second experience — and never touches scars/bonds (those resolve via
+# their own verbs).
+VALENCE_KINDS = frozenset({"appraisal", "scar", "healing", "bond", "break", "revalued"})
 
 
 @dataclass(frozen=True)
@@ -369,6 +376,18 @@ class ValenceEvent:
             raise ValueError("scar events are negative by definition (sign must be -1)")
         if kind == "bond" and self.sign != 1:
             raise ValueError("bond events are positive by definition (sign must be +1)")
+        if kind == "revalued":
+            raw = dict(self.provenance or {}).get("factor")
+            try:
+                factor = float(raw)
+            except (TypeError, ValueError):
+                factor = -1.0
+            if not (0.0 <= factor <= 1.0):
+                raise ValueError(
+                    "revalued events require provenance['factor'] in 0..1 — a "
+                    "factor above 1 would retroactively amplify past experience "
+                    f"(fabricated intensity); got {raw!r}"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         return _jsonify(asdict(self))

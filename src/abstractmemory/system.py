@@ -535,6 +535,26 @@ class MemorySystem(ValenceOps, AccessOps):
                 scope=scope, owner_id=owner_id)
         return out
 
+    def recent_records(
+        self, *, scopes: Sequence[Tuple[str, str]], since: str,
+        until: Optional[str] = None, kinds: Optional[Sequence[str]] = None,
+        limit: Optional[int] = None, as_of: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """The breadcrumb read — "what have I been working on recently?"
+        (Ephemeral's own ask, visit 1 of mission c2914): formed records in a
+        time window, newest first, closure/hidden folds applied, machine
+        rows excluded, re-entry keys riding. Pure read — no trace, no
+        deposits (asking where you left off must not reorder what you
+        left)."""
+        from .recent_records import RECENT_RECORDS_DEFAULT_LIMIT, recent_records as _recent
+
+        return _recent(
+            self._store, self._journal, scopes=scopes, since=since,
+            until=until, kinds=kinds,
+            limit=RECENT_RECORDS_DEFAULT_LIMIT if limit is None else int(limit),
+            as_of=as_of,
+        )
+
     # -- disposal: waking evidence decides (fork 690/360/470) ---------------
 
     def confirm_relation(

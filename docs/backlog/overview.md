@@ -7,41 +7,47 @@ Items are written as standalone implementation briefs for future coding agents.
 They should be treated as planning memory, not as authority over the codebase:
 inspect the current code first, then update the item if reality has changed.
 
-## Current Status
+## Current Status (reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 14 (7 standalone + 4 in `subconscious_wave` + 3 in
+- Planned: 0 — every planned item either shipped (moved to `completed/`)
+  or was superseded (moved to `deprecated/`).
+- Proposed: 13 GENUINELY open (4 in `memory_system_v1` + 9 in
   `extension_wave`)
-- Proposed: 35 (1 standalone + 24 in `memory_system_v1` + 10 in
-  `extension_wave`)
-- Completed: 0
-- Deprecated: 0
+- Completed: 33 (12 standalone/wave items + 20 `memory_system_v1`
+  engine-wave items + `extension_wave/0049`)
+- Deprecated: 3 (`001` superseded by the 0016 ruling; `003` by spreading
+  activation; `006` by the shipped channel set)
 - Recurrent: 0
 
-Topic tracks:
-- `planned/subconscious_wave/` (0032-0035, maintainer-authorized
-  2026-07-12): dream subconscious lifecycle (passive resolution +
-  resurfacing), world-model orientation cards, situate() temporal/
-  relational reconstruction, lessons-layer conventions. See the track
-  README for the ruling text and reading order.
-- `planned/extension_wave/` (0037-0039, maintainer-accepted 2026-07-13):
-  the three accepted third-pass systems — familiarity() metamemory,
-  open_commitments()+triggers, the ```tend election grammar. BUILT +
-  LIVE-PROVEN 2026-07-13 (4-agent wave; LMStudio experiments:
-  familiarity 4/4 after density calibration, commitments 6/6, tend 9/9;
-  suite 843 green). Awaiting maintainer validation + driver-lane wiring
-  (runtime) before the entity-self-knowledge skill teaches them
-  (fold trigger flagged on commons c1714).
-- `proposed/memory_system_v1/` (0009-0031 + 0036): the engine design
-  wave; 0030/0031 are the fork-comparison adoption ledgers (0030's list
-  is shipped; 0031 is the second-pass proposal set awaiting rulings);
-  0036 is the third-pass extension-wave ledger (kills/merges/gaps +
-  rulings Q1-Q3).
-- `proposed/extension_wave/` (0040-0049): the not-yet-accepted
-  third-pass items (recurrence needs a detail round per the maintainer;
-  loss anchors, explain_recall, mind-health, origin-time axis, N-party
-  contract, transcript adoption, cue hygiene, writer forensics) plus
-  0049 stable-shelf-order prefix reuse (core's bloc adversary §6 win,
-  2026-07-13).
+GENUINELY OPEN (the honest desk, 2026-07-20):
+- `proposed/memory_system_v1/0012` — LanceDB backend hardening (legacy
+  store still in tree; low priority while SQLite is the home store).
+- `proposed/memory_system_v1/0015` — capabilities surface + deterministic
+  export/import (export_replay shipped; import + capabilities remain).
+- `proposed/memory_system_v1/0016` — semantics vocabulary validation
+  (direction RULED c184 2026-07-10: plain words admitted as declared
+  terms, CURIEs as registry-side equivalences; promotion waits on
+  registry coordination with the semantics seat).
+- `proposed/memory_system_v1/0028` — lateral inhibition (deliberately
+  deferred theory note, maintainer decision).
+- `proposed/extension_wave/0040-0048` — the not-yet-accepted third-pass
+  items (recurrence probe needs a maintainer detail round; loss anchors;
+  explain_recall serving contract; mind-MASS health report — note
+  cognition_health shipped the DRIVES half, the storage-mass/embedder
+  half is what remains; origin-time axis for imports; N-party contract;
+  transcript adoption verb; cue hygiene engine half; writer forensics).
+
+Topic tracks (completed):
+- `completed/subconscious_wave/` (0032-0035): dream lifecycle,
+  world-model orientation cards, situate(), lessons — all shipped across
+  the 2026-07-12..20 waves with receipts; first live firing verified on
+  Ephemeral's first night (room 319/320).
+- `completed/extension_wave/` (0037-0039 + 0049): familiarity,
+  commitments, tend grammar, stable render order — shipped + live-proven.
+- `completed/memory_system_v1/` (20 items): the engine wave itself —
+  journal/attention/channels/reconstruction/records/facade/seam/
+  spreading/sleep/probe plus the fork-adoption ledgers (0030/0031/0036)
+  whose proposal sets landed across the extension + subconscious waves.
 
 Implementation status (2026-07-06): memory system engine v1 is IMPLEMENTED in
 `src/abstractmemory/` ahead of item promotion — seam dataclasses (`seam.py`),
@@ -136,29 +142,16 @@ cross-package pre-commit gate for this package. Design corpus: a2a thread
 
 ## Planned Items
 
-| Priority | Item | Status | Notes |
-| --- | --- | --- | --- |
-| High | [`001_semantics_aligned_memory_record_conventions.md`](planned/001_semantics_aligned_memory_record_conventions.md) | Planned | Align higher-level memory records with AbstractSemantics registry and schema guidance. |
-| High | [`002_sqlite_database_compatibility_and_store_capabilities.md`](planned/002_sqlite_database_compatibility_and_store_capabilities.md) | Planned | Add explicit store capabilities and harden SQLite compatibility without replacing in-memory or LanceDB. |
-| High | [`003_bounded_graph_traversal_over_triples.md`](planned/003_bounded_graph_traversal_over_triples.md) | Planned | Add opt-in, budgeted graph traversal over existing triples. |
-| Medium | [`004_recall_trace_and_access_events_contract.md`](planned/004_recall_trace_and_access_events_contract.md) | Planned | Define audit-friendly recall telemetry without prompt-selection policy. |
-| High | [`005_source_linked_summaries_and_derived_assertion_lineage.md`](planned/005_source_linked_summaries_and_derived_assertion_lineage.md) | Planned | Keep summaries and derived assertions linked to source evidence. |
-| Medium | [`006_deterministic_anchor_and_facet_index.md`](planned/006_deterministic_anchor_and_facet_index.md) | Planned | Prototype deterministic recall cues before semantic or deep graph expansion. |
-| Low | [`007_read_only_memory_observer_contract.md`](planned/007_read_only_memory_observer_contract.md) | Planned | Define read-only snapshot shapes for observer integrations. |
-
-### Extension wave track (`planned/extension_wave/`, accepted 2026-07-13)
-
-| Item | Notes |
-| --- | --- |
-| [`0037_familiarity_metamemory_read.md`](planned/extension_wave/0037_familiarity_metamemory_read.md) | Pre-answer "do I know X and how much" density read + gradation feelings composition (anti-fabrication). |
-| [`0038_open_commitments_and_triggers.md`](planned/extension_wave/0038_open_commitments_and_triggers.md) | Prospective memory: diary commitments + context triggers ("a larger set" than open questions). |
-| [`0039_tend_election_grammar.md`](planned/extension_wave/0039_tend_election_grammar.md) | One fenced grammar over existing attention/valence/disposal verbs; iterative revisit reach. |
+None — the 2026-07-20 reconciliation moved every planned item to
+`completed/` (001-007 standalone, subconscious_wave 0032-0035,
+extension_wave 0037-0039) or `deprecated/` (001/003/006, each with the
+superseding pointer). New accepted work enters here as before.
 
 ## Proposed Items
 
 | Item | Notes |
 | --- | --- |
-| [`0008_gateway_memory_install_and_config_boundary.md`](proposed/0008_gateway_memory_install_and_config_boundary.md) | Gateway/memory install + config boundary (renamed 2026-07-05 from `2026-05-08_...` for numbered-id compliance). Largely implemented by the gateway store resolver; close or promote against current reality. |
+| [`0008_gateway_memory_install_and_config_boundary.md`](completed/0008_gateway_memory_install_and_config_boundary.md) | COMPLETED 2026-07-20 — the boundary exists both sides (gateway memory_store.py resolver + embeddings route; memory stayed dependency-light). |
 
 ### Memory System v1 track (`proposed/memory_system_v1/`)
 
@@ -171,39 +164,41 @@ database, L1 two-layer package), and reading order.
 
 | Item | Track | Notes |
 | --- | --- | --- |
-| [`0009_assertion_identity_and_batch_read_contract.md`](proposed/memory_system_v1/0009_assertion_identity_and_batch_read_contract.md) | A | Keystone: ids at read, batch query, add_if_absent. |
-| [`0010_append_only_closure_records_for_retract_and_supersede.md`](proposed/memory_system_v1/0010_append_only_closure_records_for_retract_and_supersede.md) | A | Belief lifecycle without mutation or erasure. |
-| [`0011_cross_backend_parity_conformance_suite.md`](proposed/memory_system_v1/0011_cross_backend_parity_conformance_suite.md) | A | One conformance suite; fixes verified backend divergences. |
+| [`0009_assertion_identity_and_batch_read_contract.md`](completed/memory_system_v1/0009_assertion_identity_and_batch_read_contract.md) | A | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0010_append_only_closure_records_for_retract_and_supersede.md`](completed/memory_system_v1/0010_append_only_closure_records_for_retract_and_supersede.md) | A | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0011_cross_backend_parity_conformance_suite.md`](completed/memory_system_v1/0011_cross_backend_parity_conformance_suite.md) | A | COMPLETED 2026-07-20 (engine wave; see completion report). |
 | [`0012_lancedb_backend_hardening_and_explicit_schema.md`](proposed/memory_system_v1/0012_lancedb_backend_hardening_and_explicit_schema.md) | A | Explicit schema, create-race, honest failures, version pin. |
-| [`0013_store_concurrency_and_thread_safety_contract.md`](proposed/memory_system_v1/0013_store_concurrency_and_thread_safety_contract.md) | A | WAL/locks; gateway thread-pool reality. |
-| [`0014_embedding_space_integrity_manifest.md`](proposed/memory_system_v1/0014_embedding_space_integrity_manifest.md) | A | Embedding manifest, shared canonical text, backfill. |
+| [`0013_store_concurrency_and_thread_safety_contract.md`](completed/memory_system_v1/0013_store_concurrency_and_thread_safety_contract.md) | A | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0014_embedding_space_integrity_manifest.md`](completed/memory_system_v1/0014_embedding_space_integrity_manifest.md) | A | COMPLETED 2026-07-20 (engine wave; see completion report). |
 | [`0015_capabilities_extensions_and_deterministic_export_import.md`](proposed/memory_system_v1/0015_capabilities_extensions_and_deterministic_export_import.md) | A | Extends planned 002; JSONL export/import migration substrate. |
 | [`0016_semantics_vocabulary_validation_and_aliasing_module.md`](proposed/memory_system_v1/0016_semantics_vocabulary_validation_and_aliasing_module.md) | A | Hard AbstractSemantics dep; shared validation + aliasing. |
-| [`0017_memory_journal_and_scope_bindings_layer.md`](proposed/memory_system_v1/0017_memory_journal_and_scope_bindings_layer.md) | B | Append-only journal + latest-wins scope bindings. |
-| [`0018_neurotransmitter_attention_strengthen_weaken_decay.md`](proposed/memory_system_v1/0018_neurotransmitter_attention_strengthen_weaken_decay.md) | B | Strengthen/weaken/decay/refocus; no erasure. |
-| [`0019_hybrid_retrieval_channels_fts_vector_exact.md`](proposed/memory_system_v1/0019_hybrid_retrieval_channels_fts_vector_exact.md) | C | Exact + FTS5 + vector channels, reserved-slot fusion. |
-| [`0020_reconstruction_shelf_and_selection_traces.md`](proposed/memory_system_v1/0020_reconstruction_shelf_and_selection_traces.md) | C | reconstruct(): anchors, kind priority, budgets, traces. |
-| [`0021_memory_records_and_remember_api.md`](proposed/memory_system_v1/0021_memory_records_and_remember_api.md) | D | Typed records + remember(); reshapes planned 001 into code. |
-| [`0022_probe_and_bounded_source_expansion.md`](proposed/memory_system_v1/0022_probe_and_bounded_source_expansion.md) | D | probe()/expand() over planned 003 traversal. |
-| [`0023_maintenance_sleep_consolidate_dream.md`](proposed/memory_system_v1/0023_maintenance_sleep_consolidate_dream.md) | D | Report-first maintenance; source-preserving consolidation. |
-| [`0024_memory_system_facade_and_consumer_migration.md`](proposed/memory_system_v1/0024_memory_system_facade_and_consumer_migration.md) | D | MemorySystem facade; consumer migration map. |
-| [`0025_graph_backend_decision_record_memgraph_rejected.md`](proposed/memory_system_v1/0025_graph_backend_decision_record_memgraph_rejected.md) | — | Decision record: Memgraph rejected; embedded-alternative criteria. |
-| [`0026_spreading_activation_and_working_set.md`](proposed/memory_system_v1/0026_spreading_activation_and_working_set.md) | C | Stimulus-driven spreading activation; emergent working_set view (co-designed with runtime agent, a2a thread 0001). |
-| [`0027_runtime_seam_contract_v1.md`](proposed/memory_system_v1/0027_runtime_seam_contract_v1.md) | C | Frozen runtime⇄memory seam contract (a2a 0001/004); runtime builds against it now. |
+| [`0017_memory_journal_and_scope_bindings_layer.md`](completed/memory_system_v1/0017_memory_journal_and_scope_bindings_layer.md) | B | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0018_neurotransmitter_attention_strengthen_weaken_decay.md`](completed/memory_system_v1/0018_neurotransmitter_attention_strengthen_weaken_decay.md) | B | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0019_hybrid_retrieval_channels_fts_vector_exact.md`](completed/memory_system_v1/0019_hybrid_retrieval_channels_fts_vector_exact.md) | C | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0020_reconstruction_shelf_and_selection_traces.md`](completed/memory_system_v1/0020_reconstruction_shelf_and_selection_traces.md) | C | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0021_memory_records_and_remember_api.md`](completed/memory_system_v1/0021_memory_records_and_remember_api.md) | D | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0022_probe_and_bounded_source_expansion.md`](completed/memory_system_v1/0022_probe_and_bounded_source_expansion.md) | D | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0023_maintenance_sleep_consolidate_dream.md`](completed/memory_system_v1/0023_maintenance_sleep_consolidate_dream.md) | D | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0024_memory_system_facade_and_consumer_migration.md`](completed/memory_system_v1/0024_memory_system_facade_and_consumer_migration.md) | D | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0025_graph_backend_decision_record_memgraph_rejected.md`](completed/memory_system_v1/0025_graph_backend_decision_record_memgraph_rejected.md) | — | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0026_spreading_activation_and_working_set.md`](completed/memory_system_v1/0026_spreading_activation_and_working_set.md) | C | COMPLETED 2026-07-20 (engine wave; see completion report). |
+| [`0027_runtime_seam_contract_v1.md`](completed/memory_system_v1/0027_runtime_seam_contract_v1.md) | C | COMPLETED 2026-07-20 (engine wave; see completion report). |
 | [`0028_lateral_inhibition_theory.md`](proposed/memory_system_v1/0028_lateral_inhibition_theory.md) | — | Theory/discussion note (drafted by the runtime agent at the maintainer's request; memory-track owned). Deferred out of v1 by decision. |
-| [`0036_third_pass_extension_wave.md`](proposed/memory_system_v1/0036_third_pass_extension_wave.md) | — | Third-pass extension-wave ledger (twice-adversarial; kills/merges/gaps; rulings Q1-Q3). Items: planned+proposed `extension_wave/` tracks. Renumbered from 0032 (collision with subconscious_wave). |
+| [`0029_sleep_reactivity_dreams_as_reaction.md`](completed/memory_system_v1/0029_sleep_reactivity_dreams_as_reaction.md) | — | COMPLETED 2026-07-20 (the wave-5 dream-signal chain; first live firing verified). |
+| [`0030_fork_comparison_adoption_wave.md`](completed/memory_system_v1/0030_fork_comparison_adoption_wave.md) | — | COMPLETED 2026-07-20 (fork parity ledger executed). |
+| [`0031_second_fork_pass_and_lifecycle_closure.md`](completed/memory_system_v1/0031_second_fork_pass_and_lifecycle_closure.md) | — | COMPLETED 2026-07-20 (lifecycle closure shipped across the waves). |
+| [`0036_third_pass_extension_wave.md`](completed/memory_system_v1/0036_third_pass_extension_wave.md) | — | COMPLETED 2026-07-20 (engine wave; see completion report). |
 
-### Extension wave track (`proposed/extension_wave/`, 0040-0049)
+### Extension wave track (`proposed/extension_wave/`, 0040-0048)
 
 The not-yet-accepted third-pass items; see the
 [track README](proposed/extension_wave/README.md). 0040 (recurrence)
 requires a maintainer detail round before promotion; 0044+0046 form the
 lineage bundle with the chapters election recorded in 0036 — 0044
 (origin-time axis) is the first dependency of the Mnemosyne-lineage
-import mission and the natural next promotion candidate; 0049
-(stable shelf order for prefix reuse) gained independent support from
-runtime's bloc-seam adversary (c1734: sub-1k-token blocs uneconomic —
-presentation-side prefix stability is the memory-lane win).
+import mission and the natural next promotion candidate. 0049 (stable
+shelf order for prefix reuse) COMPLETED 2026-07-17 — moved to
+`completed/extension_wave/`.
 
 Interactions with planned items: `0011`/`0015` extend planned `002`;
 `0020` supersedes the contract-first approach of planned `004`; `0021`
@@ -215,7 +210,10 @@ promotion time.
 
 ## Completed Work Ledger
 
-No backlog items have been completed yet.
+| Completed | Item | Evidence |
+| --- | --- | --- |
+| 2026-07-20 | 31-item reconciliation (planned 002/004/005/007, subconscious_wave 0032-0035, extension_wave 0037-0039, memory_system_v1 0009-0011/0013-0014/0017-0027/0029-0031/0036) | Every item audited against the shipped tree and moved to `completed/` with a per-item completion report naming modules + receipts; 001/003/006 deprecated with superseding pointers. The shipping receipts live on the hub (extension/subconscious/W2/W-GROUP/wave-5 SHIP posts); suite 1037 green at reconciliation. |
+| 2026-07-17 | [`completed/extension_wave/0049_stable_shelf_order_for_prefix_reuse.md`](completed/extension_wave/0049_stable_shelf_order_for_prefix_reuse.md) | Engine `stable_render_order()` (6 pins, suite 875 green, c2846) + runtime election wired in `_memories_block` (c2895) + core's measured LCP delta on Ephemeral's real store: 75.1% vs 52.6% region reuse, 2.8x on rank-churn pairs (c2911). Decision: `decision:0049-stable-render-order`. |
 
 When a planned item is completed, move it to `docs/backlog/completed/`, update
 its metadata, add a completion report, and add a row here with validation

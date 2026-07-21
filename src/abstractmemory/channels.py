@@ -28,7 +28,12 @@ from .store import TripleQuery
 # sort). Encoded once. participants appended LAST deliberately: existing cue
 # orders stay byte-stable, and shared-context is a co-presence signal, not a
 # content match.
-CHANNEL_ORDER: Tuple[str, ...] = ("exact", "keyword", "vector", "participants", "concept")
+CHANNEL_ORDER: Tuple[str, ...] = (
+    "exact", "keyword", "vector", "participants", "concept",
+    # Orientation (world-model mention => instant card, 2026-07-18): a
+    # named understanding admits its CURRENT card at direct-hit relevance.
+    "orientation",
+)
 
 # Tokenization rules live in text_tokens.py (ONE home — the 2026-07-10
 # review unified four drifting implementations); these aliases keep this

@@ -138,6 +138,51 @@ def test_probe_concept_channel_reaches_records_the_query_never_named(system) -> 
     assert "concept" in lesson.relevance or "keyword" in lesson.relevance
 
 
+def test_concept_only_admissions_never_outrank_direct_hits(system) -> None:
+    """The two-tier fusion rule (2026-07-17, live-reproduced on Ephemeral's
+    home): concept scores are rarity-weighted and clamped at 1.0, so under
+    a flat fused sum a concept-only ASSOCIATION outranked the direct hits
+    that seeded it (top-8 all concept-only on a core-interest cue).
+    Association admits; direct evidence ranks first — every hit the cue
+    itself matched (vector/keyword/exact/participants) orders before every
+    concept-only admission; concept corroboration ON a direct hit keeps
+    its fused weight inside the direct tier."""
+    system.remember_many([
+        # Direct hits: share cue tokens, but weakly (low keyword fractions).
+        MemoryRecordInput(
+            kind="episode", title="Weak direct one",
+            digest="The heliopause crossing came up in passing yesterday.",
+            keywords=("heliopause",)),
+        MemoryRecordInput(
+            kind="episode", title="Weak direct two",
+            digest="Another passing heliopause mention beside other things.",
+            keywords=("heliopause",)),
+        # Association bait: records sharing a rare concept with the direct
+        # hits ('crossing'/'mention' overlap) but ZERO cue tokens — they
+        # can only enter through the concept channel, clamped at 1.0.
+        MemoryRecordInput(
+            kind="episode", title="Association one",
+            digest="A crossing mention in an unrelated thread of days."),
+        MemoryRecordInput(
+            kind="episode", title="Association two",
+            digest="That crossing mention returned in another shape entirely."),
+    ], scope=SCOPE, owner_id=OWNER, idempotency_key="fusion-tier-seed")
+
+    r = system.probe(
+        Stimulus(cue_text="heliopause probe telemetry archive"), scopes=SCOPES,
+        reason="two-tier ordering pin", effort="standard", journal=False)
+    assert r.hits, "fixture must produce hits"
+    tiers = [0 if set(h.relevance) - {"concept"} else 1 for h in r.hits]
+    assert tiers == sorted(tiers), (
+        "a concept-only admission outranked a direct hit: "
+        + "; ".join(f"{h.title}={sorted(h.relevance)}" for h in r.hits))
+    # The associative reach itself is intact: concept-only hits still admit.
+    direct_count = sum(1 for t in tiers if t == 0)
+    assert direct_count >= 2 and len(r.hits) > direct_count, (
+        "fixture lost its two-tier shape (need both direct and concept-only hits): "
+        + "; ".join(f"{h.title}={sorted(h.relevance)}" for h in r.hits))
+
+
 def test_expand_walks_both_directions_and_records_parent(system) -> None:
     ids = system.remember_many([
         MemoryRecordInput(kind="episode", title="Source episode",

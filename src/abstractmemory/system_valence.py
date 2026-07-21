@@ -140,6 +140,43 @@ class ValenceOps:
         )])
         return broke.event_id
 
+    def revalue(
+        self, target_id: str, *, factor: float, reason: str,
+        scope: str, owner_id: str, event_id: Optional[str] = None,
+        actor: str = "entity-reflection",
+    ) -> str:
+        """Deliberate reappraisal (W4, the revaluation marker landed):
+        rescale a target's accumulated channels by `factor` (0..1) from
+        this point in the walk — "the past weighs less now". NEVER
+        automatic, never decay: entity-reflection/operator actors only
+        (the amplitude-authority channel discipline — a trigger rewriting
+        history would be fabricated forgetting). Scars/bonds are NOT
+        touched (they resolve via heal_scar/break_bond); later appraisals
+        land at full weight. Append-only; the event carries the factor in
+        provenance and the mandatory reason."""
+        tid = str(target_id or "").strip()
+        if not tid:
+            raise ValueError("revalue requires a target_id")
+        f = float(factor)
+        if not (0.0 <= f <= 1.0):
+            raise ValueError(
+                f"revalue factor must be in 0..1 (got {factor!r}) — a factor "
+                "above 1 would retroactively amplify past experience")
+        config = self._valence_config()
+        if str(actor or "").strip().lower() not in config.privileged_actors:
+            raise ValueError(
+                f"revalue requires a privileged actor ({sorted(config.privileged_actors)}); "
+                f"got {actor!r} — deliberate reappraisal is a reflective act, "
+                "never a trigger's")
+        [row] = self._journal.append_valence([ValenceEvent(  # type: ignore[attr-defined]
+            target_id=tid, sign=1, magnitude=1.0, kind="revalued",
+            scope=scope, owner_id=owner_id, reason=reason, actor=actor,
+            observed_at=self._clock(),  # type: ignore[attr-defined]
+            provenance={"factor": f},
+            event_id=str(event_id or "").strip(),
+        )])
+        return row.event_id
+
     def gradation(
         self, target_ids: Optional[Sequence[str]] = None, *,
         scope: str, owner_id: str, at_seq: Optional[int] = None,

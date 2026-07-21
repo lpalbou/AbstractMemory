@@ -144,6 +144,14 @@ class SQLiteTripleStore:
         cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self._table}_spo ON {self._table}(subject, predicate, object)")
         cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self._table}_scope_owner ON {self._table}(scope, owner_id)")
         cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self._table}_observed ON {self._table}(observed_at)")
+        # INCOMING-EDGE WALKS (diary---verbatims item E, 2026-07-19): the
+        # trail reads (read_memory connections, DIARY_READ born-from,
+        # gateway's door trail) query by OBJECT — the spo index cannot
+        # serve an object-only filter, so every walk was a full table
+        # scan (measured 4.6ms at 12k rows on the live home; O(life) —
+        # a multi-year store pays seconds). One covering index; created
+        # on open, so existing homes gain it at their next process start.
+        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self._table}_object ON {self._table}(object, predicate)")
         # IN-PLACE UPGRADE (a2a 0003: the one-file home stands): pre-vector
         # homes gain the embedding column on open; their existing rows stay
         # NULL (vectorless) — the vector channel labels that at recall.

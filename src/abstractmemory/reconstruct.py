@@ -257,6 +257,29 @@ def run_reconstruction(
             channels_run.append("participants")
             _apply_channel_results(universe, participant_results, {}, excluded_ids)
 
+        # ORIENTATION ADMISSION (world-model mention => instant card,
+        # 2026-07-18 maintainer directive): a mentioned target's CURRENT
+        # card admits at direct-hit relevance — orientation arrives WITH
+        # the mention, before any similarity race. ON by default; homes
+        # without cards are byte-unchanged (nothing to admit), which is
+        # how the golden fixture stays byte-identical.
+        if config.orientation_admission:
+            from .world_model import mention_orientation_cards
+
+            oriented = mention_orientation_cards(
+                store, stimulus, scope_pairs, excluded_ids=excluded_ids,
+                scan_limit=int(config.orientation_scan_limit),
+                max_cards=int(config.orientation_max_cards))
+            if oriented:
+                channels_run.append("orientation")
+            orientation_results = [
+                ChannelResult(record_id=adm["record_id"], channel="orientation",
+                              score=1.0, detail=adm["detail"])
+                for adm in oriented
+            ]
+            found_o = {adm["record_id"]: adm["assertion"] for adm in oriented}
+            _apply_channel_results(universe, orientation_results, found_o, excluded_ids)
+
         # CONCEPT ANCHORING (fork memory_anchor.rs port, 2026-07-12):
         # edge-free associative expansion — records sharing a DISCRIMINATIVE
         # concept with a channel-matched seed surface as candidates even

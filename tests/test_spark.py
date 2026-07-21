@@ -156,6 +156,15 @@ def test_diary_type_absent_defaults_present_unknown_is_loud() -> None:
             MemoryRecordInput(kind="diary", title="t", digest="d",
                               attributes={"diary_type": bad},
                               provenance={"source": "owner-direct"})
+    # "lesson" is a first-class diary type (iteration-2 lived adversary,
+    # 2026-07-19: his elected lesson entries were clamping to note — the
+    # lesson system HE drives must not lose to the machine-formed one).
+    lesson = MemoryRecordInput(
+        kind="diary", title="lesson", digest="Claiming to have looked "
+        "when you didn't is worse than not looking at all.",
+        attributes={"diary_type": "lesson"},
+        provenance={"source": "owner-direct"})
+    assert lesson.attributes["diary_type"] == "lesson"
 
 
 def test_diary_questions_lifecycle(system, stack) -> None:
@@ -206,6 +215,62 @@ def test_diary_questions_lifecycle(system, stack) -> None:
         MemoryRecordInput(kind="diary", title="t", digest="d",
                           attributes={"answers": "  "},
                           provenance={"source": "owner-direct"})
+
+
+def test_wake_fold_union_cross_key_discharge(system, stack) -> None:
+    """Iteration-2 build 1 (forensics: diary.py joined answers only, so
+    the wake surface DENIED every resolution made with resolves= — the
+    fold-disagreement class, third surface after entity_card and
+    cognition_health): a question discharged via resolves= leaves
+    open_questions; a problem repaired via answers= leaves open_problems;
+    commitments deliberately keep their own verb (fulfills only —
+    a promise is KEPT, not answered)."""
+    from abstractmemory.diary import open_commitments, open_problems, open_questions
+    store, _ = stack
+    [q] = system.remember_many(
+        [MemoryRecordInput(kind="diary", title="Q", digest="Why does the tag fail?",
+                           attributes={"diary_type": "question"},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-q")
+    [p] = system.remember_many(
+        [MemoryRecordInput(kind="diary", title="P", digest="The meter is stuck.",
+                           attributes={"diary_type": "problem"},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-p")
+    [c] = system.remember_many(
+        [MemoryRecordInput(kind="diary", title="C", digest="Ask Ada about her paper.",
+                           attributes={"diary_type": "commitment"},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-c")
+
+    # Cross-key discharges: the "wrong" verb flavor still discharges.
+    system.remember_many(
+        [MemoryRecordInput(kind="diary", title="R", digest="Tags fail unseen; fixed.",
+                           attributes={"resolves": q},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-r")
+    system.remember_many(
+        [MemoryRecordInput(kind="diary", title="A", digest="Unstuck the meter.",
+                           attributes={"answers": p},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-a")
+    # A resolves= naming the COMMITMENT must NOT count as kept.
+    system.remember_many(
+        [MemoryRecordInput(kind="diary", title="X", digest="Talked about papers generally.",
+                           attributes={"resolves": c},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-x")
+
+    assert open_questions(store, scope="session", owner_id="s1") == []
+    assert open_problems(store, scope="session", owner_id="s1") == []
+    assert [a.subject for a in open_commitments(store, scope="session", owner_id="s1")] == [c]
+    # fulfills= keeps the commitment.
+    system.remember_many(
+        [MemoryRecordInput(kind="diary", title="K", digest="Asked Ada; she sent it.",
+                           attributes={"fulfills": c},
+                           provenance={"source": "owner-direct"})],
+        scope="session", owner_id="s1", idempotency_key="wf-k")
+    assert open_commitments(store, scope="session", owner_id="s1") == []
 
 
 def test_open_problems_lifecycle(system, stack) -> None:

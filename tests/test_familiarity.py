@@ -246,6 +246,48 @@ def test_low_cosine_vector_matches_do_not_count_toward_density() -> None:
     assert lowered["strength"] == "weak"
 
 
+class _MidBandEmbedder:
+    """Stub placing every GARDEN-flavored text at a controlled ~0.50 cosine
+    to the cue axis [1,0,0] — the NONSENSE-ADJACENT band measured live on
+    Ephemeral's production home (2026-07-17: gibberish cues admitted rows
+    at 0.475-0.542 in the qwen3-0.6b space and read STRONG at the old
+    0.45 bar)."""
+
+    def embed_texts(self, texts):
+        out = []
+        for t in texts:
+            if "garden" in str(t).lower():
+                out.append([0.50, 0.8660254, 0.0])   # unit length; cos=0.50 to cue
+            else:
+                out.append([1.0, 0.0, 0.0])
+        return out
+
+
+def test_mid_band_cosines_do_not_count_at_the_recalibrated_bar() -> None:
+    """The 2026-07-17 recalibration pinned: the 0.45→0.55 move exists
+    because the nonsense band of a real embedder space sits at ~0.48-0.54
+    on a lived store — a 0.50-cosine admission must NOT count at the
+    default bar (fabricated familiarity), while the old 0.45 bar remains
+    reachable as an explicit parameter (calibration, never a hidden
+    gate)."""
+    cue_vec = [1.0, 0.0, 0.0]
+    store = InMemoryTripleStore(embedder=_MidBandEmbedder())
+    system = MemorySystem(store=store, journal=InMemoryJournal())
+    system.remember_many(
+        [MemoryRecordInput(
+            kind="episode", title="Garden shed inventory",
+            digest="Counted the garden shed tools and ordered replacement gloves.")],
+        scope=LIFE, owner_id=OWNER, idempotency_key="vecmid")
+
+    stim = Stimulus(cue_text="zorblat quixotic fenwick turbine", embedding=cue_vec)
+    r = familiarity_fn(store, stimulus=stim, scopes=[(LIFE, OWNER)])
+    assert r["strength"] == "none", r
+    assert any("weaker echo" in w for w in r["warnings"])
+    old_bar = familiarity_fn(store, stimulus=stim, scopes=[(LIFE, OWNER)],
+                             vector_min=0.45)
+    assert old_bar["strength"] == "weak"
+
+
 def test_single_incidental_keyword_counts_only_without_vector_rejection(system) -> None:
     """Corroboration-or-exclusivity: one matched token is honest
     familiarity on a VECTORLESS home (keywords are the only reach — the

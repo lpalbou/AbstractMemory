@@ -214,10 +214,20 @@ def test_diary_display_is_redacted(system) -> None:
     diary_bindings = [i for i in items if i["payload"]["record_id"] == ids["diary"]]
     assert diary_bindings
     for i in diary_bindings:
-        # Topology = existence + IDENTITY + connections (observer delta):
-        # the opaque graph_id joins the diary lane; content stays sealed.
-        assert i["display"] == {"redacted": "diary", "graph_id": ids["diary"]}
-        assert "Quiet morning" not in str(i["display"])
+        # SEMANTIC asserts, never exact-dict equality (the graph_id-delta
+        # lesson): the redaction marker + node identity must be present,
+        # CONTENT fields must be absent. Act-frame metadata (diary_type —
+        # c2562 ask 3; entry_id — the G1 re-entry key, stream twin of the
+        # M-A mint) is allowed: it names WHAT KIND of entry stands and
+        # WHICH entry, never its words.
+        display = i["display"]
+        assert display["redacted"] == "diary"
+        assert display["graph_id"] == ids["diary"]
+        for content_field in ("title", "digest", "kind", "token_estimate"):
+            assert content_field not in display
+        assert display.get("diary_type") == "note"  # the act's type is act-frame
+        assert display.get("entry_id") == "entry-7"  # the re-entry KEY is act-frame
+        assert "Quiet morning" not in str(display)
 
 
 def test_formed_pair_members_carry_graph_id(system) -> None:

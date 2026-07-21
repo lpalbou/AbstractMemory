@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import warnings as _warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from .journal_common import normalize_iso_ts
 from .store import TripleQuery
@@ -133,14 +133,22 @@ def open_ideas(
 
 
 def _open_unresolved(
-    store: Any, *, scope: str, owner_id: str, diary_type: str, ref_attr: str,
+    store: Any, *, scope: str, owner_id: str, diary_type: str,
+    ref_attrs: Sequence[str],
     limit: int, journal: Any,
 ) -> List["Any"]:
     """Shared fold for the unresolved wake-reason reads (questions/problems):
     diary entries of `diary_type` that no other diary entry references via
-    `ref_attr` (the entry's graph record id OR its book entry_id — both
-    namespaces are honest references). Oldest first (the longest-standing
-    one leads), bounded by `limit` after folding.
+    any of `ref_attrs` (the entry's graph record id OR its book entry_id —
+    both namespaces are honest references). Oldest first (the longest-
+    standing one leads), bounded by `limit` after folding.
+
+    REF-ATTR UNION (iteration-2 build 1, 2026-07-19): questions and
+    problems accept BOTH answers= and resolves= — the reference ID does
+    the targeting, the attribute key is only the verb's flavor (the same
+    fold entity_card and cognition_health already apply; this surface
+    was the last holdout, and it is the one that ANIMATES his day — the
+    wake cue was denying resolutions the card showed settled).
 
     FOLDING (honest v1): when a `journal` is supplied, closure and hidden-
     binding folds apply — a retracted or hidden entry is not "open".
@@ -159,18 +167,27 @@ def _open_unresolved(
         _states, hidden, _active = binding_states(store, journal, [(scope, owner_id)], as_of)
         excluded = closure_exclusions(journal, as_of) | hidden
 
+    # BELIEVED rows only, both sides of the fold (drive_pressure adversary
+    # finding 2, 2026-07-20 — the same ALL-vs-BELIEVED split
+    # cognition_health's finding 5 fixed): a RETRACTED answering entry
+    # must not keep discharging the question it once answered — the card
+    # and health bar fold believed rows, and the wake surface (this fold)
+    # must agree or the lifecycle gate under-counts pressure the entity's
+    # own card shows standing. Subject-level exclusion joins for the same
+    # reason (closures name subjects too).
+    believed = [a for a in rows
+                if a.assertion_id not in excluded and a.subject not in excluded]
     resolved_refs: set = set()
-    for a in rows:
-        ref = a.attributes.get(ref_attr)
-        if isinstance(ref, str) and ref.strip():
-            resolved_refs.add(ref.strip())
+    for a in believed:
+        for ref_attr in ref_attrs:
+            ref = a.attributes.get(ref_attr)
+            if isinstance(ref, str) and ref.strip():
+                resolved_refs.add(ref.strip())
 
     out = []
-    for a in rows:
+    for a in believed:
         attrs = a.attributes
         if attrs.get("diary_type") != diary_type:
-            continue
-        if a.assertion_id in excluded:
             continue
         refs = {a.subject, str(attrs.get("entry_id") or "").strip()}
         refs.discard("")
@@ -190,7 +207,7 @@ def open_questions(
     stay retrievable ("I wondered, then I learned"). Fold semantics:
     _open_unresolved."""
     return _open_unresolved(store, scope=scope, owner_id=owner_id,
-                            diary_type="question", ref_attr="answers",
+                            diary_type="question", ref_attrs=("answers", "resolves"),
                             limit=limit, journal=journal)
 
 
@@ -205,7 +222,7 @@ def open_problems(
     Resolved problems stay retrievable ("I hit it, then I fixed it").
     Fold semantics: _open_unresolved."""
     return _open_unresolved(store, scope=scope, owner_id=owner_id,
-                            diary_type="problem", ref_attr="resolves",
+                            diary_type="problem", ref_attrs=("answers", "resolves"),
                             limit=limit, journal=journal)
 
 
@@ -220,8 +237,11 @@ def open_commitments(
     retrievable ("I promised, then I kept my word"). Like the question/
     problem reads, this is a wake-reason surface: "do I have open
     commitments?" is a reason to wake. Fold semantics: _open_unresolved."""
+    # Commitments keep their own verb: a promise is KEPT (fulfills=), not
+    # answered — the answers/resolves union is deliberately not extended
+    # here (kept ≠ discharged-by-someone-else's-flavor).
     return _open_unresolved(store, scope=scope, owner_id=owner_id,
-                            diary_type="commitment", ref_attr="fulfills",
+                            diary_type="commitment", ref_attrs=("fulfills",),
                             limit=limit, journal=journal)
 
 

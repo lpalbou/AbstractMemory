@@ -155,11 +155,31 @@ FAMILIARITY_MAX_FEELINGS = 8
 # counts an admission toward DENSITY only above absolute confidence bars;
 # probe()'s ranking behavior is untouched (these floors exist only in the
 # counting fold). Exact anchors and door-stamped participants always count
-# (identity-grade signals). Both bars are parameters; the defaults are
-# calibrated against the measured gibberish baseline (~0.31) vs on-topic
-# matches (>0.55) for qwen3-class embedders.
-FAMILIARITY_VECTOR_MIN = 0.45
+# (identity-grade signals). Both bars are parameters.
+#
+# RECALIBRATED 2026-07-17 (read-only A/B on Ephemeral's production home,
+# qwen3-0.6b pinned space, 502 records): the 0.45 bar had gone FALSE-
+# POSITIVE — nonsense cues ("zorblat quixotic fenwick marmalade turbine")
+# admitted 10-19 rows at cosine 0.475-0.542 and read STRONG, and coherent
+# but ALIEN topics ("recipe for fermented plum wine") read strong at
+# 0.45-0.49 — fabricated confidence is the exact harm this reflex exists
+# to prevent. Measured bands on the live store: nonsense/alien 0.41-0.54,
+# real paraphrase 0.59-0.77, on-topic 0.58+. 0.55 separates cleanly; the
+# earlier ~0.31 gibberish baseline (2026-07-13, different store content)
+# does not transfer — the noise floor is a property of (embedder space ×
+# store content), so any embedder migration through the reembed gate
+# should re-run scripts-class A/B before trusting the bar. A per-cue
+# RELATIVE bar remains rejected (it recreates the ranking-relative
+# failure: every cue has a top).
+FAMILIARITY_VECTOR_MIN = 0.55
 FAMILIARITY_MIN_KEYWORD_TOKENS = 2
+
+# ASSOCIATIVE channels admit records the cue never matched directly — they
+# expand reach, and by the two-tier rule (probe ordering) they never
+# outrank direct hits. A declared set (not a literal in the sort) so a
+# future associative channel joins the tier by declaration, not by
+# re-deriving the ordering.
+_ASSOCIATIVE_CHANNELS = frozenset({"concept"})
 
 
 @dataclass(frozen=True)
@@ -290,8 +310,13 @@ def _channel_pass(
     loop. Pure read; relevance only (no activation, no seats, no STM).
     Extracted verbatim from probe(); keyword_discovery (0019 FTS5) is the
     one additive knob since — probe passes its budget's default-ON flag,
-    familiarity deliberately keeps it OFF (its density bars were live-
-    calibrated on the scan universe; widening it needs an A/B re-run)."""
+    familiarity deliberately keeps it OFF. A/B RE-RUN 2026-07-17 (Ephemeral
+    production copy, 8 cues × 2 efforts): discovery flipped ZERO strength
+    readings (the vector channel already reaches the whole store, so
+    density never depended on the lexical window) while inflating counts
+    up to 10x (20→134 distinct on a topical cue) — which DEGRADES the
+    ladder: everything nonzero saturates past strong and "weak" dies.
+    Discovery serves RANKED reaches; it harms DENSITY reads. OFF stands."""
     warnings: List[str] = []
     # RecallBudget carries the per-channel fetch bound the channel runners
     # read (max_candidates); the rest of the shelf budget is irrelevant to
@@ -457,10 +482,25 @@ def probe(
     def fused(rid: str) -> float:
         return sum(relevance.get(rid, {}).values())
 
+    def direct(rid: str) -> bool:
+        return any(ch not in _ASSOCIATIVE_CHANNELS for ch in relevance.get(rid, {}))
+
+    # TWO-TIER ordering (fusion slice, 2026-07-17 — live-reproduced on the
+    # production home): concept scores are rarity-weighted and CLAMPED at
+    # 1.0, so under a flat fused sum a concept-only association outranked
+    # direct evidence (measured: on a core-interest cue the top-8 hits were
+    # ALL concept-only while the direct vector/keyword hits ranked below —
+    # the association buried the thing it was associated FROM). The house
+    # rule from reconstruction ordering applies here too: ASSOCIATION
+    # ADMITS, DIRECT EVIDENCE RANKS FIRST — records the cue itself matched
+    # (any non-associative channel) order before concept-only admissions;
+    # within a tier the fused sum still ranks, so concept CORROBORATION on
+    # a direct hit keeps its weight (stable sorts, lowest priority first).
     ordered = sorted(universe.keys())
     ordered.sort(key=lambda rid: (universe[rid].observed_at or ""), reverse=True)
     ordered.sort(key=lambda rid: config.rank_of(_kind_of(universe[rid], config)))
     ordered.sort(key=fused, reverse=True)
+    ordered.sort(key=lambda rid: 0 if direct(rid) else 1)
 
     hits: List[ProbeHit] = []
     dropped: List[Dict[str, Any]] = []
@@ -661,62 +701,20 @@ def _stimulus_feelings(
     warnings: List[str],
 ) -> List[Dict[str, Any]]:
     """Compact standing-feelings summary for STIMULUS-RELEVANT gradation
-    targets (the maintainer's "complementary, wouldn't cost more" note):
-    fold the searched pairs' valence streams once (the existing gradation
-    fold — no new machinery) and keep targets that are either named
-    participants or whose NAME part (after the "namespace:" prefix)
-    shares a concept term with the cue text.
+    targets — since W4 (wave-4 dispatch, 2026-07-19) this DELEGATES to the
+    exported one-truth fold (`feelings_reads.stimulus_feelings`, the lens
+    the ruling asked for); familiarity keeps its historical compact shape
+    ({target, net, standing}, no floor — a density read reports every
+    matched feeling, the per-turn render is where the floor lives).
+    Presentation info ONLY — never consulted by the density count."""
+    from .feelings_reads import stimulus_feelings as _lens
 
-    Presentation info ONLY — never consulted by the density count (valence
-    never gates, ruled). Targets that resolve to STORED RECORDS are skipped
-    silently: a record id in the output would break the no-content property
-    (record-targeted feelings belong to record-rendering surfaces, not to a
-    density reflex). No journal -> empty, labeled."""
-    if journal is None:
-        warnings.append(
-            "#FALLBACK: feelings skipped (no journal available; gradation "
-            "reads the valence stream)")
-        return []
-    from .records import resolve_digest_assertion
-
-    # One fold per searched pair, merged narrow-first (the caller passes
-    # scopes narrow->broad; the narrowest scope's standing wins on
-    # conflict — the same tie rule as the activation merge in folds.py).
-    merged: Dict[str, Any] = {}
-    for scope, owner in scope_pairs:
-        events = journal.valence_events(
-            scope=scope, owner_id=owner, until_seq=as_of_seq, limit=0)
-        if not events:
-            continue
-        for target, score in compute_gradation(events, config=gradation_config).items():
-            merged.setdefault(target, score)
-
-    participants = set(stimulus.participants)
-    cue_terms = set(concept_terms(stimulus.cue_text))
-    out: List[Dict[str, Any]] = []
-    for target in sorted(merged):
-        if target in participants:
-            matched = True
-        else:
-            # Gradation targets are "namespace:name" free strings (open
-            # vocabulary); the namespace is a category label, not a topic
-            # word — match the NAME part only, with the identifier-aware
-            # concept tokenizer ("tool:web_search" matches "web search").
-            name = target.split(":", 1)[1] if ":" in target else target
-            matched = bool(set(concept_terms(name)) & cue_terms)
-        if not matched:
-            continue
-        if resolve_digest_assertion(store, target) is not None:
-            continue  # record-targeted feeling: never leak a record id
-        score = merged[target]
-        standing = ("scar+bond" if score.scarred and score.bonded
-                    else "scar" if score.scarred
-                    else "bond" if score.bonded
-                    else "none")
-        out.append({"target": target, "net": float(score.net), "standing": standing})
-    # Strongest feelings first (|net| desc), deterministic tie-break.
-    out.sort(key=lambda f: (-abs(f["net"]), f["target"]))
-    return out[: max(0, int(max_feelings))]
+    rows = _lens(
+        store, journal, stimulus, scope_pairs,
+        gradation_config=gradation_config, as_of_seq=as_of_seq,
+        min_net=0.0, max_feelings=max_feelings, warnings=warnings)
+    return [{"target": r["target"], "net": r["net"], "standing": r["standing"]}
+            for r in rows]
 
 
 def familiarity(
