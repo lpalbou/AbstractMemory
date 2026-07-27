@@ -226,3 +226,70 @@ def test_engram_lint_errors_abort_warnings_pass_through(system) -> None:
         result = engram(system, warny, owner_id="entity-2")
     assert any("no revisable value" in w for w in result.warnings)
     assert result.created is True
+
+
+def test_engram_refuses_a_vectorless_core_under_a_pinned_space() -> None:
+    """Wave-4b adversary P1-1 (live-repro'd): formation now degrades to
+    vectorless on a dead embedder — but a BIRTH is not a mid-life turn.
+    A vectorless identity core under a pinned space is a failed birth
+    that idempotency would lock in forever; the engram refuses loudly
+    with both repair paths named. Pinless stores stay legal (vectorless
+    homes are a deliberate mode)."""
+    import warnings as _w
+
+    import pytest
+
+    from abstractmemory import (
+        DEFAULT_SPARK_TEMPLATE,
+        InMemoryJournal,
+        InMemoryTripleStore,
+        MemorySystem,
+        engram,
+    )
+
+    class DeadEmbedder:
+        model = "dead-model"
+        def embed_texts(self, texts):
+            raise RuntimeError("HTTP 400: model not loaded")
+
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", RuntimeWarning)
+        pinned = MemorySystem(
+            store=InMemoryTripleStore(embedder=DeadEmbedder(),
+                                      embedding_pin={"model_id": "dead-model",
+                                                     "dimension": 4}),
+            journal=InMemoryJournal())
+        with pytest.raises(ValueError, match="VECTORLESS under a pinned"):
+            engram(pinned, spark=DEFAULT_SPARK_TEMPLATE,
+                   scope="self", owner_id="entity:refused")
+
+        # Pinless + no embedder: the legal vectorless mode is untouched.
+        plain = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+        result = engram(plain, spark=DEFAULT_SPARK_TEMPLATE,
+                        scope="self", owner_id="entity:plain")
+        assert result.created is True
+
+
+def test_default_spark_titles_never_collide_across_sections() -> None:
+    """c5260 (flow's life-loop adversary): the default spark minted the
+    trait AND the limit both titled "trait-0" (honesty shares
+    kind="trait"), turning identity records into a duplicate-title
+    group. Fallback stems are section-derived now: limit-N for honesty."""
+    from abstractmemory import (
+        DEFAULT_SPARK_TEMPLATE,
+        InMemoryJournal,
+        InMemoryTripleStore,
+        MemorySystem,
+        TripleQuery,
+        engram,
+    )
+
+    system = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    engram(system, spark=DEFAULT_SPARK_TEMPLATE, scope="self", owner_id="entity:n")
+    titles = []
+    for a in system.store.query(TripleQuery(scope="self", owner_id="entity:n", limit=0)):
+        attrs = a.attributes if isinstance(a.attributes, dict) else {}
+        if a.predicate == "dcterms:abstract" and not attrs.get("bookkeeping"):
+            titles.append(str(attrs.get("title") or ""))
+    assert len(titles) == len(set(titles)), f"colliding identity titles: {titles}"
+    assert "limit-0" in titles and "trait-0" in titles

@@ -153,6 +153,14 @@ def engram(
         payload_ref=spark_artifact_ref,
     )]
     plan: List[Tuple[str, int]] = [("marker", 0)]  # section, ordinal (marker rides position 0)
+    # Fallback title stems are SECTION-derived, not kind-derived (flow's
+    # life-loop adversary, c5260): honesty items share kind="trait" with the
+    # traits section, so a kind-derived fallback minted TWO "trait-0" records
+    # from the default spark — night maintenance then flagged identity
+    # records as a duplicate-title group. "limit" matches the trait_class
+    # the honesty section already stamps.
+    fallback_stem = {"values": "value", "purposes": "purpose",
+                     "traits": "trait", "honesty": "limit"}
     for section, kind, items in sections:
         for ordinal, item in enumerate(items):
             attributes: Dict[str, Any] = {"precedence": ordinal, "spark_version": version}
@@ -160,7 +168,8 @@ def engram(
                 attributes["value_class"] = str(item.get("class") or "")
             if section == "honesty":
                 attributes["trait_class"] = "limit"
-            title = str(item.get("name") or "").strip() or f"{kind}-{ordinal}"
+            title = (str(item.get("name") or "").strip()
+                     or f"{fallback_stem.get(section, kind)}-{ordinal}")
             inputs.append(MemoryRecordInput(
                 kind=kind, title=title, digest=str(item.get("statement") or ""),
                 attributes=attributes, payload_ref=spark_artifact_ref,
@@ -168,6 +177,33 @@ def engram(
             plan.append((section, ordinal))
 
     all_ids = system.remember_many(inputs, scope=scope, owner_id=owner_id, idempotency_key=key)
+
+    # BIRTH STRICTNESS (wave-4b adversary P1-1, live-repro'd): formation
+    # now DEGRADES to vectorless on a dead embedder (the mid-life amnesia
+    # fix) — but a birth is not a mid-life turn. A vectorless identity
+    # core under a PINNED embedding space is a failed birth locked in by
+    # idempotency (the re-run is a designed no-op), so the engram REFUSES
+    # here, loudly, with both repair paths named. Pinless stores pass:
+    # vectorless homes are a legal, deliberate mode — the pin is the
+    # declaration that vectors were expected.
+    store = system.store
+    if callable(getattr(store, "embedding_pin", None)) and store.embedding_pin() is not None:
+        from .records import resolve_digest_assertion
+
+        probe_id = next((gid for (section, _o), gid in zip(plan, all_ids)
+                         if section != "marker"), None)
+        if probe_id is not None:
+            digest_row = resolve_digest_assertion(store, probe_id)
+            reader = getattr(store, "stored_vector", None)
+            if (digest_row is not None and callable(reader)
+                    and reader(digest_row.assertion_id) is None):
+                raise ValueError(
+                    "engram refused: the identity core is VECTORLESS under a "
+                    "pinned embedding space — the embedder failed during this "
+                    "birth (or a previous one; re-runs are idempotent no-ops "
+                    "and cannot re-vector). A summoned entity's core must be "
+                    "vectored at creation: repair with the operator-gated "
+                    "reembed, or recreate the home with a live embedder.")
 
     record_ids: Dict[str, List[str]] = {"values": [], "purposes": [], "traits": [], "honesty": []}
     binding_ids: List[str] = []

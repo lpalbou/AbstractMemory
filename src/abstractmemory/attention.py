@@ -127,7 +127,15 @@ class AttentionConfig:
     # entity dm#112 M5: the blueprint's clickable cells resolve these via
     # AttentionConfig() defaults; every field below is a declared tunable
     # with its unit in the trailing comment.)
-    window_limit: int = 512          # read-bound working set (see docstring: declared tunable)
+    # 512 → 8192 (2026-07-25, laurent's c5439 wash): with the burst-keyed
+    # rank axis (_burst_ranks) the WINDOW must hold enough EVENTS to span
+    # a decay horizon of BURSTS — one committed turn at the ruled shelves
+    # (22-36 seats) deposits 253-666 events (selected + C(n,2) pairs), so
+    # 512 held under TWO turns of history and the trail/STM starved even
+    # after the axis fix. 8192 ≈ 12-32 turns at ruled shelves (and the
+    # docstring's own week-of-resident-cadence number). Read-bound only:
+    # indexed fetch of digest-scale rows; still a declared tunable.
+    window_limit: int = 8192         # read-bound working set (see docstring: declared tunable)
     # BINDING-axis working set (alive_drives' recency horizon; declared
     # tunable, 2026-07-20 fable5 finding 3): bindings arrive ~20-100x
     # sparser than events (one per formed record vs dozens of usage
@@ -244,6 +252,39 @@ def _contribution(
     return sign * event.weight / (1.0 + distance / config.decay_window)
 
 
+def _burst_ranks(window: Sequence[MemoryEvent]) -> list[int]:
+    """Rank axis in ACTIVITY BURSTS, not raw events (laurent's c5439 wash,
+    2026-07-25 — the operator watched the green disappear): one committed
+    turn deposits its selected events PLUS C(n,2) co_selected pairs (the
+    maintainer's ALL-pairs co-use rule, deliberately kept), and the pair
+    count is QUADRATIC in the shelf — sized at shelf 12 (66 pairs) the
+    per-event axis was tolerable; at the ruled shelves of 22-36 (231-630
+    pairs) ONE commit pushed its own selections hundreds of ranks deep,
+    so no record ever reached the STM floor again (live: Mira's top
+    base_level 0.966 < 1.0 with deposits perfectly healthy). An axis
+    whose speed is quadratic in a declared tunable is broken by
+    construction.
+
+    THE AXIS: consecutive events sharing one trace_id are ONE burst (one
+    lived beat — a commit's bookkeeping rows all happened in the same
+    moment of experience); the rank advances when the trace changes.
+    Events without a trace_id each advance the rank (legacy journals and
+    non-commit deposits keep their old per-event decay). decay_window
+    regains its intended meaning: distance in TURNS, shelf-independent.
+    ttl_activity is burst-distance too ("pinned for N turns" — the human
+    meaning a caller wants, not N bookkeeping rows)."""
+    ranks: list[int] = []
+    rank = -1
+    prev_trace: object = object()  # sentinel != any trace value
+    for event in window:
+        trace = event.trace_id or None
+        if trace is None or trace != prev_trace:
+            rank += 1
+        prev_trace = trace if trace is not None else object()
+        ranks.append(rank)
+    return ranks
+
+
 def compute_activation(
     events: Sequence[MemoryEvent],
     *,
@@ -259,8 +300,10 @@ def compute_activation(
     equivalent to scoring the stream truncated to seq ≤ k — that
     equivalence is the deterministic-replay contract (0018 validation).
 
-    co_selected events occupy rank slots (they are real activity on the
-    shared axis) but credit NO record here: the schema gives them
+    co_selected events share their commit's BURST slot on the rank axis
+    (see _burst_ranks — one committed turn is one activity beat; the old
+    per-event slots made decay speed quadratic in the shelf, the c5439
+    wash) and credit NO record here: the schema gives them
     record_id=None, and their weight belongs to the pair trail
     (compute_trail_activation) that 0026's spreading consumes as associative
     strength. Crediting both the pair AND its members would double-count the
@@ -283,7 +326,9 @@ def compute_activation(
 
     totals: dict[str, float] = {}
     reasons: dict[str, list[str]] = {}
-    for rank_index, event in enumerate(window):
+    burst_ranks = _burst_ranks(window)
+    for position, event in enumerate(window):
+        rank_index = burst_ranks[position]
         if event.kind not in ATTENTION_KINDS:
             continue  # refocus markers hold a rank slot but carry no weight
         if event.record_id is None:
@@ -349,7 +394,9 @@ def compute_trail_activation(
     window, latest_refocus_seq = _attention_window(events, config=config, at_seq=at_seq)
 
     totals: dict[tuple[str, str], float] = {}
-    for rank_index, event in enumerate(window):
+    burst_ranks = _burst_ranks(window)
+    for position, event in enumerate(window):
+        rank_index = burst_ranks[position]
         if event.kind != "co_selected" or event.pair_ids is None:
             continue
         contribution = _contribution(event, rank_index, latest_refocus_seq, config=config)

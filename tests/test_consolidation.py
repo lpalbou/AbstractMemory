@@ -164,11 +164,18 @@ def test_dream_churn_gate_blocks_reminting_when_only_the_island_partition_drifts
               if isinstance(a.attributes, dict) and a.attributes.get("record_kind") == "dream"]
     assert len(dreams) == 1                     # the churn is dead
 
-    # RESOLUTION RE-OPENS THE GATE by construction: dispose the standing
-    # dream and the same tensions become genuinely new again — a recurring
-    # tension after settlement is a real dream, not churn.
-    system.close_record(first["dream_record_id"], kind="retract",
-                        reason="disposed for the reopen pin")
+    # SOFT RESOLUTION RE-OPENS THE GATE by construction: supersede the
+    # standing dream (waking evidence settled it — resolve_dreams_pass's
+    # closure kind) and the same tensions become genuinely new again — a
+    # recurring tension after settlement is a real dream, not churn.
+    # (RETRACT does NOT re-open: rejection sticks — c5270 adversary P1-1;
+    # the original version of this pin used retract as a stand-in and
+    # conflated the two closure kinds.)
+    replacements = [rid for e in (*first["proposals"], *first["questions"])
+                    for rid in e["pair"]][:2]
+    system.close_record(first["dream_record_id"], kind="supersede",
+                        reason="settled by waking evidence for the reopen pin",
+                        replacement_ids=replacements)
     third = dream_pass(system, scopes=SCOPES, owner_id=OWNER)
     assert third["created"] is True
     assert third["dream_record_id"] != first["dream_record_id"]
@@ -742,3 +749,229 @@ def test_sleep_pass_cancels_gracefully_at_phase_boundaries(system) -> None:
         missing = real_keys - cancelled_keys - {"skipped_reason"}
         assert not missing, f"{phase}: cancelled shape missing {missing}"
         assert "formed" not in cancelled_keys or phase == "world_models"
+
+
+def test_template_cosine_pairs_never_vector_bridge(system, stack) -> None:
+    """Wave-4 F5 (flow's long-life regrade, live-measured: cosine 0.89
+    between two deterministic close notes made every short life dream
+    about its own paperwork): when BOTH endpoints are machine-authored
+    digests (mechanical consent set) of the SAME kind, the vector-only
+    bridge path is refused — a shared template is similarity without
+    relatedness. Lexical/participant paths stay open for them."""
+    from abstractmemory.consolidation import _bridges, structural_report
+
+    store, journal = stack
+    # Two isolated mechanical close notes, template-identical wording —
+    # zero shared lexical facets after stopword folding would be ideal,
+    # but the guard must hold even where the template shares tokens, so
+    # give them disjoint content words and identical vectors.
+    ids = system.remember_many([
+        MemoryRecordInput(kind="episode", title="session close alpha",
+                          digest="Visite close: paperwork bravo done.",
+                          keywords=("bravo",),
+                          attributes={"digest_method": "mechanical-flow-v1"}),
+        MemoryRecordInput(kind="episode", title="session close beta",
+                          digest="Visite close: paperwork delta done.",
+                          keywords=("delta",),
+                          attributes={"digest_method": "mechanical-flow-v1"}),
+    ], scope="life", owner_id=OWNER, idempotency_key="close-notes")
+
+    report = structural_report(store, journal, scopes=[("life", OWNER)])
+    # Monkey-wire identical vectors through the store's reader surface.
+    rows = {info["assertion_id"]: rid for rid, info in report["records"].items()}
+    identical = [0.5] * 8
+
+    class _VectorStore:
+        def __init__(self, inner):
+            self._inner = inner
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+        def stored_vector(self, assertion_id):
+            return identical if assertion_id in rows else None
+
+    proposals, questions, vectorless, _trail, _ctx, suppressed = _bridges(
+        report, _VectorStore(store), similarity_floor=0.35, owner_id=OWNER)
+    bridged_pairs = {tuple(sorted(p["pair"])) for p in proposals
+                     if "vector_score" in p}
+    assert tuple(sorted(ids)) not in bridged_pairs, (
+        "two machine-authored digests vector-bridged on template cosine")
+    # Honest accounting (adversary P1-2): the suppressed pair is COUNTED —
+    # a template-heavy life must read differently from a quiet one.
+    assert suppressed >= 1
+
+    # CONTROL: the same vectors on AUTHORED records (no digest_method)
+    # bridge exactly as before — the guard keys on machine authorship,
+    # never on similarity itself.
+    ids2 = system.remember_many([
+        MemoryRecordInput(kind="episode", title="tide walk golf",
+                          digest="Walked the tide line, thinking about golf."),
+        MemoryRecordInput(kind="episode", title="ledger night hotel",
+                          digest="Read the hotel ledgers into the night."),
+    ], scope="life", owner_id=OWNER, idempotency_key="lived-pair")
+    report2 = structural_report(store, journal, scopes=[("life", OWNER)])
+    rows2 = {info["assertion_id"]: rid for rid, info in report2["records"].items()
+             if rid in ids2}
+
+    class _VectorStore2:
+        def __init__(self, inner):
+            self._inner = inner
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+        def stored_vector(self, assertion_id):
+            return identical if assertion_id in rows2 else None
+
+    proposals2, *_ = _bridges(report2, _VectorStore2(store),
+                              similarity_floor=0.35, owner_id=OWNER)
+    lived_bridges = {tuple(sorted(p["pair"])) for p in proposals2
+                     if "vector_score" in p}
+    assert tuple(sorted(ids2)) in lived_bridges, (
+        "the guard must never suppress vector bridges between authored records")
+
+
+def test_dedup_summaries_are_machine_authored_for_the_guard(system, stack) -> None:
+    """Adversary P1-1 (repro'd): dedup summaries carry a member's template
+    digest VERBATIM under mechanical-dedup-v1 — which is outside the
+    repair-CONSENT set by design (group semantics) but absolutely
+    machine-AUTHORED. The guard keys on the authorship superset and is
+    kind-agnostic (copied digests cross kinds), so the paperwork dream
+    cannot resurrect through the dedup lane."""
+    from abstractmemory.consolidation import _bridges, structural_report
+
+    store, journal = stack
+    [anchor] = system.remember_many([
+        MemoryRecordInput(kind="episode", title="anchor bravo",
+                          digest="An anchor for summarizes edges, bravo.")],
+        scope="life", owner_id=OWNER, idempotency_key="anchor-b")
+    ids = system.remember_many([
+        MemoryRecordInput(kind="episode", title="wake cue golf",
+                          digest="Woke at the bell, checked the inbox, golf.",
+                          attributes={"digest_method": "mechanical-flow-v1"}),
+        MemoryRecordInput(kind="summary", title="wake cue day summary hotel",
+                          digest="Woke at the bell, checked the inbox, hotel.",
+                          edges=(("summarizes", anchor),),
+                          attributes={"digest_method": "mechanical-dedup-v1"}),
+    ], scope="life", owner_id=OWNER, idempotency_key="dedup-pair")
+
+    report = structural_report(store, journal, scopes=[("life", OWNER)])
+    rows = {info["assertion_id"] for rid, info in report["records"].items()
+            if rid in ids}
+    identical = [0.5] * 8
+
+    class _VectorStore:
+        def __init__(self, inner):
+            self._inner = inner
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+        def stored_vector(self, assertion_id):
+            return identical if assertion_id in rows else None
+
+    proposals, *_rest, suppressed = _bridges(
+        report, _VectorStore(store), similarity_floor=0.35, owner_id=OWNER)
+    cross_kind_pair = tuple(sorted(ids))
+    vector_bridged = {tuple(sorted(p["pair"])) for p in proposals
+                      if "vector_score" in p}
+    assert cross_kind_pair not in vector_bridged, (
+        "a CROSS-KIND machine pair (episode close note x dedup summary) "
+        "vector-bridged — the dedup lane resurrected the paperwork dream")
+    assert suppressed >= 1
+
+
+def test_next_dream_carries_only_novel_pairs_never_standing_copies(system):
+    """c5270 ask 2 (flow's cycle-4: island counts 16->39 while the top-3
+    tensions repeated six straight nights): a living day always mints one
+    novel pair, so the gate admits the night — but the minted dream must
+    carry ONLY the novel tensions. The standing dream IS the record for
+    the rest; disposal re-opens a pair by construction."""
+    owner = "entity:novel"
+    scope = ("life", owner)
+
+    def _pair(tag: str, key: str):
+        system.remember_many([
+            MemoryRecordInput(kind="episode", title=f"{tag} at the mill",
+                              digest=f"The {tag} appeared beside the mill wheel.",
+                              keywords=(tag, "mill", "wheel")),
+            MemoryRecordInput(kind="episode", title=f"{tag} by the river",
+                              digest=f"The {tag} returned near the river bend.",
+                              keywords=(tag, "river", "bend")),
+        ], scope="life", owner_id=owner, idempotency_key=key)
+
+    _pair("heron", "n1")
+    night1 = dream_pass(system, scopes=[scope], owner_id=owner)
+    assert night1["created"] is True
+    first_dream = night1["dream_record_id"]
+
+    # A new day forms a genuinely new tension; the heron tension stands.
+    _pair("lantern", "n2")
+    night2 = dream_pass(system, scopes=[scope], owner_id=owner)
+    assert night2["created"] is True
+
+    carried = {frozenset(map(str, e["pair"]))
+               for e in (*night2.get("proposals", ()), *night2.get("questions", ()))}
+    prior = {frozenset(map(str, e["pair"]))
+             for e in (*night1.get("proposals", ()), *night1.get("questions", ()))}
+    assert carried, "night 2 must carry its novel tension"
+    assert not (carried & prior), (
+        f"night 2 re-copied standing tensions: {carried & prior}")
+    assert night2["dream_record_id"] != first_dream
+    # Mentions edges agree with the filtered content: every mention is a
+    # member of some NOVEL pair (a novel pair may legitimately bridge TO
+    # a standing member — that is what novelty means; what may never
+    # happen is an edge sourced from a re-copied standing pair).
+    from abstractmemory.store import TripleQuery
+    novel_members = {rid for pair in carried for rid in pair}
+    edges = [a for a in system.store.query(
+        TripleQuery(subject=night2["dream_record_id"], predicate="mentions", limit=0))]
+    assert edges, "the new dream must mention its novel sources"
+    for e in edges:
+        assert e.object in novel_members, (
+            f"new dream mentions {e.object}, which rides no novel pair")
+
+
+def test_rejection_sticks_a_dissolved_pair_never_reminates(system):
+    """c5270 adversary P1-1 (live-repro'd): dissolving a dream removed it
+    from the standing set, so the SAME pair re-minted the next night —
+    the entity's reasoned "no" had no memory. Retracted dreams' pairs are
+    permanently non-novel; new evidence forms new records (new pair ids),
+    so a genuinely returning tension still dreams."""
+    from abstractmemory import dispose_dream
+
+    owner = "entity:reject"
+    scope = ("life", owner)
+
+    def _pair(tag: str, key: str):
+        system.remember_many([
+            MemoryRecordInput(kind="episode", title=f"{tag} at the mill",
+                              digest=f"The {tag} appeared beside the mill wheel.",
+                              keywords=(tag, "mill", "wheel")),
+            MemoryRecordInput(kind="episode", title=f"{tag} by the river",
+                              digest=f"The {tag} returned near the river bend.",
+                              keywords=(tag, "river", "bend")),
+        ], scope="life", owner_id=owner, idempotency_key=key)
+
+    _pair("heron", "r1")
+    night1 = dream_pass(system, scopes=[scope], owner_id=owner)
+    assert night1["created"] is True
+    rejected_pair = {frozenset(map(str, e["pair"]))
+                     for e in (*night1["proposals"], *night1["questions"])}
+
+    dispose_dream(system, dream_id=night1["dream_record_id"],
+                  disposition="dissolved",
+                  reason="the waking walk showed two unrelated basins",
+                  actor="entity-reflection")
+
+    # STATIC GRAPH (adversary P1-2): a re-run right after the reject must
+    # report a restful night, never return the RETRACTED record.
+    rerun = dream_pass(system, scopes=[scope], owner_id=owner)
+    assert rerun["created"] is False
+    assert rerun["dream_record_id"] is None
+    assert "rejected" in (rerun["skipped_reason"] or "")
+
+    # LIVING GRAPH: a new day forms unrelated records; the night may
+    # dream the NEW tension but must never re-carry the rejected pair.
+    _pair("lantern", "r2")
+    night2 = dream_pass(system, scopes=[scope], owner_id=owner)
+    if night2["created"]:
+        carried = {frozenset(map(str, e["pair"]))
+                   for e in (*night2["proposals"], *night2["questions"])}
+        assert not (carried & rejected_pair), (
+            f"the rejected pair re-minted: {carried & rejected_pair}")

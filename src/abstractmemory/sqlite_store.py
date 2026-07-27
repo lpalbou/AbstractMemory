@@ -9,6 +9,7 @@ from typing import Any, Iterable, List, Optional, Sequence
 
 from .embedding_pin import (
     annotate_embed_failure,
+    embed_texts_degradable,
     build_pin,
     check_add_dimension,
     check_model_compat,
@@ -273,6 +274,22 @@ class SQLiteTripleStore:
             return None
         return pin if isinstance(pin, dict) else None
 
+    def meta_json(self, key: str) -> Optional[Any]:
+        """JSON value of one `<table>_meta` key, or None (absent/corrupt).
+        The generic read behind operator health surfaces (mind_mass_report
+        reads the doctoring wave's 'compaction' history through it) — the
+        embedding pin keeps its dedicated, validating accessor above."""
+        with self._lock:
+            row = self._conn.cursor().execute(
+                f"SELECT value FROM {self._table}_meta WHERE key = ?", (str(key),)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["value"])
+        except (TypeError, ValueError):
+            return None
+
     def _write_pin(self, pin: dict, cursor: Optional[sqlite3.Cursor] = None) -> None:
         payload = json.dumps(pin, ensure_ascii=False, separators=(",", ":"))
         if cursor is not None:  # caller owns the transaction (atomic swaps)
@@ -291,13 +308,20 @@ class SQLiteTripleStore:
             return []
 
         # Embed BEFORE the transaction (InMemory parity): edge assertions are
-        # graph structure, never embedded; an embedder failure aborts the add
-        # with zero rows written (never a half-embedded committed batch).
+        # graph structure, never embedded. A DEAD embedder degrades the batch
+        # to VECTORLESS with one loud #FALLBACK (wave-4b ask 3 — formation
+        # amnesia on an embedder outage was worse than the vectorless row);
+        # wrong-space vectors still abort HARD below (corruption, never
+        # degradable).
         vectors: Optional[dict[int, List[float]]] = None
         if self._embedder is not None:
             embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _is_record_edge(a)]
             if embeddable:
-                embedded = self._embedder.embed_texts([t for _, t in embeddable])
+                embedded = embed_texts_degradable(
+                    self._embedder, [t for _, t in embeddable], self.embedding_pin())
+            else:
+                embedded = None
+            if embeddable and embedded is not None:
                 vectors = {i: v for (i, _), v in zip(embeddable, embedded)}
                 # M1 write guard: dimension must agree with the pin (abort =
                 # zero rows). Pinless legacy stores pin here, loudly; a

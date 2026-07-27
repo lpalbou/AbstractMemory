@@ -288,7 +288,17 @@ def _record_target_gate(
             f"{owner_id!r} — tending reaches only one's own memory")
     scope_pair = (str(digest.scope or "").lower(), digest.owner_id or "")
     if scope_pair[0] == "self" or scope_pair in self_pairs:
-        return None, IDENTITY_SCOPE_PENDING_RULING
+        # DREAMS ARE EXEMPT from the identity gate (flow's cycle-4 find,
+        # c5270: four exact-id reasoned dispose verdicts refused because
+        # sleep_pass writes dreams to scopes[0] = self — a STORAGE
+        # artifact, not an identity classification; self_component
+        # already kind-filters dreams from identity seats). A dream is
+        # an ENGINE-authored, review-gated artifact whose designed
+        # lifecycle is waking disposal — tending it is the entity
+        # reviewing machine output, the exact relationship Q2 protects
+        # identity FROM, not an instance of it.
+        if str(attrs.get("record_kind") or "") != "dream":
+            return None, IDENTITY_SCOPE_PENDING_RULING
     return digest, None
 
 
@@ -336,7 +346,7 @@ def apply_tend_elections(
     scope: str,
     owner_id: str,
     actor: str,
-    channel: str = _REFLECTION_CHANNEL,
+    channel: Optional[str] = None,
     now: Optional[str] = None,
     self_pairs: Sequence[Tuple[str, str]] = (),
     revisit_depth: int = 1,
@@ -420,7 +430,23 @@ def apply_tend_elections(
     }
     pairs = _normalize_pairs(self_pairs)
 
+    # THE CHANNEL MUST BE STATED BY THE CALLER (entity-seat fable5 P0-1
+    # root, 2026-07-25): the old default WAS the privileged channel, so a
+    # caller omitting it self-satisfied this check — runtime's MEMORY_TEND
+    # handler forwarded no channel and every workplace-stamped run tended
+    # as the entity's own reflection. An engine privilege check may never
+    # be satisfied by its own default: omission now refuses loudly. The
+    # home-direct driver states entity-reflection (true by construction);
+    # door-served handlers forward the DOOR-VERIFIED channel, never a
+    # constant.
     channel_text = str(channel or "").strip()
+    if not channel_text:
+        for e in elections or ():
+            refused.append({"election": dict(e), "reason": (
+                "tending requires the caller's verified channel — the "
+                f"privileged default was removed (state {_REFLECTION_CHANNEL!r} "
+                "only where it is true by construction)")})
+        return report
     if channel_text != _REFLECTION_CHANNEL:
         for e in elections or ():
             refused.append({"election": dict(e), "reason": (
@@ -480,10 +506,14 @@ def apply_tend_elections(
                 # A target that resolves to an identity-scope RECORD is still
                 # gated by the pending ruling; free-string targets (the
                 # gradation currency) carry no record and pass through.
+                # Dreams are exempt for parity with every other verb (the
+                # c5270 exemption — same storage-artifact rationale).
                 record = resolve_digest_assertion(system.store, target)
                 if record is not None:
                     record_pair = (str(record.scope or "").lower(), record.owner_id or "")
-                    if record_pair[0] == "self" or record_pair in pairs:
+                    record_attrs = record.attributes if isinstance(record.attributes, dict) else {}
+                    if ((record_pair[0] == "self" or record_pair in pairs)
+                            and str(record_attrs.get("record_kind") or "") != "dream"):
                         _refuse(IDENTITY_SCOPE_PENDING_RULING)
                         continue
                 event_ref, refusal = _resolve_standing_valence(

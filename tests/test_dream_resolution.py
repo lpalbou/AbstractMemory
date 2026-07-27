@@ -403,7 +403,7 @@ def test_sleep_pass_resolves_before_dreaming(system) -> None:
     _co_use(system, ids, "schema migration again")
 
     night = sleep_pass(system, scopes=SCOPES, owner_id=OWNER, salience_floor=1)
-    assert night["phases"] == ("resolution", "maintenance", "world_models", "mining", "dream")
+    assert night["phases"] == ("resolution", "maintenance", "world_models", "mining", "identity", "dream")
     assert night["resolution"]["resolved_count"] == 1
     assert night["resolution"]["resolved"][0]["dream_id"] == gid1
     # Tonight's dream (if any) must not chain the settled tension.

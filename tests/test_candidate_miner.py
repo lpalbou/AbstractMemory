@@ -469,7 +469,7 @@ def test_sleep_pass_runs_mining_and_health_counts_pending_offers(system, stack) 
     _resolved_tension_world(system)
     night = sleep_pass(system, scopes=SCOPES, owner_id=OWNER)
     assert night["phases"] == ("resolution", "maintenance", "world_models",
-                               "mining", "dream")
+                               "mining", "identity", "dream")
     lessons = [c for c in night["mining"]["created"]
                if c["proposed_kind"] == "lesson" and c["created"]]
     assert lessons, "the night must mine the resolved tension"

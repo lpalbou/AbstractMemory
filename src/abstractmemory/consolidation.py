@@ -58,6 +58,10 @@ import json
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .records import MemoryRecordInput
+# Machine AUTHORSHIP set (ONE source — redigestion owns it; adversary
+# P1-1: the repair-CONSENT set excluded dedup summaries, which are
+# machine-authored template copies — the guard keys on authorship).
+from .redigestion import MACHINE_AUTHORED_METHODS as _MACHINE_AUTHORED
 from .sleep_policy import DEFAULT_SLEEP_TUNING, SleepTuning
 from .store import TripleQuery
 from .text_tokens import facet_tokens, title_key
@@ -220,6 +224,10 @@ def structural_report(
                 "title": str(attrs.get("title") or "").strip(),
                 "facets": lexical,
                 "participants": participants,
+                # Machine-authorship marker for the bridge scorer (flow's
+                # wave-4 F5): template cosine between two mechanical
+                # digests is not experience-relatedness.
+                "digest_method": str(attrs.get("digest_method") or ""),
             }
             if a.assertion_id:
                 assertion_to_record[a.assertion_id] = a.subject
@@ -337,7 +345,7 @@ def _bridges(
     report: Dict[str, Any], store: Any, similarity_floor: float,
     owner_id: str = "",
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, int]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, int, int, int]:
     """Cross-component bridge PROPOSALS + single-facet QUESTIONS.
 
     Exclusions first: same-component pairs (component adjacency merges
@@ -381,6 +389,7 @@ def _bridges(
     vectorless_pairs = 0
     trail_associated = 0
     context_associated = 0
+    template_suppressed = 0
 
     # Mid-frequency gate for participants (concept-anchor reasoning):
     # ambient stamps (owner, constant companions) are not signal.
@@ -427,7 +436,26 @@ def _bridges(
             person_bridge = bool(shared_signal)
             vector_score: Optional[float] = None
             if not lexical_bridge and not person_bridge:
-                if vector_reader is not None:
+                # TEMPLATE-COSINE GUARD (flow's wave-4 F5, live-measured:
+                # 0.89 between two deterministic close notes made every
+                # short life dream about its own paperwork): when BOTH
+                # endpoints are MACHINE-AUTHORED digests, the vector-only
+                # path is refused for the pair — a shared template is
+                # similarity without relatedness. Kind does NOT gate the
+                # guard (adversary P1-1 repro: dedup summaries carry a
+                # member's digest verbatim, so template text crosses
+                # kinds). The lexical-facet and participant paths above
+                # stay open (content overlap a template cannot fake), so
+                # genuinely related machine records still bridge.
+                both_machine_authored = (
+                    a.get("digest_method") in _MACHINE_AUTHORED
+                    and b.get("digest_method") in _MACHINE_AUTHORED)
+                if both_machine_authored:
+                    # Counted honestly, never silence (the module's own
+                    # convention — adversary P1-2): a template-heavy life
+                    # must be distinguishable from a quiet one.
+                    template_suppressed += 1
+                elif vector_reader is not None:
                     va = vectors.get(left)
                     vb = vectors.get(right)
                     if isinstance(va, list) and isinstance(vb, list):
@@ -451,7 +479,8 @@ def _bridges(
                                  "or is it lexical residue?"),
                 })
     return (proposals[:_LIST_BOUND], questions[:_LIST_BOUND],
-            vectorless_pairs, trail_associated, context_associated)
+            vectorless_pairs, trail_associated, context_associated,
+            template_suppressed)
 
 
 def dream_pass(
@@ -504,7 +533,8 @@ def dream_pass(
             "report_only=True for anchored reads")
     store, journal = system.store, system.journal  # public substrate handles
     report = structural_report(store, journal, scopes=scopes, as_of=as_of)
-    proposals, questions, vectorless_pairs, trail_associated, context_associated = _bridges(
+    (proposals, questions, vectorless_pairs, trail_associated,
+     context_associated, template_suppressed) = _bridges(
         report, store, embedder_similarity_floor, owner_id=owner_id, tuning=tuning)
     prior = unresolved_dreams(store, scope=scopes[0][0], owner_id=scopes[0][1],
                               journal=journal)
@@ -534,6 +564,12 @@ def dream_pass(
         "salience": salience, "vectorless_pairs": vectorless_pairs,
         "trail_associated": trail_associated,
         "context_associated": context_associated,
+        # Wave-4 F5 accounting (adversary P1-2): a template-heavy life
+        # must read differently from a quiet one.
+        "template_suppressed": template_suppressed,
+        # c5270 ask-2 accounting: pairs a standing/rejected dream already
+        # carries, filtered out of tonight's dream content.
+        "carried_suppressed": 0,
         "dream_record_id": None, "created": False, "skipped_reason": None,
     }
     min_sources = 1 if continuation_only else 2
@@ -572,18 +608,89 @@ def dream_pass(
             carried_anchors.add(str(pid))
         if str(attrs.get("continuation_state") or "") == "continued":
             carried_anchors.add(str(a.subject))
+    # REJECTION STICKS (c5270 adversary P1-1, live-repro'd: dissolving a
+    # dream removed it from the standing set, so the SAME pair re-minted
+    # the next night — the entity's reasoned "no" had no memory while
+    # confirm suppressed structurally). Pairs carried by RETRACTED dreams
+    # (dispose_dream disposition="dissolved" — soft resolution and confirm
+    # both close with supersede, so retract IS the rejection signal) are
+    # permanently non-novel. Self-limiting, not a gag: new evidence forms
+    # NEW records, hence new pair ids — a genuinely returning tension
+    # still dreams; only the exact rejected pair stays settled.
+    rejected_pairs: set = set()
+    retracted_ids = {c.assertion_id for c in journal.closures(limit=0)
+                     if str(getattr(c, "kind", "")) == "retract"}
+    if retracted_ids:
+        for a in store.query(TripleQuery(scope=scopes[0][0],
+                                         owner_id=scopes[0][1] or None, limit=0)):
+            attrs = a.attributes if isinstance(a.attributes, dict) else {}
+            if (attrs.get("record_kind") != "dream"
+                    or a.assertion_id not in retracted_ids):
+                continue
+            for entry in (*(attrs.get("proposals") or ()), *(attrs.get("questions") or ())):
+                pair = entry.get("pair") if isinstance(entry, dict) else None
+                if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                    rejected_pairs.add(frozenset(str(p) for p in pair))
+    carried_pairs |= rejected_pairs
     if continuation_only:
         novel = any(str(a.subject) not in carried_anchors for a in prior)
     else:
         tonight = {frozenset(str(p) for p in entry["pair"])
                    for entry in (*proposals, *questions)}
         novel = bool(tonight - carried_pairs)
-    if prior and not novel:
+    if (prior or rejected_pairs) and not novel:
+        # Also the static-graph honesty fix (adversary P1-2): a reject
+        # followed by a re-run on an unchanged graph used to slip past
+        # this gate (prior was empty) into the idempotent formation path,
+        # returning the RETRACTED record as the night's dream.
+        standing = (f"{len(prior)} standing dream(s) already carry "
+                    if prior else "")
+        rejected = ("waking verdicts already rejected " if rejected_pairs
+                    and not prior else "")
         out["skipped_reason"] = (
-            f"restful night: {len(prior)} standing dream(s) already carry "
-            "tonight's tensions — nothing new to dream (the standing dream "
-            "is the record; waking evidence settles it)")
+            f"restful night: {standing}{rejected}tonight's tensions — "
+            "nothing new to dream (the standing dream is the record; "
+            "waking evidence settles it)")
         return out
+
+    if carried_pairs and not continuation_only:
+        # ALREADY-CARRIED TENSIONS stay with their standing dream (c5270
+        # ask 2: island counts grew 16→39 while the top-3 tensions
+        # repeated six straight nights — a living day always minted ONE
+        # novel pair, so a full dream formed each night re-copying the
+        # standing tensions beside it). The minted dream carries ONLY the
+        # novel pairs; the standing dream IS the record for the rest.
+        # Soft resolution re-opens a pair by construction (a superseded
+        # dream leaves the standing set); rejection sticks (fold above).
+        # The pre-filter structural picture stays in out["report"]
+        # (components/islands/counts); the filtered proposal count is
+        # accounted in carried_suppressed below.
+        kept_p = [e for e in proposals
+                  if frozenset(str(p) for p in e["pair"]) not in carried_pairs]
+        kept_q = [e for e in questions
+                  if frozenset(str(p) for p in e["pair"]) not in carried_pairs]
+        out["carried_suppressed"] = (
+            (len(proposals) - len(kept_p)) + (len(questions) - len(kept_q)))
+        proposals, questions = kept_p, kept_q
+        # The result dict, the sources list, and salience were built
+        # pre-filter — the dream's own view (return, record attrs,
+        # narration, mentions edges, stored salience) must all say the
+        # same thing: novel tensions only. (The quiet-night check above
+        # deliberately used pre-filter salience: admission is structural,
+        # the record is content-honest.)
+        out["proposals"] = proposals
+        out["questions"] = questions
+        salience = (tuning.salience_proposal_weight * len(proposals)
+                    + tuning.salience_question_weight * len(questions)
+                    + len(report["underlinked_facets"])
+                    + tuning.salience_anchor_weight * len(prior)
+                    + min(max(0, int(maintenance_ops)), tuning.salience_ops_cap))
+        out["salience"] = salience
+        sources = []
+        for entry in (*proposals, *questions):
+            for rid in entry["pair"]:
+                if rid not in sources:
+                    sources.append(rid)
 
     if report_only:
         out["skipped_reason"] = "report_only requested"

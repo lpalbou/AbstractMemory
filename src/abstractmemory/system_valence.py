@@ -78,6 +78,20 @@ class ValenceOps:
             ))
         return [e.event_id for e in self._journal.append_valence(events)]  # type: ignore[attr-defined]
 
+    def _require_privileged_actor(self, actor: Any, *, verb: str) -> None:
+        """Amplitude-authority discipline for the DELIBERATE valence verbs
+        (entity-seat fable5 P0-1, 2026-07-25: heal_scar/break_bond engraved
+        whatever actor a caller claimed while revalue validated — one rule,
+        three verbs now). Healing a scar, breaking a bond, and rescaling
+        accumulated experience are reflective acts: entity-reflection/
+        operator actors only, exactly revalue's original rule."""
+        config = self._valence_config()
+        if str(actor or "").strip().lower() not in config.privileged_actors:
+            raise ValueError(
+                f"{verb} requires a privileged actor ({sorted(config.privileged_actors)}); "
+                f"got {actor!r} — deliberate revaluation of standing experience "
+                "is a reflective act, never a trigger's")
+
     def heal_scar(
         self, scar_event_id: str, *, reason: str, lesson_record_id: Optional[str] = None,
         scope: str, owner_id: str, event_id: Optional[str] = None,
@@ -92,6 +106,7 @@ class ValenceOps:
         sid = str(scar_event_id or "").strip()
         if not sid:
             raise ValueError("heal_scar requires a scar_event_id")
+        self._require_privileged_actor(actor, verb="heal_scar")
         rows = self._journal.valence_events(scope=scope, owner_id=owner_id, limit=0)  # type: ignore[attr-defined]
         scar = next((e for e in rows if e.event_id == sid and e.kind == "scar"), None)
         if scar is None:
@@ -124,6 +139,7 @@ class ValenceOps:
         bid = str(bond_event_id or "").strip()
         if not bid:
             raise ValueError("break_bond requires a bond_event_id")
+        self._require_privileged_actor(actor, verb="break_bond")
         rows = self._journal.valence_events(scope=scope, owner_id=owner_id, limit=0)  # type: ignore[attr-defined]
         bond = next((e for e in rows if e.event_id == bid and e.kind == "bond"), None)
         if bond is None:
@@ -162,12 +178,7 @@ class ValenceOps:
             raise ValueError(
                 f"revalue factor must be in 0..1 (got {factor!r}) — a factor "
                 "above 1 would retroactively amplify past experience")
-        config = self._valence_config()
-        if str(actor or "").strip().lower() not in config.privileged_actors:
-            raise ValueError(
-                f"revalue requires a privileged actor ({sorted(config.privileged_actors)}); "
-                f"got {actor!r} — deliberate reappraisal is a reflective act, "
-                "never a trigger's")
+        self._require_privileged_actor(actor, verb="revalue")
         [row] = self._journal.append_valence([ValenceEvent(  # type: ignore[attr-defined]
             target_id=tid, sign=1, magnitude=1.0, kind="revalued",
             scope=scope, owner_id=owner_id, reason=reason, actor=actor,

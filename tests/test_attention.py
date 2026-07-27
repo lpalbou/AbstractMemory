@@ -529,3 +529,46 @@ def test_window_limit_tunable_honored_end_to_end():
     # The global half never windows: both readers report the same lifetime count.
     assert small.access_counts(record_ids=["m-old"])["records"]["m-old"] == 1
     assert wide.access_counts(record_ids=["m-old"])["records"]["m-old"] == 1
+
+
+def test_burst_axis_survives_quadratic_pair_deposits_the_c5439_wash() -> None:
+    """laurent's c5439 (operator-watched): at ruled shelves (22-36 seats)
+    one commit deposits C(n,2) co_selected pairs, and the old per-event
+    rank axis pushed the commit's OWN selections hundreds of ranks deep —
+    top base_level 0.966 < stm_floor 1.0 on a live home with deposits
+    perfectly healthy (zero STM, no green). The burst axis makes one
+    committed turn ONE decay step regardless of shelf size."""
+    import warnings as _w
+
+    from abstractmemory import InMemoryJournal, InMemoryTripleStore, MemorySystem
+    from abstractmemory.attention import compute_activation
+    from abstractmemory.models import TripleAssertion
+
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", RuntimeWarning)
+        system = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    owner = "entity:wash"
+    ids = [f"r-{i}" for i in range(22)]
+    system.add([TripleAssertion(subject=f"ex:{rid}", predicate="dcterms:abstract",
+                                object=f"Record {rid} lived a distinct moment {rid}.",
+                                scope="life", owner_id=owner, assertion_id=rid,
+                                attributes={"record_kind": "episode", "title": rid})
+                for rid in ids])
+    # One shelf-22 commit: 22 selected + C(22,2)=231 pairs in one burst.
+    system.commit_selection("t-big", ids)
+    act = system.activation(ids, scope="life", owner_id=owner)
+    top = max(v["base_level"] for v in act.values())
+    assert top >= 1.0, f"just-committed records must clear the STM floor (top={top})"
+
+    # A second, different commit decays the first by ONE step, not 253.
+    system.add([TripleAssertion(subject="ex:next", predicate="dcterms:abstract",
+                                object="A new moment arrives the next turn.",
+                                scope="life", owner_id=owner, assertion_id="next",
+                                attributes={"record_kind": "episode", "title": "next"})])
+    system.commit_selection("t-next", ["next"])
+    act2 = system.activation(ids[:1], scope="life", owner_id=owner)
+    events = system.journal.events(scope="life", owner_id=owner, limit=0)
+    one_step = compute_activation(events)
+    # distance 1 burst: contribution = w/(1 + 1/20) — far above the floor,
+    # nothing like the pre-fix wash (0.966 after ONE commit).
+    assert act2[ids[0]]["base_level"] >= 1.0

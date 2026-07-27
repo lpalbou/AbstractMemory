@@ -333,7 +333,7 @@ def test_report_only_writes_nothing(system) -> None:
 def test_sleep_pass_carries_the_world_model_phase(system) -> None:
     _seed_ada(system)
     night = sleep_pass(system, scopes=SCOPES, owner_id=OWNER, tuning=TUNING)
-    assert night["phases"] == ("resolution", "maintenance", "world_models", "mining", "dream")
+    assert night["phases"] == ("resolution", "maintenance", "world_models", "mining", "identity", "dream")
     assert night["world_models"]["pass_name"] == "world_model_pass"
     assert night["world_models"]["formed_count"] == 1
 

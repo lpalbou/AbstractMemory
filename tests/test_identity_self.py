@@ -417,9 +417,12 @@ def test_golden_byte_identity_with_self_fraction_zero() -> None:
     byte-identical with self_fraction=0.0. GOLDEN HISTORY: captured before
     the identity wave (proved the SELF component off = byte-identical);
     REGENERATED for the access-count wave (2026-07-06, additive
-    "global_count" in handle provenance) and for the co-use trail wave
+    "global_count" in handle provenance), for the co-use trail wave
     (2026-07-07, maintainer-initiated: the warm-up commit now deposits a
-    (g-hot, g-report) co_selected pair, shifting the seq axis by one).
+    (g-hot, g-report) co_selected pair, shifting the seq axis by one),
+    and for the burst-keyed activity axis (2026-07-25, laurent's c5439
+    wash: rank distance is denominated in committed turns — activation
+    values shift, shapes do not).
     The golden pins the CURRENT serialization against accidental drift."""
     import warnings as warnings_module
     with warnings_module.catch_warnings():

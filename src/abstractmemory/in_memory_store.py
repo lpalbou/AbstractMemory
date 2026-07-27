@@ -6,6 +6,7 @@ from typing import Any, Iterable, List, Optional, Sequence
 
 from .embedding_pin import (
     annotate_embed_failure,
+    embed_texts_degradable,
     build_pin,
     check_add_dimension,
     check_model_compat,
@@ -137,8 +138,12 @@ class InMemoryTripleStore:
             # fix): embedding "ex:a supports ex:b" wastes embed calls and let
             # edges consume vector fetch slots before rejection.
             embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _is_record_edge(a)]
-            if embeddable:
-                embedded = self._embedder.embed_texts([t for _, t in embeddable])
+            # Dead embedder degrades to VECTORLESS, labeled (SQLite parity —
+            # wave-4b ask 3); wrong-space still aborts hard below.
+            embedded = (embed_texts_degradable(
+                self._embedder, [t for _, t in embeddable], self.embedding_pin())
+                if embeddable else None)
+            if embeddable and embedded is not None:
                 vectors = {i: v for (i, _), v in zip(embeddable, embedded)}
                 # M1 write guard (SQLite parity): dimension must agree with
                 # the pin; pinless stores pin here, loudly.

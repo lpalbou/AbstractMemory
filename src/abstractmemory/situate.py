@@ -313,7 +313,7 @@ def situate(
             then_identity.append(_historical_handle(a, config))
 
     closed_now = closure_exclusions(journal, journal.current_seq())
-    identity_kinds = frozenset({"value", "purpose", "trait", "interest"})
+    from .records import IDENTITY_KINDS as identity_kinds  # canonical (drift-class kill)
     evolution: List[Dict[str, Any]] = []
     for gid, a in sorted(rows_by_gid.items()):
         if len(evolution) >= int(budget.identity_delta):

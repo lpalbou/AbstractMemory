@@ -337,3 +337,35 @@ def test_sleep_pass_runs_tending_then_dream(system, stack) -> None:
     replay = sleep_pass(system, scopes=SCOPES, owner_id=OWNER)
     assert replay["maintenance"]["created_count"] == 0
     assert replay["dream"]["created"] is False
+
+
+def test_machine_consolidation_never_targets_identity_records(system) -> None:
+    """c5260: night-2 maintenance formed "Consolidated: trait-0" OVER
+    IDENTITY RECORDS. Identity/sole-author kinds (value/purpose/trait/
+    interest/realization/diary) never enter duplicate-title or near-dup
+    consolidation inputs — identity evolves only by the entity's own
+    act. Ordinary kinds still group (the pass keeps working)."""
+    owner = "entity:carve"
+    scopes = [("self", owner), ("life", owner)]
+    # Two identity records sharing one title (the pre-fix engram shape).
+    system.remember_many(
+        [MemoryRecordInput(kind="trait", title="trait-0", digest="Ask before assuming."),
+         MemoryRecordInput(kind="trait", title="trait-0",
+                           digest="Report failures labeled, before anyone asks.")],
+        scope="self", owner_id=owner, idempotency_key="identity-dup")
+    # Two lived records sharing a title: consolidation must still see these.
+    system.remember_many(
+        [MemoryRecordInput(kind="episode", title="repeated handle",
+                           digest="First telling of the repeated handle."),
+         MemoryRecordInput(kind="episode", title="repeated handle",
+                           digest="Second telling of the repeated handle.")],
+        scope="life", owner_id=owner, idempotency_key="lived-dup")
+
+    report = maintenance_report(system.store, system.journal, scopes=scopes)
+    grouped_kinds = {g["kind"] for g in report["duplicate_title_groups"]}
+    assert "trait" not in grouped_kinds
+    assert "episode" in grouped_kinds
+    for proposal in report["consolidation_proposals"]:
+        assert "trait-0" not in proposal["candidate_title"]
+    for pair in report["near_duplicate_pairs"]:
+        assert pair["kind"] not in ("trait", "value", "purpose")

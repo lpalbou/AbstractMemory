@@ -7,6 +7,295 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed (the c5439 wash — burst-keyed activity axis, 2026-07-25; operator-reported P0, fable5 investigator + live verification)
+
+- **The activity axis counts committed TURNS, not bookkeeping rows**
+  (`_burst_ranks` in attention.py): one commit deposits its selected
+  events plus C(n,2) co_selected pairs (the maintainer's ALL-pairs
+  co-use rule, kept), and the pair count is quadratic in the shelf —
+  sized at shelf 12 (66 pairs) the per-event rank axis was tolerable;
+  at the ruled shelves of 22–36 (231–630 pairs) ONE commit pushed its
+  own selections hundreds of ranks deep and no record ever reached the
+  STM floor again. Live: Mira's top base_level was 0.966 < 1.0 with
+  deposits perfectly healthy — zero STM, no green rings, the operator
+  watched the temporal access count disappear. Consecutive events
+  sharing one trace_id are now ONE burst (one lived beat); traceless
+  events keep per-event decay. `decay_window` regains its intended
+  meaning (distance in turns, shelf-independent); `ttl_activity` is
+  burst-distance ("pinned for N turns"). Verified on a copy of Mira's
+  real journal: 22 records STM-eligible post-fix, zero pre-fix.
+- **`window_limit` default 512 → 8192**: with the burst axis the window
+  must hold enough EVENTS to span a decay horizon of BURSTS — 512 held
+  under two turns of history at ruled shelves. Still a declared
+  tunable; read-bound only.
+- Golden regenerated (documented wave); the STM-decay fixture
+  recalibrated to turn-denominated distances (mechanism unchanged:
+  rendered-but-unused decays out, presence is not use).
+
+### Fixed (entity-seat plan, memory section — operator-ordered fable5 on the gate semantics, 2026-07-25)
+
+- **Tend channel must be stated by the caller** (adversary P0-1 root):
+  `apply_tend_elections`' channel default WAS the privileged channel, so
+  a caller omitting it self-satisfied the privilege check — runtime's
+  MEMORY_TEND handler forwarded no channel and any workplace-stamped run
+  could tend as the entity's own reflection. Omission now refuses every
+  election loudly; the home-direct driver states entity-reflection
+  (true by construction), door-served handlers forward the door-verified
+  channel.
+- **`heal_scar`/`break_bond` require privileged actors** (same P0):
+  both verbs engraved whatever actor the caller claimed while `revalue`
+  validated — one `_require_privileged_actor` now guards all three
+  deliberate valence verbs (amplitude-authority discipline).
+- **`IDENTITY_KINDS` + `REFLECTION_FORM_KINDS` exported** (adversary
+  P1-2/P0-2, the diary_type-clamp drift class): the door hand-listed
+  identity kinds and its reflection-segment act set predated the
+  realization ship (kind=realization elections silently dropped at the
+  durable-visit door). Canonical frozensets in records.py, in the engine
+  manifest, situate.py imports instead of copying; the door imports on
+  its next wave (the SELF_FRACTION_FLOOR precedent).
+
+### Fixed (dream disposal reachable + tension novelty — flow's cycle-4 regrade c5270, 2026-07-24; fable5 adversary folded)
+
+- **Dreams are exempt from the tend identity gate** (ask 1): sleep_pass
+  writes dreams to `scopes[0]` = self — a storage artifact, not an
+  identity classification (the engine already kind-filters dreams from
+  identity seats). The entity's four exact-id reasoned dispose verdicts
+  were refused with the Q2 pending-ruling line; every tend verb now
+  reaches self-scope dreams (dispose/pin/silence/revisit + heal/break
+  parity), while identity records stay gated verbatim.
+- **The next dream carries only NOVEL tensions** (ask 2): island counts
+  grew 16→39 while the top-3 tensions repeated six straight nights —
+  one novel pair per living day admitted a full dream that re-copied the
+  standing tensions beside it. Already-carried pairs are filtered from
+  the minted dream's content (attrs, narration, mentions edges, stored
+  salience — all consistent; `carried_suppressed` accounts the cost);
+  the standing dream IS the record for the rest.
+- **Rejection sticks** (adversary P1-1, live-repro'd): dissolving a
+  dream used to remove it from the standing set, so the same pair
+  re-minted the next night — the entity's reasoned "no" had no memory.
+  Retracted dreams' pairs are permanently non-novel (self-limiting: new
+  evidence forms new records, hence new pair ids). Soft resolution and
+  confirm close with supersede and keep the designed re-open; the prior
+  churn-gate pin conflated the closure kinds and was corrected.
+- **Static-graph reject honesty** (adversary P1-2): re-running the pass
+  right after a reject used to slip past the novelty gate (no standing
+  dreams) into the idempotent formation path and return the RETRACTED
+  record as the night's dream; it now reports a restful night naming
+  the rejection.
+- **`mechanical-close-v1` pre-admitted into `MACHINE_AUTHORED_METHODS`**
+  (ask 3, joint with runtime): close-note diary projections carried no
+  digest_method and evaded the bridge template guard; runtime stamps
+  the label, memory's guard recognizes it. Authorship only — not in the
+  repair-consent set.
+
+### Fixed (identity-title collision + machine-consolidation carve-out — flow's life-loop adversary c5260, 2026-07-24)
+
+- **Engram fallback titles are section-derived**: honesty items share
+  `kind="trait"` with the traits section, so the kind-derived fallback
+  minted TWO `trait-0` records from the default spark; honesty now falls
+  back to `limit-N` (matching the `trait_class` it already stamps).
+  Existing homes keep their engraved titles (append-only); new births
+  get distinct names.
+- **`CONSOLIDATION_PROTECTED_KINDS`** (records.py, exported, in the
+  engine manifest): machine consolidation never targets
+  value/purpose/trait/realization/diary — night-2 maintenance had
+  formed "Consolidated: trait-0" OVER IDENTITY RECORDS. The rule is
+  ownership, not hygiene: the engrammed core evolves only by the
+  entity's own act. Applied in duplicate-title grouping AND near-dup
+  scanning. INTERESTS deliberately stay eligible — repeated elections
+  of one subject are the twelve-bridges attractor and their dedup is a
+  designed, review-gated lane (the existing suite pinned this and
+  falsified the first, broader set).
+
+### Fixed (wave-4b — flow's second long-life wave, 2026-07-24; fable5 adversary folded)
+
+- **`ProbeHit.observed_at`** (ask 2): probe and `probe_expand` hits now
+  carry the row's formation time (additive field, `""` when the row has
+  no clock) — deliberate-reach lines rendered undated, the exact
+  "which fact is newer?" class the recall handles fixed. Consumers
+  version by field presence; flow's shelf renders it on landing.
+- **Formation survives a dead embedder** (ask 3, live outage): both
+  stores' `add()` now routes the embed call through
+  `embed_texts_degradable` — a transport/HTTP/model failure degrades
+  the batch to VECTORLESS rows with ONE loud `#FALLBACK` (failure
+  beside the store pin) instead of hard-failing `remember_many` (a
+  life-close lost its summary; `sleep_pass` died mid-night after a
+  phase already wrote). THE INTEGRITY SPLIT stands: wrong-space
+  refusals (`check_add_dimension`, model-compat) remain HARD — only
+  the embed CALL degrades. Pinned on both backends plus an
+  end-to-end vectorless night.
+- **Engram refuses a vectorless core under a pinned space** (adversary
+  P1-1, live-repro'd): the degradation arm must not reach BIRTH — a
+  dead embedder during `engram()` would have minted a vectorless
+  identity core locked in forever by idempotent re-runs. The engram
+  now post-checks the core's stored vector when the store pin declares
+  an embedding space and refuses loudly, naming both repair paths
+  (reembed / recreate). Pinless (deliberately vectorless) homes are
+  untouched.
+
+### Fixed (wave-4 engine quality — flow's long-life regrade, 2026-07-24; fable5 adversary folded)
+
+- **Template-cosine guard on dream bridges (F5)**: when BOTH endpoints
+  of a candidate cross-component pair are MACHINE-AUTHORED digests, the
+  vector-only bridge path is refused — live-measured 0.89 cosine between
+  two deterministic close notes made every short life dream about its
+  own paperwork. Kind does NOT gate the guard (adversary repro: dedup
+  summaries carry a member's digest verbatim, so template text crosses
+  kinds). Lexical-facet and participant paths stay open (content a
+  template cannot fake). New `MACHINE_AUTHORED_METHODS` in redigestion
+  splits AUTHORSHIP from repair CONSENT (`mechanical-dedup-v1` is
+  machine-authored but not batch-repairable); suppressed pairs are
+  COUNTED (`template_suppressed` beside vectorless/trail/context — a
+  template-heavy life must read differently from a quiet one).
+- **Machine-row discount in probe ranking (F4)**: maintenance candidates
+  and bookkeeping rows rank as a CLASS behind every lived/authored
+  record (live-measured: 4 of 6 probe seats went to bookkeeping on
+  holistic cues while starved episodes missed). A class discount, never
+  a cue heuristic — and never an exclusion: machine rows still surface
+  when nothing real competes (pinned both ways).
+
+### Changed (digest-method consent set, 2026-07-24 — the pact working)
+
+- **`mechanical-flow-v1`** joins `MECHANICAL_DIGEST_METHODS` (flow's
+  entity-brain formation: both-sides gist, sentence-bounded cuts,
+  #TRUNCATION-labeled, zero LLM, verbatim attached). Named on the thread
+  the turn it was born (c5185) and widened same-turn — the first live
+  proof that the manifest kills the drift class: the served
+  `digest_methods` vocabulary carried the new label with zero manifest
+  edits.
+
+### Added (engine manifest — the generated inventory, 2026-07-24 — ownership-consensus substrate; laurent c5070 made the cognition map primary)
+
+- **`engine_manifest.py` (new module): `engine_manifest()`** — ONE
+  machine-readable inventory the cognition map's memory lanes bind
+  against and drift pins check. DERIVED by import from the live objects
+  (vocabularies are the frozensets themselves; tunables the dataclass
+  fields of RecallBudget/AttentionConfig/SleepTuning/GradationConfig;
+  pass flags the real signatures via inspect) — the consumer-side-copy
+  drift class (diary_type clamp, MECHANICAL_DIGEST_METHODS refusal,
+  gray kinds, stale doc engravings) dies by construction. Cadence
+  classes + honesty properties are DECLARED in one place as structured
+  data (they were docstring-only, therefore unpinnable) and
+  cross-checked by test. The drift pin refuses any exported pass/report
+  without a manifest row — it caught two on its first run
+  (resolve_questions_pass, structural_report). JSON-safe; versioned by
+  field presence; `MANIFEST_VERSION` bumps only on breaking reshape.
+
+### Added (realization kind — identity-amendment proposals, 2026-07-23 — dm#124 ruling + the R2 fold; runtime's realize fence is the producer)
+
+- **`kind="realization"`** joins `MEMORY_RECORD_KINDS` (rank 5, the
+  summary/derived-artifact band — a held proposal about the self
+  surfaces on merit, never outranking lived material or the identity
+  kinds it may one day amend). Runtime's realize fence forms these
+  (self scope, his words verbatim, `derived_from` evidence edges,
+  entity-reflection provenance); INERT on formation — surface-only per
+  the dm#124 ruling, adoption is the entity's later act. Wire-shape
+  correction posted to the producer: enactment stamping rides journal
+  lifecycle bindings + a `derived_from` edge from the supersession
+  record — never an attribute mutation on the resting proposal
+  (append-only law).
+- **`identity_review.py` (new module): `identity_review_pass()`** — the
+  PURE-READ registrar over pending proposals (dm#124 hard line: the
+  registrar never authors; sleep reviews and reports, adoption is the
+  entity's waking act). Pending = formed + believed + lifecycle
+  undisposed (the candidates fold — one truth with cognition_health);
+  one mechanical bar: evidence-alive (every `derived_from` target
+  resolves through BOTH id namespaces and is still believed — a proposal
+  resting on retracted ground SAYS so before anyone adopts it).
+- **`disposal.enact_realization()`** — the adoption loop-closer,
+  append-only: lifecycle="promoted" binding + ONE `derived_from` edge
+  from the enacting record (edge rides the ENACTING record's scope —
+  the subject's-scope convention, so tombstone sweeps reach it);
+  `enacted_at` rides fresh rows only. Refuses CLOSED proposals (withdrawn
+  ground) and REJECTED ones (an audited no is never silently out-folded —
+  a change of mind forms a NEW realization); crash-replay idempotent by
+  endpoint pair. Rejection reuses `reject_candidate` verbatim.
+- **`sleep_pass(include_identity=True)`** — the identity phase runs
+  after mining, before the dream; cycle windows pass False (runtime's
+  rule: a maintenance nap must not touch the self) and as_of anchors
+  skip honestly; cancellation shape parity held; the dream deliberately
+  does NOT metabolize the identity phase (a pending-proposal count is
+  not a maintenance act — push must stay pull). Phases tuple is now six
+  entries (existing pins updated).
+- **Adversary findings folded (4 P1, 0 P0)**: row-id evidence edges no
+  longer read as false "no longer resolves" (both-namespaces contract);
+  cross-scope enactment edges ride the enacting scope (the tombstone-
+  sweep class); disposed proposals refuse enactment; the identity suite
+  runs on BOTH backends via the conftest fixture (the local fixture had
+  silently shadowed sqlite parametrization).
+
+### Added (explain_recall serving contract, 2026-07-21 — backlog 0042; OPERATOR GO dm#166 theme 3; fable5 adversary folded)
+
+- **`explain_recall(store, journal, record_id, *, trace_id=None)`**
+  (`recall_reads.py`) + facade `MemorySystem.explain_recall` — "why
+  did/didn't record X surface in THIS recall?" as ONE serving dict: the
+  composition of `recall_history`'s per-trace classification and
+  `absence_diagnosis`, against one trace (named, or the newest). Serves
+  status (selected/dropped/candidate_only/absent/no_recall_recorded),
+  admission label, recorded per-channel relevance parts, shelf position
+  vs cut (rank honestly labeled "bounded candidate list at trace time,
+  not a replay of the fill"), budgets/budget_spent verbatim from the
+  trace, formation origin (kind/formed_at/provenance voice), and — on
+  the absent branch — a formed-after-the-recall timing check plus the
+  structural diagnosis PER SEARCHED SCOPE PAIR (scopes come from the
+  trace: "why not in this recall" can only mean the scopes it searched).
+- **Honesty rules pinned by test**: activation always reads
+  `{"recorded": false}` with a plain note (never journaled per
+  candidate — a fresh number is never presented as the past decision);
+  a record outside the trace's bounded candidate list reads relevance
+  `recorded: false` naming the bound; empty recorded parts (expand
+  traces retain candidates with `scores={}` by design) read
+  `recorded: false`, never "recorded, empty" (adversary P1-1); a
+  formed-after-the-recall record SKIPS the structural diagnosis — it
+  never raced, so "it lost the shelf race" would be factually false
+  (adversary P1-2); explaining a phantom trace_id raises loudly; pure
+  read (explaining is not use — seq and selected_count pinned
+  unchanged).
+- **`_trace_status` shared classifier**: recall_history and
+  explain_recall read the same trace through ONE classifier (two
+  surfaces must never disagree on what a trace says); recall_history's
+  event shape stays byte-compatible (parity pinned: selected events
+  never leak scores/rank).
+
+### Added (mind-health mass half, 2026-07-21 — backlog 0043; OPERATOR GO dm#166 theme 3; fable5 adversary folded)
+
+- **`mind_mass.py` (new module): `mind_mass_report()`** — the operator's
+  "is this mind healthy?" glance, ONE window-bounded pure read composing
+  reads that each shipped separately: formation cadence (by kind/day +
+  all-time totals + machine mass), journal mass (family/day curve walked
+  from `seq_at(window start)` — O(window), never O(life)), per-pair
+  growth, duplicate mass (unbounded closure-folded title-cluster count +
+  the `wake_cue_dedup_pass(report_only=True)` sub-count, sources
+  labeled), embedding-space integrity (pin vs wired model AND dimension,
+  bounded vectorless/off-dimension sub-scan — the rogue-embedder
+  signature), review backlog (`unresolved_dreams` + `cognition_health`'s
+  candidates block lifted VERBATIM: one fold, one truth), and sleep
+  recency (`last_maintenance_seq` + newest dream). Consumer contract
+  adopted with the observer seat (commons c4113/c4132): every count
+  carries a unit label; warnings are `{word, detail}` pairs from the
+  closed `WARNING_WORDS` vocabulary — structural FACTS only, never
+  threshold judgments (thresholds that alert on their own are a 0043
+  non-goal).
+- **`SqliteTripleStore.meta_json(key)`**: generic JSON read of one
+  `<table>_meta` key — the door behind the report's compaction section
+  (the doctoring wave's append-only 'compaction' history; homes keep
+  store and journal in one file). Absent capability/key reads as
+  `available: False`, an entry without `at` reads as unknown, never a
+  guess.
+- **Adversary findings folded (5 P1)**: dimension is the fallback
+  identity axis — a dimension-only pin now surfaces wired-dimension
+  contradictions AND off-dimension vectors at rest (`dimension_mismatch`
+  was a dead vocabulary word); a backend without `stored_vector` reaches
+  the badge path (`vector_scan_partial` warning, not just a field);
+  pair normalization matches the store's grammar (strip+lower scope) and
+  global counts fold DISTINCT assertions so overlapping/wildcard pairs
+  never double-count (per-pair views deliberately keep their overlap);
+  the title-cluster fold applies closure exclusions (append-only store:
+  a closure-blind count could never drop after the very repair the
+  report motivates — pinned by test); cadence honesty (several full
+  store scans per call) is stated in docstring + provenance: glance
+  read, cache at the panel, never poll.
+
 ### Added (dream signals — the night as a signal stream, 2026-07-20 — laurent Q1 ruling dm#67/#75; wave-5 dispatch)
 
 - **`dream_signals.py`** (new module): each maintenance act that DID

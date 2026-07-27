@@ -31,15 +31,15 @@
  "handles": [
   {
    "activation": {
-    "base_level": 7.2727272727272725,
+    "base_level": 8.0,
     "spread": 0.58,
-    "total": 7.852727272727273
+    "total": 8.58
    },
    "admission": "stm",
    "binding": "indexed+inactive",
    "cues": [
     "spread: via co_used from g-report",
-    "selected +7.3"
+    "selected +8.0"
    ],
    "digest": "dave reads old books",
    "kind": "memory",
@@ -59,15 +59,15 @@
   },
   {
    "activation": {
-    "base_level": 7.619047619047619,
+    "base_level": 8.0,
     "spread": 0.0,
-    "total": 7.619047619047619
+    "total": 8.0
    },
    "admission": "both",
    "binding": "indexed+inactive",
    "cues": [
     "keyword: matched fusion, energy, report (3/3)",
-    "selected +7.6"
+    "selected +8.0"
    ],
    "digest": "alice wrote fusion energy report",
    "kind": "memory",

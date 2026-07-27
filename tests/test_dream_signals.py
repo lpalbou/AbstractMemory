@@ -371,7 +371,7 @@ def test_cycle_window_runs_quality_passes_without_the_dream(system, stack) -> No
     _two_island_world(system)
     cycle = sleep_pass(system, scopes=SCOPES, owner_id=OWNER, include_dream=False)
     assert cycle["phases"] == ("resolution", "maintenance", "world_models",
-                               "mining", "dream")
+                               "mining", "identity", "dream")
     assert cycle["dream"]["dream_record_id"] is None
     assert "nightly cadence budget" in cycle["dream"]["skipped_reason"]
     dream_rows = [a for a in store.query(TripleQuery(limit=0))

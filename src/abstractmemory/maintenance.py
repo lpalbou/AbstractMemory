@@ -50,7 +50,7 @@ import hashlib
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .consolidation import COMPONENT_RELATIONS, dream_pass, structural_report
-from .records import MemoryRecordInput, record_id_for
+from .records import CONSOLIDATION_PROTECTED_KINDS, MemoryRecordInput, record_id_for
 # Cadence lives in sleep_cadence.py (600-line split: "is there material" is
 # its own task); re-exported here so established import paths keep working.
 from .sleep_cadence import last_maintenance_seq, maintenance_due  # noqa: F401
@@ -215,6 +215,10 @@ def _duplicate_title_groups(
 ) -> List[Dict[str, Any]]:
     by_key: Dict[Tuple[str, str], List[str]] = {}
     for rid in sorted(records):
+        # Identity/sole-author kinds never enter consolidation inputs
+        # (c5260: "Consolidated: trait-0" formed over identity records).
+        if records[rid]["kind"] in CONSOLIDATION_PROTECTED_KINDS:
+            continue
         key = _title_key(records[rid]["title"])
         if key:
             by_key.setdefault((records[rid]["kind"], key), []).append(rid)
@@ -234,7 +238,12 @@ def _near_duplicate_pairs(
     OR stored-vector cosine >= the tuned vector floor (both vectors present).
     Newest-first bounded scan (a resident home tends recent material first);
     vectorless below-Jaccard pairs are counted, never guessed."""
-    ordered = sorted(records, key=lambda rid: (records[rid]["observed_at"], rid), reverse=True)
+    ordered = sorted(
+        (rid for rid in records
+         # Same protection as duplicate titles: near-dup proposals over
+         # identity/sole-author records would be machine identity-editing.
+         if records[rid]["kind"] not in CONSOLIDATION_PROTECTED_KINDS),
+        key=lambda rid: (records[rid]["observed_at"], rid), reverse=True)
     scan = ordered[: max(0, int(scan_limit))]
     fingerprints = {rid: _tokens(f"{records[rid]['title']} {records[rid]['digest']}") for rid in scan}
     vector_reader = getattr(store, "stored_vector", None)
@@ -616,6 +625,7 @@ def sleep_pass(
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
     should_continue: Optional[Any] = None,
     include_dream: bool = True,
+    include_identity: bool = True,
 ) -> Dict[str, Any]:
     """One full sleep: RESOLVE first (the night reviews the day — standing
     dreams the day's lived experience already answered close softly,
@@ -661,7 +671,14 @@ def sleep_pass(
     formation keeps its nightly cadence budget"} — a valid night shape
     every consumer already handles. The host owns WHEN dreams run (a
     full sleep_pass nightly / at the day's last cycle window); the
-    engine stays cadence-blind."""
+    engine stays cadence-blind.
+
+    include_identity=True (dm#124 + the R2 fold, runtime's ladder calls
+    it): nightly sleeps run `identity_review_pass` — the PURE-READ
+    registrar over pending kind="realization" proposals (bars checked,
+    verdicts pull-visible; the registrar never authors). Cycle windows
+    pass include_identity=False (runtime's rule: "a 2h maintenance nap
+    must not touch the self") and the phase reports its honest skip."""
     from .dream_resolution import resolve_dreams_pass
     from .world_model import world_model_pass
 
@@ -698,7 +715,8 @@ def sleep_pass(
         return _cancelled("dream_pass", after,
                           {"report": {}, "proposals": [], "questions": [], "salience": 0,
                            "vectorless_pairs": 0, "trail_associated": [],
-                           "context_associated": [],
+                           "context_associated": [], "template_suppressed": 0,
+                           "carried_suppressed": 0,
                            "dream_record_id": None, "created": False})
 
     def _cancelled_mining(after: str) -> Dict[str, Any]:
@@ -708,18 +726,27 @@ def sleep_pass(
                            "created": [], "skipped": [],
                            "created_count": 0})
 
+    def _cancelled_identity(after: str) -> Dict[str, Any]:
+        return _cancelled("identity_review_pass", after,
+                          {"unit": "records", "pending": [],
+                           "counts": {"pending": 0, "bars_failing": 0,
+                                      "disposed": 0},
+                           "provenance": "phase skipped — nothing reviewed"})
+
     def _go() -> bool:
         return should_continue is None or bool(should_continue())
 
     def _skipped_night(after: str, resolution_result: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "pass_name": "sleep_pass",
-            "phases": ("resolution", "maintenance", "world_models", "mining", "dream"),
+            "phases": ("resolution", "maintenance", "world_models", "mining",
+                       "identity", "dream"),
             "cancelled_after": after,
             "resolution": resolution_result,
             "maintenance": _cancelled_maintenance(after),
             "world_models": _cancelled_world_models(after),
             "mining": _cancelled_mining(after),
+            "identity": _cancelled_identity(after),
             "dream": _cancelled_dream(after),
         }
 
@@ -792,16 +819,51 @@ def sleep_pass(
             system, scopes=scopes, owner_id=owner_id,
             max_candidates=max_candidates, report_only=report_only,
             scan_limit=scan_limit or 0, tuning=tuning)
+    # IDENTITY REVIEW (dm#124 + the R2 fold): the pure-read registrar over
+    # pending realization proposals — after mining (the night's quality
+    # work), before the dream. Cycle windows skip it (runtime's rule: a
+    # maintenance nap must not touch the self); as_of skips honestly like
+    # every current-state read.
+    if cancelled_after is None and not _go():
+        cancelled_after = ("maintenance" if world_models.get("skipped_reason")
+                          else ("world_models" if mining.get("skipped_reason")
+                                else "mining"))
+    if cancelled_after is not None:
+        identity: Dict[str, Any] = _cancelled_identity(cancelled_after)
+    elif not include_identity:
+        identity = {
+            "pass_name": "identity_review_pass",
+            "skipped_reason": ("cycle window: the self is not touched in a "
+                               "maintenance nap (include_identity=False)"),
+            "unit": "records", "pending": [],
+            "counts": {"pending": 0, "bars_failing": 0, "disposed": 0},
+            "provenance": "phase skipped — nothing reviewed",
+        }
+    elif as_of is not None:
+        identity = {
+            "pass_name": "identity_review_pass",
+            "skipped_reason": ("as_of anchor: the review reads current "
+                               "bindings/closures only — phase skipped to "
+                               "keep the night's frames honest"),
+            "unit": "records", "pending": [],
+            "counts": {"pending": 0, "bars_failing": 0, "disposed": 0},
+            "provenance": "phase skipped — nothing reviewed",
+        }
+    else:
+        from .identity_review import identity_review_pass
+        identity = identity_review_pass(system, scopes=scopes, owner_id=owner_id)
     # The dream metabolizes the night's work: the tending ledger's operation
     # count feeds dream salience (fork parity, capped in SleepTuning — a busy
     # tending night signals change worth dreaming about).
     if cancelled_after is None and not _go():
         # Honest label (adversary finding 6): under as_of the mining phase
         # was SKIPPED, not completed — cancelled_after names the last
-        # phase that actually ran.
+        # phase that actually ran. The identity review is a pure read that
+        # just completed, so it is the honest boundary when it RAN.
         cancelled_after = ("maintenance" if world_models.get("skipped_reason")
                           else ("world_models" if mining.get("skipped_reason")
-                                else "mining"))
+                                else ("mining" if identity.get("skipped_reason")
+                                      else "identity")))
     if cancelled_after is not None:
         dream = _cancelled_dream(cancelled_after)
     elif not include_dream:
@@ -814,7 +876,8 @@ def sleep_pass(
                                "nightly cadence budget (include_dream=False)"),
             "report": {}, "proposals": [], "questions": [], "salience": 0,
             "vectorless_pairs": 0, "trail_associated": [],
-            "context_associated": [],
+            "context_associated": [], "template_suppressed": 0,
+                           "carried_suppressed": 0,
             "dream_record_id": None, "created": False,
         }
     else:
@@ -824,17 +887,23 @@ def sleep_pass(
             max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
             report_only=report_only, as_of=as_of, maintenance_ops=ops_count,
             tuning=tuning,
-            # The dream metabolizes the WHOLE night (Q1 ruling): earlier
-            # phases' results become the signal stream on the dream record.
+            # The dream metabolizes the night's WORK phases (Q1 ruling):
+            # their results become the signal stream on the dream record.
+            # The IDENTITY phase is DELIBERATELY excluded (dm#124: the
+            # registrar reviews, it does not act — a pending-proposal
+            # count is not a maintenance act, and dreaming about one's
+            # own held self-amendments would push what must stay pull).
             phase_results={"resolution": resolution, "maintenance": maintenance,
                            "world_models": world_models, "mining": mining})
     result: Dict[str, Any] = {
         "pass_name": "sleep_pass",
-        "phases": ("resolution", "maintenance", "world_models", "mining", "dream"),
+        "phases": ("resolution", "maintenance", "world_models", "mining",
+                   "identity", "dream"),
         "resolution": resolution,
         "maintenance": maintenance,
         "world_models": world_models,
         "mining": mining,
+        "identity": identity,
         "dream": dream,
     }
     if cancelled_after is not None:

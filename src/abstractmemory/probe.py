@@ -201,6 +201,10 @@ class ProbeHit:
     relevance: Dict[str, float] = field(default_factory=dict)
     cues: Tuple[str, ...] = ()
     token_estimate: int = 0
+    # Formation time (flow's wave-4b ask 2: every deliberate-reach line
+    # rendered undated — the "which fact is newer?" class). Additive;
+    # consumers version by field presence. "" = the row carried no clock.
+    observed_at: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -496,11 +500,25 @@ def probe(
     # (any non-associative channel) order before concept-only admissions;
     # within a tier the fused sum still ranks, so concept CORROBORATION on
     # a direct hit keeps its weight (stable sorts, lowest priority first).
+    # MACHINE-ROW DISCOUNT (flow's wave-4 F4, live-measured: on holistic
+    # cues 4 of 6 seats went to maintenance candidates and bookkeeping
+    # rows while starved episodes missed): machine rows are OFFERS and
+    # PLUMBING, not memories — they rank as a CLASS behind every lived/
+    # authored record (a deliberate probe still finds them when nothing
+    # real competes; they never evict it). A class discount, not a cue
+    # heuristic: detecting "self-referential cues" would be a words
+    # judgment the engine refuses to make.
+    def machine(rid: str) -> bool:
+        attrs = universe[rid].attributes
+        attrs = attrs if isinstance(attrs, dict) else {}
+        return bool(attrs.get("maintenance_candidate") or attrs.get("bookkeeping"))
+
     ordered = sorted(universe.keys())
     ordered.sort(key=lambda rid: (universe[rid].observed_at or ""), reverse=True)
     ordered.sort(key=lambda rid: config.rank_of(_kind_of(universe[rid], config)))
     ordered.sort(key=fused, reverse=True)
     ordered.sort(key=lambda rid: 0 if direct(rid) else 1)
+    ordered.sort(key=lambda rid: 1 if machine(rid) else 0)
 
     hits: List[ProbeHit] = []
     dropped: List[Dict[str, Any]] = []
@@ -528,6 +546,7 @@ def probe(
             relevance=dict(relevance.get(rid, {})),
             cues=tuple(cues.get(rid, ())),
             token_estimate=cost,
+            observed_at=str(a.observed_at or ""),
         ))
 
     budget_spent = {
@@ -982,6 +1001,7 @@ def probe_expand(
             relevance={"connections": score},
             cues=tuple(connections.get(gid, ())),
             token_estimate=cost,
+            observed_at=str(a.observed_at or ""),
         ))
 
     budget_spent = {

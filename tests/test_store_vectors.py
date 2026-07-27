@@ -210,3 +210,102 @@ def test_scoring_parity_between_stores(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="no silent mixing"):
             store.query(mismatched)
     lite.close()
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_dead_embedder_degrades_to_vectorless_never_amnesia(backend, tmp_path) -> None:
+    """Wave-4b ask 3 (live outage: embedder 400 mid-life => MEMORY_FORM
+    hard-failed, a life-close lost its summary, the night died
+    non-atomically): a DEAD embedder degrades formation to VECTORLESS
+    rows with one loud #FALLBACK — never a lost record. Wrong-space
+    vectors still refuse hard (the integrity split). BOTH backends: the
+    sqlite add path differs materially (pin read inside add, BEGIN
+    IMMEDIATE — degraded rows must commit with NULL embedding)."""
+    import warnings as _w
+
+    import pytest
+
+    from abstractmemory import InMemoryTripleStore, SQLiteTripleStore, TripleQuery
+    from abstractmemory.models import TripleAssertion
+
+    class DeadEmbedder:
+        model = "dead-model"
+        def embed_texts(self, texts):
+            raise RuntimeError("HTTP 400: model not loaded")
+
+    pin = {"model_id": "dead-model", "dimension": 4}
+    if backend == "memory":
+        store = InMemoryTripleStore(embedder=DeadEmbedder(), embedding_pin=pin)
+    else:
+        store = SQLiteTripleStore(tmp_path / "dead.sqlite3",
+                                  embedder=DeadEmbedder(), embedding_pin=pin)
+    row = TripleAssertion(subject="ex:r1", predicate="dcterms:abstract",
+                          object="Words that must survive the outage.",
+                          scope="life", owner_id="entity:t",
+                          attributes={"record_kind": "episode"})
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        [rid] = store.add([row])
+    assert store.query(TripleQuery(subject="ex:r1", limit=1)), "the record must land"
+    assert store.stored_vector(rid) is None  # vectorless, honestly
+    fallbacks = [w for w in caught if "#FALLBACK" in str(w.message)]
+    assert fallbacks and "VECTORLESS" in str(fallbacks[0].message)
+
+    class WrongSpaceEmbedder:
+        model = "dead-model"
+        def embed_texts(self, texts):
+            return [[0.1, 0.2] for _ in texts]  # dim 2 against pin dim 4
+
+    store2 = InMemoryTripleStore(embedder=WrongSpaceEmbedder(), embedding_pin=pin)
+    with pytest.raises(ValueError, match="no silent mixing"):
+        store2.add([TripleAssertion(subject="ex:r2", predicate="dcterms:abstract",
+                                    object="Wrong-space must still refuse.",
+                                    scope="life", owner_id="entity:t")])
+
+
+def test_night_completes_vectorless_under_dead_embedder() -> None:
+    """The motivating flow case verbatim: the night must COMPLETE (every
+    phase, honest shapes) when the embedder dies mid-life — formation
+    degrades to vectorless instead of killing sleep_pass after a phase
+    already wrote (the non-atomic-night incident)."""
+    import warnings as _w
+
+    from abstractmemory import (
+        InMemoryJournal,
+        InMemoryTripleStore,
+        MemoryRecordInput,
+        MemorySystem,
+        sleep_pass,
+    )
+
+    class DeadEmbedder:
+        model = "dead-model"
+        def embed_texts(self, texts):
+            raise RuntimeError("HTTP 400: model not loaded")
+
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", RuntimeWarning)
+        store = InMemoryTripleStore(embedder=DeadEmbedder(),
+                                    embedding_pin={"model_id": "dead-model",
+                                                   "dimension": 4})
+        journal = InMemoryJournal()
+        system = MemorySystem(store=store, journal=journal)
+        owner = "entity:outage"
+        for i, noun in enumerate(("anchor", "beacon", "compass")):
+            system.remember_many([
+                MemoryRecordInput(kind="episode", title=f"repeated {noun}",
+                                  digest=f"First telling about the {noun}.")],
+                scope="life", owner_id=owner, idempotency_key=f"a{i}")
+            system.remember_many([
+                MemoryRecordInput(kind="episode", title=f"repeated {noun}",
+                                  digest=f"Second telling about the {noun}.")],
+                scope="life", owner_id=owner, idempotency_key=f"b{i}")
+        night = sleep_pass(system, scopes=[("life", owner)], owner_id=owner)
+
+    assert night["pass_name"] == "sleep_pass"
+    for phase in night["phases"]:
+        assert night[phase].get("pass_name"), f"phase {phase} missing"
+    # The night ran end-to-end: no phase died on the dead embedder.
+    assert "cancelled_after" not in night

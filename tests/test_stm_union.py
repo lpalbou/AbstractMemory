@@ -232,9 +232,12 @@ def test_rendered_stm_member_decays_out_while_stimulus_member_strengthens(stack)
     """The critic's regression math: an STM-only member rendered AND
     committed every turn must still DECAY (rehearsal_weight=0) and exit STM,
     while stimulus-matched members committed alongside it strengthen.
-    decay_window=2 compresses the activity axis so ten turns of realistic
-    deposit volume cross the floor (activity-relative decay is the mechanism
-    under test; the window length is tuning)."""
+    decay_window=2 compresses the activity axis so the turns cross the
+    floor (activity-relative decay is the mechanism under test; the window
+    length is tuning). 16 turns since the BURST axis (2026-07-25, the
+    c5439 wash fix): distance is now denominated in committed TURNS, not
+    bookkeeping rows, so the same decay needs more turns — the mechanism
+    (rendered-but-unused decays out; presence is not use) is unchanged."""
     store, journal = stack
     system = MemorySystem(store=store, journal=journal,
                           attention_config=AttentionConfig(decay_window=2.0))
@@ -248,7 +251,7 @@ def test_rendered_stm_member_decays_out_while_stimulus_member_strengthens(stack)
     assert {h.record_id: h.admission for h in _blank(system).handles}["stm-only"] == "stm"
 
     stm_turns = 0
-    for turn in range(10):
+    for turn in range(16):
         r = system.reconstruct(Stimulus(cue_text="storage"), scopes=SCOPES,
                                trace_id=f"t-turn-{turn}")
         by_id = {h.record_id: h for h in r.handles}

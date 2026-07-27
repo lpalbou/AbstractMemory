@@ -535,6 +535,19 @@ class MemorySystem(ValenceOps, AccessOps):
                 scope=scope, owner_id=owner_id)
         return out
 
+    def explain_recall(
+        self, record_id: str, *, trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Why did/didn't record X surface in THIS recall (backlog 0042) —
+        one serving dict over one trace (trace_id, or the newest): status,
+        admission, recorded relevance parts, shelf position vs cut,
+        budgets, origin, and the per-searched-scope structural diagnosis
+        when absent. Reports only what the trace RECORDED (activation
+        reads {"recorded": false} honestly). Pure read; writes nothing."""
+        from .recall_reads import explain_recall as _explain
+
+        return _explain(self._store, self._journal, record_id, trace_id=trace_id)
+
     def recent_records(
         self, *, scopes: Sequence[Tuple[str, str]], since: str,
         until: Optional[str] = None, kinds: Optional[Sequence[str]] = None,

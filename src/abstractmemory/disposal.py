@@ -47,6 +47,7 @@ __all__ = [
     "DISPOSAL_RELATIONS",
     "confirm_relation",
     "dispose_dream",
+    "enact_realization",
     "independent_origins",
     "promote_candidate",
     "reject_candidate",
@@ -330,6 +331,135 @@ def reject_candidate(
     ))
     return {"record_id": candidate.subject, "lifecycle": "rejected",
             "hidden": bool(hide), "binding_seq": int(binding.seq)}
+
+
+def enact_realization(
+    store: Any,
+    journal: Any,
+    *,
+    realization_id: str,
+    supersession_record_id: str,
+    reason: str,
+    actor: str = "entity-reflection",
+) -> Dict[str, Any]:
+    """The entity's ADOPTION of a held identity-amendment proposal
+    (dm#124 + the R2 fold; wire contract per c4802, corrected c4817).
+
+    The adoption act itself happens ELSEWHERE and first: the entity, in
+    its own words, forms/binds the record that carries the realization
+    forward (a new value/trait via its reflection supersession, or a
+    standalone elected record). THIS verb then closes the loop
+    append-only: a lifecycle="promoted" binding on the proposal (pending
+    stays a pure query — the candidates fold) plus ONE `derived_from`
+    edge FROM the enacting record TO the proposal, so the proposal is
+    forever the dated evidence of where the change came from.
+    `enacted_at` rides the binding provenance and the edge attributes —
+    fresh rows; the resting proposal is never mutated (append-only law).
+
+    TRUST BOUNDARY (same as the module note above): the engine is
+    channel-blind; the DOOR enforces that only the entity-reflection
+    channel reaches this verb for self-scope proposals. Rejection needs
+    no twin verb — `reject_candidate` works on realization rows verbatim
+    (lifecycle="rejected" + mandatory reason).
+    """
+    reason_text = _require(reason, "enact_realization")
+    proposal = _digest_of(store, realization_id)
+    if proposal is None:
+        raise ValueError(f"enact_realization: no digest row for {realization_id!r}")
+    p_attrs = proposal.attributes if isinstance(proposal.attributes, dict) else {}
+    if p_attrs.get("record_kind") != "realization":
+        raise ValueError(
+            f"enact_realization: {realization_id!r} is a "
+            f"{p_attrs.get('record_kind')!r} record, not a realization — "
+            "promotion of other candidate kinds goes through promote_candidate")
+    enacting = _digest_of(store, supersession_record_id)
+    if enacting is None:
+        raise ValueError(
+            f"enact_realization: enacting record {supersession_record_id!r} does "
+            "not exist — the entity's own act must be formed FIRST; this verb "
+            "only closes the loop")
+    if enacting.subject == proposal.subject:
+        raise ValueError("a realization cannot enact itself — the adoption is a "
+                         "SEPARATE record in the entity's own words")
+
+    # Disposal-state gate (adversary P1-3): enacting a CLOSED proposal
+    # would mint an evidence trail onto withdrawn ground, and enacting a
+    # REJECTED one would silently out-fold an audited, reasoned "no".
+    # Both refuse naming the honest path — a genuine change of mind forms
+    # a NEW realization in the entity's own words (append-only law; no
+    # override flags to game).
+    from .folds import closure_exclusions
+
+    closed = closure_exclusions(journal, int(journal.current_seq()))
+    if proposal.subject in closed or (proposal.assertion_id and proposal.assertion_id in closed):
+        raise ValueError(
+            f"enact_realization: proposal {proposal.subject} is CLOSED "
+            "(retracted/superseded) — a withdrawn proposal cannot be enacted; "
+            "if the realization still holds, form it anew in the entity's words")
+    prior_lifecycle = None
+    for b in journal.bindings(record_id=proposal.subject, fold=True):
+        prior_lifecycle = b.lifecycle
+    if prior_lifecycle == "rejected":
+        raise ValueError(
+            f"enact_realization: proposal {proposal.subject} was REJECTED "
+            "(an audited, reasoned no) — enactment must not silently out-fold "
+            "it; a genuine change of mind forms a NEW realization")
+
+    from .journal import utc_now_iso
+    enacted_at = utc_now_iso()
+
+    # The edge half (runtime's spec, verbatim legal): idempotent by the
+    # endpoint pair, so crash-replays land on the same row. SCOPE follows
+    # the SUBJECT'S scope (adversary P1-2 — the convention every other
+    # edge writer holds): close_record_plan's tombstone sweep is scoped
+    # to the digest's scope, so a cross-scope enacting record (a life
+    # elected act adopting a self proposal) must carry its edge in ITS
+    # scope or retraction would strand a live edge.
+    edge_id = hashlib.sha256(
+        f"enact|{enacting.subject}|derived_from|{proposal.subject}".encode("utf-8")
+    ).hexdigest()[:32]
+    from .store import TripleQuery
+
+    created = False
+    if not store.query(TripleQuery(assertion_ids=(edge_id,), limit=1)):
+        store.add([TripleAssertion(
+            subject=enacting.subject,
+            predicate="derived_from",
+            object=proposal.subject,
+            scope=enacting.scope,
+            owner_id=enacting.owner_id,
+            provenance={"source": "enactment", "actor": str(actor or "entity-reflection")},
+            attributes={
+                "record_edge": True,
+                "enacted_at": enacted_at,  # fresh row: append-only legal
+                "reason": reason_text,
+            },
+            assertion_id=edge_id,
+        )])
+        created = True
+
+    binding_provenance: Dict[str, Any] = {
+        "actor": str(actor or "entity-reflection"),
+        "enacted_at": enacted_at,
+        "enacted_by": enacting.subject,
+    }
+    if prior_lifecycle and prior_lifecycle not in ("none", "inactive_candidate"):
+        binding_provenance["prior_lifecycle"] = prior_lifecycle  # audit trail
+    binding = journal.append_binding(ScopeBinding(
+        record_id=proposal.subject,
+        scope=proposal.scope,
+        owner_id=proposal.owner_id or "",
+        search_state="indexed",   # the proposal stays findable: it is the evidence
+        prompt_state="inactive",
+        lifecycle="promoted",
+        source="revision",
+        reason=reason_text,
+        provenance=binding_provenance,
+    ))
+    return {"realization_id": proposal.subject, "lifecycle": "promoted",
+            "enacted_by": enacting.subject, "edge_id": edge_id,
+            "edge_created": created, "binding_seq": int(binding.seq),
+            "enacted_at": enacted_at}
 
 
 def dispose_dream(

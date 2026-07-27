@@ -33,6 +33,7 @@ __all__ = [
     "check_add_dimension",
     "check_model_compat",
     "check_query_dimension",
+    "embed_texts_degradable",
     "embedder_model_id",
     "pin_note",
 ]
@@ -115,6 +116,34 @@ def annotate_embed_failure(exc: Exception, pin: Optional[Dict[str, Any]]) -> Opt
     if type(exc) in (ValueError, RuntimeError):
         return type(exc)(f"{exc} [store pin: {pin_note(pin)}]")
     return None
+
+
+def embed_texts_degradable(embedder: Any, texts: Any, pin: Optional[Dict[str, Any]]) -> Optional[Any]:
+    """M1's labeled-degradation arm applied to WRITES (flow's wave-4b
+    ask 3; live outage 2026-07-24: the embedder 400'd mid-life and
+    MEMORY_FORM hard-failed — a life-close lost its summary and the
+    night died non-atomically after forming a candidate). A DEAD
+    embedder (transport/HTTP/model error) must not amnesia a healthy
+    mind: on ANY embed exception the batch degrades to VECTORLESS rows
+    with ONE loud #FALLBACK naming the failure beside the store pin
+    (claimed-vs-served in one line, the 2026-07-11 diagnosis lesson);
+    reembed backfills later.
+
+    THE INTEGRITY SPLIT stands: this catches the embed CALL only.
+    Wrong-space refusals (check_add_dimension on returned vectors) stay
+    HARD — mismatched dimensions are corruption, never degradable."""
+    try:
+        return embedder.embed_texts(texts)
+    except Exception as exc:  # transport/HTTP/model errors: degrade, labeled
+        joined = annotate_embed_failure(exc, pin)
+        warnings.warn(
+            f"#FALLBACK: embedder failed during formation — {len(list(texts))} "
+            "record(s) stored VECTORLESS (invisible to vector recall until "
+            f"reembed repairs): {joined if joined is not None else exc}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return None
 
 
 def check_model_compat(pin: Optional[Dict[str, Any]], embedder: Any) -> None:

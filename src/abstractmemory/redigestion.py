@@ -62,6 +62,7 @@ from .records import MemoryRecordInput, record_id_for
 from .store import TripleQuery
 
 __all__ = [
+    "MACHINE_AUTHORED_METHODS",
     "MECHANICAL_DIGEST_METHODS",
     "REDIGESTION_PROTECTED_KINDS",
     "RedigestionCandidate",
@@ -92,6 +93,37 @@ MECHANICAL_DIGEST_METHODS = frozenset({
     "mechanical-v1",        # driver v1 truncation digests (Castor's debt)
     "mechanical-v2",        # driver's current mechanical exchange digest
     "mechanical-floor-v1",  # runtime's marker-only reflection floor (c2447)
+    # flow's entity-brain formation (named on the thread the turn it was
+    # born, c5185 — the pact working): both-sides gist, sentence-bounded
+    # cuts, #TRUNCATION-labeled, zero LLM, verbatim always attached —
+    # exactly the machine-authored class re-digestion exists to repair.
+    "mechanical-flow-v1",
+})
+
+# MACHINE-AUTHORED superset (wave-4 F5 adversary P1-1): two DIFFERENT
+# semantics were riding one set. MECHANICAL_DIGEST_METHODS above answers
+# "may a batch re-digest this?" (repair CONSENT — dedup summaries are
+# deliberately excluded because re-digestion would orphan their group
+# membership). THIS set answers "did a machine write these words?"
+# (AUTHORSHIP — dedup summaries are machine-authored, they carry a
+# member's template digest verbatim). Consumers that key on authorship
+# (the dream bridge scorer's template-cosine guard) use THIS set; keying
+# them on the consent set resurrected the paperwork dream through the
+# dedup lane (repro'd: dedup×dedup and episode×dedup-summary both
+# vector-bridged on copied template text).
+MACHINE_AUTHORED_METHODS = MECHANICAL_DIGEST_METHODS | frozenset({
+    "mechanical-dedup-v1",
+    # RESERVED FOR THE DRIVER LANE, ZERO WRITERS TODAY (runtime's audit,
+    # c5277): all three runtime DIARY_WRITE sites carry ENTITY-ELECTED
+    # words (never machine-stamped, the G1 election rule); the
+    # ecosystem's deterministic close notes are FLOW'S lane and stamp
+    # mechanical-flow-v1 (already in the consent set above, hence this
+    # superset). Pre-admitted per the digest_method pact (named on the
+    # thread the turn it was born, c5273) so a future machine-worded
+    # driver note uses it day one. Authorship only — deliberately NOT
+    # in the repair-consent set: close-note gists are session records,
+    # not re-digestible without the entity's own act.
+    "mechanical-close-v1",
 })
 
 # Kinds a batch may never re-digest (rationale per kind in the module

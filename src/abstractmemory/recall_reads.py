@@ -26,16 +26,29 @@ Two surfaces, both pure reads:
 The facade composes both as `MemorySystem.recall_history(...)` — history +
 diagnosis in one answer. Nothing here writes: explaining recall is not
 using (0018's audit-inertness rule applies to the explanation itself).
+
+`explain_recall(...)` (backlog 0042) is the third surface: ONE serving
+dict answering "why did/didn't record X surface in THIS recall?" — the
+question every cue-dilution and bridge-attractor diagnosis answered with
+a hand-written forensic script. It COMPOSES the two reads above against
+one trace (named by trace_id, or the newest): status + admission label +
+the per-channel relevance parts the trace recorded + shelf position vs
+cut + budgets + origin, and the structural absence diagnosis when the
+record never appeared. HONESTY RULE (0042): the explanation reports only
+what the trace RECORDED at recall time — activation was never journaled
+per-candidate, so it reads {"recorded": false} with a plain note, NEVER
+a fresh number presented as the past decision. Consumers version by
+FIELD PRESENCE, never schema forks.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .folds import binding_states, closure_exclusions
 from .store import TripleQuery
 
-__all__ = ["absence_diagnosis", "recall_history"]
+__all__ = ["absence_diagnosis", "explain_recall", "recall_history"]
 
 # Bounded trace walk: enough nights/turns to answer "recently, why not X"
 # without turning the explainability read into its own storage scan.
@@ -62,6 +75,39 @@ def _identity_set(store: Any, record_id: str) -> Set[str]:
     except Exception:
         pass  # a diagnosis read must never crash on a store hiccup
     return ids
+
+
+def _trace_status(trace: Any, ids: Set[str]) -> Optional[Dict[str, Any]]:
+    """The record's recorded part in ONE trace, or None (absent). One
+    classifier for recall_history AND explain_recall — two surfaces
+    reading the same trace must never disagree on what it says.
+    Returns {status, admission?, reason?, score?, scores?, candidate_rank?}:
+    candidate_rank is the 1-based position in the trace's bounded
+    strongest-first candidate list, when the record appears in it."""
+    out: Dict[str, Any] = {}
+    selected_hit = next((s for s in (trace.selected or ()) if s in ids), None)
+    if selected_hit is not None:
+        out["status"] = "selected"
+        admission = (trace.admissions or {}).get(selected_hit)
+        if admission:
+            out["admission"] = admission
+    else:
+        for d in trace.dropped or ():
+            if isinstance(d, dict) and (d.get("record_id") in ids
+                                        or d.get("graph_id") in ids):
+                out["status"] = "dropped"
+                out["reason"] = str(d.get("reason") or "")
+                if d.get("score") is not None:
+                    out["score"] = d.get("score")
+                break
+    for rank, c in enumerate(trace.candidates or (), start=1):
+        if isinstance(c, dict) and c.get("record_id") in ids:
+            out["candidate_rank"] = rank
+            out["scores"] = dict(c.get("scores") or {})
+            if "status" not in out:
+                out["status"] = "candidate_only"
+            break
+    return out if "status" in out else None
 
 
 def recall_history(
@@ -93,39 +139,29 @@ def recall_history(
     counts = {"selected": 0, "dropped": 0, "candidate_only": 0, "absent": 0}
 
     for trace in traces:
-        status: Optional[str] = None
+        part = _trace_status(trace, ids)
+        if part is None:
+            counts["absent"] += 1
+            continue
         entry: Dict[str, Any] = {
             "trace_id": trace.trace_id,
             "seq": int(trace.seq),
             "observed_at": trace.observed_at,
             "trace_kind": trace.trace_kind,
+            "status": part["status"],
         }
-        selected_hit = next((s for s in (trace.selected or ()) if s in ids), None)
-        if selected_hit is not None:
-            status = "selected"
-            admission = (trace.admissions or {}).get(selected_hit)
-            if admission:
-                entry["admission"] = admission
-        else:
-            for d in trace.dropped or ():
-                if isinstance(d, dict) and (d.get("record_id") in ids
-                                            or d.get("graph_id") in ids):
-                    status = "dropped"
-                    entry["reason"] = str(d.get("reason") or "")
-                    if d.get("score") is not None:
-                        entry["score"] = d.get("score")
-                    break
-            if status is None:
-                for c in trace.candidates or ():
-                    if isinstance(c, dict) and c.get("record_id") in ids:
-                        status = "candidate_only"
-                        entry["scores"] = dict(c.get("scores") or {})
-                        break
-        if status is None:
-            counts["absent"] += 1
-            continue
-        entry["status"] = status
-        counts[status] += 1
+        # Field parity with the established event shape: scores itemize
+        # candidate_only events only (selected/dropped keep their original
+        # compact entries; explain_recall is the per-trace deep view).
+        if part["status"] == "selected" and "admission" in part:
+            entry["admission"] = part["admission"]
+        if part["status"] == "dropped":
+            entry["reason"] = part.get("reason", "")
+            if "score" in part:
+                entry["score"] = part["score"]
+        if part["status"] == "candidate_only":
+            entry["scores"] = part.get("scores", {})
+        counts[part["status"]] += 1
         events.append(entry)
 
     return {
@@ -232,3 +268,198 @@ def absence_diagnosis(
             "reasons; probe() is the deliberate reach)")
 
     return {"record_id": rid, "reasons": reasons, "channels_reachable": channels}
+
+
+def _record_origin(store: Any, ids: Set[str]) -> Dict[str, Any]:
+    """The record's formation identity (kind, formed_at, provenance voice) —
+    origin_diversity's voice fields, served per record. Provenance is
+    immutable at formation, so store truth IS recall-time truth here."""
+    from .records import resolve_digest_assertion
+
+    digest = None
+    for rid in sorted(ids):
+        digest = resolve_digest_assertion(store, rid)
+        if digest is not None:
+            break
+    if digest is None:
+        return {"formed": False,
+                "note": "no digest row exists for this id in the store"}
+    attrs = digest.attributes if isinstance(digest.attributes, dict) else {}
+    prov = digest.provenance if isinstance(digest.provenance, dict) else {}
+    return {
+        "formed": True,
+        "graph_id": str(digest.subject or ""),
+        "kind": str(attrs.get("record_kind") or "memory"),
+        "title": str(attrs.get("title") or ""),
+        "formed_at": str(digest.observed_at or ""),
+        "source": str(prov.get("source") or ""),
+        "actor": str(prov.get("actor") or ""),
+        "session_id": str(prov.get("session_id") or prov.get("run_id")
+                          or prov.get("turn_id") or ""),
+    }
+
+
+def explain_recall(
+    store: Any,
+    journal: Any,
+    record_id: str,
+    *,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """"Why did/didn't record X surface in THIS recall?" as ONE serving
+    dict (backlog 0042) — the composition of the two reads above against
+    one trace, so the diagnosis method that worked live ("felt absence
+    decomposed measurably") is a surface anyone can render.
+
+    Trace selection: `trace_id` names the recall to explain; None = the
+    newest trace (the "that last recall" question). A named trace that
+    does not exist raises loudly — explaining a phantom recall would be
+    fabrication. No traces at all returns status="no_recall_recorded".
+
+    Status vocabulary: selected | dropped | candidate_only | absent |
+    no_recall_recorded. The scopes come FROM THE TRACE (searched_scopes) —
+    "why not in this recall" can only mean the scopes this recall
+    searched; the absent branch runs the structural diagnosis per pair.
+
+    HONESTY RULES (0042, non-negotiable):
+    - the explanation reports what the trace RECORDED at recall time.
+      Per-candidate activation was never journaled, so `activation` reads
+      {"recorded": false} with a plain note — never a fresh number
+      presented as the past decision.
+    - relevance parts come from the trace's BOUNDED candidate list; a
+      record outside it reads {"recorded": false} with the bound named.
+    - shelf rank is labeled what it is: the strongest-fused position in
+      the bounded candidate list at trace time, not a replay of the fill.
+    Consumers version by FIELD PRESENCE, never schema forks. Pure read.
+    """
+    rid = str(record_id or "").strip()
+    if not rid:
+        raise ValueError("explain_recall requires a record id")
+    ids = _identity_set(store, rid)
+
+    trace = None
+    if trace_id is not None:
+        wanted = str(trace_id).strip()
+        found = journal.traces(trace_id=wanted, limit=1)
+        if not found:
+            raise ValueError(
+                f"explain_recall: no trace {wanted!r} exists in this journal — "
+                "explaining a recall that never ran would be fabrication")
+        trace = found[0]
+    else:
+        newest = journal.traces(limit=1)
+        trace = newest[0] if newest else None
+
+    origin = _record_origin(store, ids)
+    out: Dict[str, Any] = {"record_id": rid, "origin": origin}
+    if trace is None:
+        out["status"] = "no_recall_recorded"
+        out["note"] = ("this journal holds no reconstruction/probe traces — "
+                       "no recall has run to explain")
+        return out
+
+    searched: List[Tuple[str, str]] = [
+        (str(s.get("scope") or ""), str(s.get("owner_id") or ""))
+        for s in (trace.searched_scopes or ())
+        if isinstance(s, dict) and str(s.get("scope") or "").strip()
+    ]
+    out["trace"] = {
+        "trace_id": trace.trace_id,
+        "seq": int(trace.seq),
+        "observed_at": trace.observed_at,
+        "trace_kind": trace.trace_kind,
+        "channels": list(trace.channels or ()),
+        "searched_scopes": [{"scope": s, "owner_id": o} for s, o in searched],
+        "stop_reason": trace.stop_reason,
+        "warnings": list(trace.warnings or ()),
+    }
+    out["budgets"] = dict(trace.budgets or {})
+    out["budget_spent"] = dict(trace.budget_spent or {})
+    out["activation"] = {
+        "recorded": False,
+        "note": ("not recorded in this trace — traces carry per-channel "
+                 "relevance and drop reasons; activation influenced ordering "
+                 "at recall time but was never journaled per candidate"),
+    }
+
+    part = _trace_status(trace, ids)
+    if part is None:
+        out["status"] = "absent"
+        reasons: List[str] = []
+        # Timing first: a record formed AFTER the trace could never have
+        # surfaced in it — the cheapest true explanation there is.
+        formed_after = False
+        formed_at = str(origin.get("formed_at") or "")
+        if origin.get("formed") and formed_at and str(trace.observed_at or ""):
+            if formed_at > str(trace.observed_at):
+                formed_after = True
+                reasons.append(
+                    "the record was formed AFTER this recall ran "
+                    f"(formed {formed_at}, recall {trace.observed_at}) — "
+                    "no recall can surface a memory that did not exist yet; "
+                    "structural diagnosis skipped (a record that never raced "
+                    "cannot have lost the race)")
+        if not searched:
+            reasons.append(
+                "this trace records no searched scopes — the structural "
+                "diagnosis has nothing to run against")
+        out["diagnosis"] = {
+            "note": reasons,
+            # Adversary P1-2: a formed-after record never raced this recall —
+            # running the structural diagnosis anyway would answer "it lost
+            # the shelf race", which is factually false for it.
+            "by_scope": [] if formed_after else [
+                {"scope": scope, "owner_id": owner,
+                 **{k: v for k, v in absence_diagnosis(
+                     store, journal, rid, scope=scope, owner_id=owner,
+                 ).items() if k != "record_id"}}
+                for scope, owner in searched
+            ],
+        }
+        return out
+
+    out["status"] = part["status"]
+    if "admission" in part:
+        out["admission"] = part["admission"]  # self | stm | stimulus | both
+    if part["status"] == "dropped":
+        out["reason"] = part.get("reason", "")
+        if "score" in part:
+            out["score"] = part["score"]
+
+    # Adversary P1-1: expand traces retain candidates with scores={} BY
+    # DESIGN (they record no per-channel parts) — key presence alone would
+    # claim recorded parts that never existed. Recorded means NON-EMPTY.
+    parts = dict(part.get("scores") or {})
+    if parts:
+        out["relevance"] = {"recorded": True, "parts": parts}
+    elif "scores" in part:
+        out["relevance"] = {
+            "recorded": False,
+            "note": ("the trace retained this record in its candidate list "
+                     "but recorded no per-channel parts (expand traces record "
+                     "none) — there is nothing honest to serve"),
+        }
+    else:
+        cap = len(trace.candidates or ())
+        out["relevance"] = {
+            "recorded": False,
+            "note": (f"not in the trace's bounded candidate list ({cap} "
+                     "strongest retained) — per-channel parts were not kept "
+                     "for this record; presence came from a reserved lane "
+                     "(self/STM) or the record ranked below the bound"),
+        }
+
+    shelf: Dict[str, Any] = {"selected_count": len(trace.selected or ())}
+    selected_ids = list(trace.selected or ())
+    hit = next((s for s in selected_ids if s in ids), None)
+    if hit is not None:
+        shelf["position"] = selected_ids.index(hit) + 1  # shelf render order
+    if "candidate_rank" in part:
+        shelf["candidate_rank"] = part["candidate_rank"]
+        shelf["candidate_cap"] = len(trace.candidates or ())
+        shelf["rank_note"] = ("strongest-fused position in the trace's bounded "
+                              "candidate list at recall time — not a replay of "
+                              "the shelf fill (reserved self/STM lanes fill by "
+                              "state, not rank)")
+    out["shelf"] = shelf
+    return out

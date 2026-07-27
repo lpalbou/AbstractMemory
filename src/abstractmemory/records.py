@@ -85,7 +85,17 @@ MEMORY_RECORD_KINDS = frozenset(
      # formation teaching can hold the bar. Actionability is a WORDS
      # judgment the engine cannot validate — the bar lives in the
      # reflection teaching (runtime), never as an engine refusal.
-     "observation"}
+     "observation",
+     # Identity-amendment PROPOSAL (dm#124 conscious/subconscious ruling +
+     # the R2 fold, 2026-07-23; runtime's realize fence forms these): the
+     # entity's own mid-turn/look-back realization, held for sleep review —
+     # his words verbatim, derived_from edges naming the evidence, INERT on
+     # formation (surface-only; adoption is the entity's later act, never
+     # an auto-enactment). Pending = formed with lifecycle still
+     # inactive_candidate; enactment rides journal bindings + a
+     # derived_from edge from the supersession record (append-only law —
+     # never an attribute mutation on the resting proposal).
+     "realization"}
 )
 
 # 0020 kind priority (lower rank orders earlier): identity kinds (value <
@@ -108,7 +118,11 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
     # observation = episode peer (dm#84: noticed-not-distilled — it keeps
     # its keep as lived material, never competes with the wisdom rank).
     "observation": 3,
+    # realization = summary/derived-artifact band: a held proposal about
+    # the self surfaces on merit, never outranking lived material or the
+    # identity kinds it may one day amend (dm#124: surface-only).
     "plan": 4, "summary": 5, "interest": 5, "dream": 5, "world_model": 5,
+    "realization": 5,
     "answer": 6, "question": 7, "claim": 8, "memory": 9,
 })
 
@@ -131,6 +145,34 @@ VALUE_CLASSES = frozenset({"core", "revisable"})
 # vocabulary pass the same wave (announced room-wide, this one at
 # iteration-2 c3126).
 DIARY_TYPES = frozenset({"note", "idea", "commitment", "reflection", "question", "problem", "lesson"})
+
+# IDENTITY KINDS — who the entity IS (the engrammed core + elected
+# interests). CANONICAL SOURCE (entity-seat fable5 P1-2, 2026-07-25: the
+# door hand-listed these and situate.py carried a second copy — the
+# diary_type-clamp drift class; the SELF_FRACTION_FLOOR precedent applies:
+# consumers IMPORT, never copy). The deposit gate refuses workplace FORM
+# of these kinds; identity evolution is the entity's own act.
+IDENTITY_KINDS = frozenset({"value", "purpose", "trait", "interest"})
+
+# Kinds a door-SIGNED reflection segment may FORM into self scope (R6
+# ruling 2026-07-25 + the realization wave): the close-reflection's
+# election surface. The door imports this — a kind added here (with its
+# gate semantics) reaches every reflection segment without a hand-list
+# edit (entity-seat fable5 P0-2: kind=realization elections were silently
+# dropped because the door's list predated the realization ship).
+REFLECTION_FORM_KINDS = frozenset({"interest", "lesson", "summary", "realization"})
+
+# Kinds MACHINE CONSOLIDATION must never target (flow's life-loop
+# adversary, c5260: night maintenance formed "Consolidated: trait-0" OVER
+# IDENTITY RECORDS). The rule is ownership, not hygiene: the engrammed
+# core evolves only by the entity's own act (identity_review/
+# enact_realization), realizations are entity-reviewable proposals, and
+# diary projections are sole-author act-records — a mechanical merge over
+# any of them is machine identity-editing. INTERESTS are deliberately NOT
+# here: repeated elections of one subject are the twelve-bridges attractor
+# and their dedup is a designed lane (review-gated, entity-disposed).
+CONSOLIDATION_PROTECTED_KINDS = frozenset(
+    {"value", "purpose", "trait", "realization", "diary"})
 
 # Lesson-layer conventions (0035, maintainer 2026-07-12: lessons are
 # "something actionable that can reference actual memories and serve as

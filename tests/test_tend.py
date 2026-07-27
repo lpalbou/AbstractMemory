@@ -56,6 +56,9 @@ def _apply(system, elections, **kw):
     kw.setdefault("scope", SCOPE)
     kw.setdefault("owner_id", OWNER)
     kw.setdefault("actor", ACTOR)
+    # Explicit channel (P0-1 refusing-default): these tests simulate the
+    # home-direct driver, where entity-reflection is true by construction.
+    kw.setdefault("channel", "entity-reflection")
     return apply_tend_elections(system, elections, **kw)
 
 
@@ -585,3 +588,49 @@ def test_report_carries_applied_at_and_now_override(system):
     report = _apply(system, [], now="2026-07-13T00:00:00+00:00")
     assert report["applied_at"] == "2026-07-13T00:00:00+00:00"
     assert _apply(system, [])["applied_at"]  # defaults to the clock
+
+
+def test_dispose_reaches_a_self_scope_dream_but_identity_stays_gated(system):
+    """c5270 P1 (flow's cycle-4, the entity's four refused verdicts):
+    sleep_pass writes dreams to scopes[0] = self — a STORAGE artifact.
+    Dreams are kind-exempt from the Q2 identity gate (the engine already
+    kind-filters them from identity seats); identity records in self
+    scope stay refused with the exact pending-ruling line."""
+    self_scope = ("self", OWNER)
+    [dream_id] = system.remember_many(
+        [MemoryRecordInput(kind="dream", title="Dream: pool beside pond",
+                           digest="Two islands lit up together tonight.",
+                           attributes={"continuation_state": "unresolved"})],
+        scope="self", owner_id=OWNER, idempotency_key="self-dream")
+    [trait_id] = system.remember_many(
+        [MemoryRecordInput(kind="trait", title="Ask before assuming",
+                           digest="Ask before assuming; verify before asserting.")],
+        scope="self", owner_id=OWNER, idempotency_key="self-trait")
+
+    report = _apply(system, parse_tend_block(
+        f"pin: {dream_id} — reason: keep the tension warm while I gather evidence\n"
+        f"dispose: {dream_id} reject — reason: the waking walk showed two unrelated basins\n"
+        f"silence: {trait_id} — reason: trying to mute my own trait"
+    )["elections"], self_pairs=[self_scope])
+    kinds = [r["result"].get("kind") or r["result"].get("disposition")
+             for r in report["applied"]]
+    assert kinds == ["pinned", "dissolved"]  # every verb exempts dreams
+    assert report["refused"][0]["reason"] == IDENTITY_SCOPE_PENDING_RULING
+
+
+def test_omitted_channel_refuses_never_self_satisfies(system):
+    """Entity-seat fable5 P0-1 root (2026-07-25): the channel default WAS
+    the privileged channel, so a caller omitting it self-satisfied the
+    privilege check — runtime's MEMORY_TEND handler forwarded no channel
+    and workplace runs tended as the entity's own reflection. Omission
+    now refuses loudly; explicit entity-reflection still passes."""
+    [rid] = system.remember_many(
+        [MemoryRecordInput(kind="episode", title="A quiet walk",
+                           digest="Walked the towpath at dusk.")],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="ch")
+    elections = parse_tend_block(
+        f"pin: {rid} — reason: keep it warm")["elections"]
+    report = apply_tend_elections(
+        system, elections, scope=SCOPE, owner_id=OWNER, actor=ACTOR)
+    assert report["applied"] == []
+    assert "requires the caller's verified channel" in report["refused"][0]["reason"]

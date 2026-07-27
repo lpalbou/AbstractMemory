@@ -76,20 +76,24 @@ from .maintenance import (
 )
 from .cognition_health import cognition_health
 from .concept_anchor import ConceptAnchorTuning, concept_terms, expand_by_concepts
+from .mind_mass import VECTOR_SCAN_LIMIT, WARNING_WORDS, mind_mass_report
 from .disposal import (
     DISPOSAL_RELATIONS,
     confirm_relation,
     dispose_dream,
+    enact_realization,
     promote_candidate,
     reject_candidate,
 )
+from .engine_manifest import MANIFEST_VERSION, engine_manifest
+from .identity_review import identity_review_pass
 from .origin_diversity import (
     ORIGIN_DOMINANCE_FLOOR,
     ORIGIN_MIN_COUNTED,
     origin_diversity,
 )
 from .probe import PROBE_EFFORTS, ProbeBudget, ProbeHit, ProbeResult, probe, probe_expand
-from .recall_reads import absence_diagnosis, recall_history
+from .recall_reads import absence_diagnosis, explain_recall, recall_history
 from .recent_records import RECENT_RECORDS_DEFAULT_LIMIT, recent_records
 from .records import ReconstructConfig
 from .sleep_policy import SleepTuning
@@ -108,7 +112,10 @@ from .models import TripleAssertion
 from .records import (
     DIARY_TYPES,
     KIND_RANKS,
+    CONSOLIDATION_PROTECTED_KINDS,
+    IDENTITY_KINDS,
     MEMORY_RECORD_KINDS,
+    REFLECTION_FORM_KINDS,
     MemoryRecordInput,
     diary_entry_hash,
     verify_diary_chain,
@@ -168,6 +175,7 @@ __all__ = [
     "AttentionConfig",
     "CANONICAL_TEXT_VERSION",
     "COMPONENT_RELATIONS",
+    "CONSOLIDATION_PROTECTED_KINDS",
     "CONTEXT_ANCHOR_FIELD",
     "CONTEXT_RELATIONS",
     "ClosureRecord",
@@ -187,11 +195,13 @@ __all__ = [
     "GradationConfig",
     "GradationScore",
     "IDENTITY_ANCHOR_FIELD",
+    "IDENTITY_KINDS",
     "IDENTITY_SCOPE_PENDING_RULING",
     "InMemoryJournal",
     "InMemoryTripleStore",
     "KIND_RANKS",
     "LanceDBTripleStore",
+    "MANIFEST_VERSION",
     "MECHANICAL_DIGEST_METHODS",
     "MEMORY_RECORD_KINDS",
     "MemoryEvent",
@@ -208,6 +218,7 @@ __all__ = [
     "ProbeResult",
     "RECENT_RECORDS_DEFAULT_LIMIT",
     "REDIGESTION_PROTECTED_KINDS",
+    "REFLECTION_FORM_KINDS",
     "RecallBudget",
     "ReconstructConfig",
     "ReconstructionResult",
@@ -226,7 +237,9 @@ __all__ = [
     "TripleAssertion",
     "TripleQuery",
     "TripleStore",
+    "VECTOR_SCAN_LIMIT",
     "ValenceEvent",
+    "WARNING_WORDS",
     "absence_diagnosis",
     "alias_candidates",
     "alias_map",
@@ -249,20 +262,25 @@ __all__ = [
     "dream_pass",
     "drive_groups",
     "drive_pressure",
+    "enact_realization",
+    "engine_manifest",
     "engram",
     "entity_card",
     "entity_recall_budget",
     "expand_by_concepts",
+    "explain_recall",
     "export_replay",
     "familiarity",
     "feelings_about",
     "fold_bindings",
     "identity_card",
+    "identity_review_pass",
     "journal_cold_cut",
     "last_maintenance_seq",
     "lint_spark",
     "maintenance_due",
     "maintenance_report",
+    "mind_mass_report",
     "mine_candidates_pass",
     "open_commitments",
     "open_drive_partition",

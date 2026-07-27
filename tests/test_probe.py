@@ -277,3 +277,64 @@ def test_expand_ranks_by_connection_count(system) -> None:
     assert got.index(ids[0]) < got.index(ids[1]), "hub did not outrank fringe"
     hub = next(h for h in x.hits if h.graph_id == ids[0])
     assert hub.relevance.get("connections", 0) >= 2
+
+
+def test_machine_rows_rank_behind_lived_records(system) -> None:
+    """Wave-4 F4 (flow's long-life regrade, live-measured: 4 of 6 seats
+    went to bookkeeping on holistic cues): maintenance candidates and
+    bookkeeping rows rank as a CLASS behind every lived/authored record —
+    they surface only when nothing real competes, and never evict it."""
+    [episode] = system.remember_many([
+        MemoryRecordInput(kind="episode", title="harbor reflection",
+                          digest="I walked the harbor thinking about my life.",
+                          keywords=("harbor", "life"))],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="ep")
+    [anchor] = system.remember_many([
+        MemoryRecordInput(kind="episode", title="quay anchor",
+                          digest="An anchor record for the summary edge.")],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="anchor")
+    # A machine offer matching the SAME cue harder (title + digest + keywords).
+    system.remember_many([
+        MemoryRecordInput(kind="summary", title="harbor life summary",
+                          digest="Maintenance summary about harbor life records.",
+                          keywords=("harbor", "life"),
+                          edges=(("summarizes", anchor),),
+                          attributes={"maintenance_candidate": True,
+                                      "review_required": True})],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="mc")
+
+    result = system.probe(Stimulus(cue_text="harbor life"), scopes=SCOPES,
+                          reason="wave-4 F4 pin")
+    gids = [h.graph_id for h in result.hits]  # hits carry ROW ids; compare graphs
+    assert episode in gids
+    episode_pos = gids.index(episode)
+    machine_gids = [g for g in gids if g not in (episode, anchor)]
+    assert machine_gids, "the machine offer must still be findable"
+    # The lived episode ranks before the machine offer, regardless of the
+    # offer's harder cue match.
+    for mid in machine_gids:
+        assert episode_pos < gids.index(mid), (
+            "a machine row outranked a lived record on a holistic cue")
+
+
+def test_machine_rows_still_surface_when_nothing_real_competes(system) -> None:
+    """The discount's other half: machine rows rank BEHIND lived records,
+    never vanish — a deliberate probe still finds them when they are the
+    only match (discount, not exclusion)."""
+    [anchor] = system.remember_many([
+        MemoryRecordInput(kind="episode", title="anchor",
+                          digest="Anchor for the summary edge.")],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="a1")
+    [offer] = system.remember_many([
+        MemoryRecordInput(kind="summary", title="quarterly xylophone review",
+                          digest="Maintenance offer about the xylophone backlog.",
+                          keywords=("xylophone",),
+                          edges=(("summarizes", anchor),),
+                          attributes={"maintenance_candidate": True,
+                                      "review_required": True})],
+        scope=SCOPE, owner_id=OWNER, idempotency_key="m1")
+
+    result = system.probe(Stimulus(cue_text="xylophone backlog"), scopes=SCOPES,
+                          reason="discount-not-exclusion pin")
+    assert offer in [h.graph_id for h in result.hits], (
+        "the machine row must still surface when nothing real competes")
