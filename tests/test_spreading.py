@@ -108,6 +108,28 @@ def test_cycle_terminates_with_convergent_accumulation() -> None:
     assert len(edges) == 3
 
 
+def test_same_hop_seed_peers_can_receive_spread_from_each_other() -> None:
+    store = _chain_store()
+    spread, edges = spread_activation(
+        store,
+        {"e-1": 1.0, "e-2": 0.8},
+        scope=SCOPE,
+        owner_id=OWNER,
+        params=SpreadParams(max_hops=2),
+        trail_activation={},
+    )
+    # Hop 1 now allows current-frontier peers to receive from each other:
+    # e-1 -> e-2 = 0.5, e-2 -> e-1 = 0.4, e-2 -> e-3 = 0.4.
+    # Hop 2 still avoids echoes into nodes that already spread in an earlier
+    # hop, so only the new frontier node (e-3) can continue if it has neighbors.
+    assert spread == {"e-1": 0.4, "e-2": 0.5, "e-3": 0.4}
+    assert [(e["source_id"], e["target_id"]) for e in edges] == [
+        ("e-1", "e-2"),
+        ("e-2", "e-3"),
+        ("e-2", "e-1"),
+    ]
+
+
 def test_excluded_ids_never_receive_nor_relay() -> None:
     store = _chain_store()
     spread, edges = spread_activation(

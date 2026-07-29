@@ -223,6 +223,7 @@ def spread_activation(
         trail_partners[node].sort(key=lambda t: (-t[1], t[0]))
 
     # frontier: assertion_id -> (assertion, propagation strength). Hop 0 = seeds.
+    seed_ids = set(seed_assertions.keys())
     frontier: Dict[str, Tuple[TripleAssertion, float]] = {
         rid: (seed_assertions[rid], clean_seeds[rid]) for rid in sorted(seed_assertions.keys())
     }
@@ -249,10 +250,20 @@ def spread_activation(
                 target_id = neighbor.assertion_id or ""
                 if not target_id:  # excluded rows already filtered pre-cap
                     continue
-                # A node that already spread does not re-receive: the echo
-                # (seed -> neighbor -> seed) would burn edge budget on
-                # self-reinforcement without adding working-set structure.
-                if target_id in expanded:
+                # A node that already spread in an EARLIER hop does not
+                # re-receive: the echo (seed -> neighbor -> seed) would burn
+                # edge budget on self-reinforcement without adding working-set
+                # structure. ONE deliberate exception: the original cue-matched
+                # seeds may still warm each other on hop 1, fixing the
+                # seed-to-seed gap called out in 0026 without changing later
+                # same-hop frontier behavior.
+                allow_seed_peer = (
+                    source_id in seed_ids
+                    and target_id in seed_ids
+                    and target_id in frontier
+                    and source_id != target_id
+                )
+                if target_id in expanded and not allow_seed_peer:
                     continue
 
                 pair = tuple(sorted((source_id, target_id)))
