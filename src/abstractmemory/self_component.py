@@ -252,6 +252,9 @@ class FillResult:
     stm_placed: Tuple[str, ...] = ()
     placed: Tuple[str, ...] = ()
     stm_slots: int = 0
+    # Concentration-slice observability: ids seated by the newest-seat
+    # guarantee (empty in the healthy case where merit already placed them).
+    newest_seated: Tuple[str, ...] = ()
 
 
 def fill_shelf(
@@ -267,6 +270,8 @@ def fill_shelf(
     view: str,
     scope_pairs: Sequence[Tuple[str, str]],
     excluded_ids: AbstractSet[str],
+    newest_seats: int = 0,
+    dedup_identical_digests: bool = True,
 ) -> FillResult:
     """The C3 v1.2 union fill (order + guarantees in the module docstring)."""
     shelf_cap = max(0, int(budget.shelf_size))
@@ -283,6 +288,39 @@ def fill_shelf(
     digests = r.digests
     for rid in ordered:
         digests[rid] = handle_digest(universe[rid].assertion)
+    # ADMISSION-TIME DEDUP (Veya deep-check P1, gateway c5907: ~10 of 24
+    # shelf seats were literal duplicates, each holding a seat and each
+    # generating its own C(n,2) co-selection pairs). Byte-identical
+    # digests are the same fact to the entity's eye — one seat suffices.
+    # A RUNNING placed-digest set gives dedup ACROSS phases: the first
+    # instance to seat (phase-0 match > self > stimulus merit > STM) wins
+    # the seat by that priority, and any later identical-digest candidate
+    # is recorded (duplicate_of) and skipped. SELF is never gated (identity
+    # presence is guaranteed — a self record seats even if its words
+    # already appeared), but self digests ARE registered so a stimulus/STM
+    # copy of a self record is the redundant one. The graph is untouched —
+    # every record keeps its id, counts, and recallability; this is
+    # presentation truth, not a merge.
+    dedup = bool(dedup_identical_digests)
+    placed_digests: set = set()
+    duplicate_of: Dict[str, str] = {}
+    digest_owner: Dict[str, str] = {}
+    dup_dropped: set = set()  # dups that already carry a drop entry (STM path)
+
+    def _is_dup(rid: str) -> bool:
+        if not dedup:
+            return False
+        d = digests.get(rid)
+        return d is not None and d in placed_digests
+
+    def _register_digest(rid: str) -> None:
+        if not dedup:
+            return
+        d = digests.get(rid)
+        if d is not None:
+            placed_digests.add(d)
+            digest_owner.setdefault(d, rid)
+
     placed: List[str] = []
     self_placed: List[str] = []
     stm_placed: List[str] = []
@@ -299,6 +337,7 @@ def fill_shelf(
         if estimate <= total_tokens:
             placed.append(top_matched)
             placed_set.add(top_matched)
+            _register_digest(top_matched)
             r.tokens_used += estimate
         else:
             r.token_exhausted = True
@@ -331,6 +370,8 @@ def fill_shelf(
             continue
         self_placed.append(rid)
         placed_set.add(rid)
+        _register_digest(rid)  # identity seats even at duplicate text; its
+        # words now own the digest so stimulus/STM copies are the redundant.
         self_tokens_used += estimate
     r.tokens_used += self_tokens_used
 
@@ -341,6 +382,11 @@ def fill_shelf(
         for rid in ordered:
             if rid in placed_set:
                 continue
+            if _is_dup(rid):
+                # A byte-identical instance already holds a seat: this copy
+                # is redundant to the entity's eye (recorded once, below).
+                duplicate_of.setdefault(rid, digest_owner.get(digests.get(rid, ""), ""))
+                continue
             if len(placed) >= slot_cap:
                 break
             estimate = _token_estimate(digests[rid])  # crude 4-chars/token estimate (labeled)
@@ -349,6 +395,7 @@ def fill_shelf(
                 continue  # keep scanning: smaller items may still fit
             placed.append(rid)
             placed_set.add(rid)
+            _register_digest(rid)
             r.tokens_used += estimate
 
     _fill_stimulus(max(len(placed), shelf_cap - stm_reserved_slots - len(self_placed)),
@@ -385,19 +432,125 @@ def fill_shelf(
                 if base_of(rid) + cand.spread < float(budget.min_activation):
                     continue
             estimate = _token_estimate(digests.setdefault(rid, handle_digest(cand.assertion)))
+            if _is_dup(rid):
+                # Same words already seated (stimulus/self/phase-0): an STM
+                # copy would show the entity one fact twice. Emit the drop
+                # HERE and mark it so the final loop does not double-count.
+                duplicate_of.setdefault(rid, digest_owner.get(digests.get(rid, ""), ""))
+                r.dropped.append({"record_id": rid, "score": float(base_activation.get(rid, 0.0)),
+                                  "reason": "duplicate_digest",
+                                  "duplicate_of": duplicate_of[rid]})
+                dup_dropped.add(rid)
+                continue
             if stm_tokens_used + estimate > stm_token_cap:
                 r.dropped.append({"record_id": rid, "score": float(base_activation.get(rid, 0.0)),
                                   "reason": "stm_capped"})
                 continue
             stm_placed.append(rid)
             placed_set.add(rid)
+            _register_digest(rid)
             stm_tokens_used += estimate
     r.tokens_used += stm_tokens_used
 
     # Stimulus remainder: unused reservations return to the stimulus order.
     _fill_stimulus(shelf_cap - len(stm_placed) - len(self_placed), total_tokens)
+
+    # NEWEST-SEAT GUARANTEE (c5208 ask 4 — the working-set concentration
+    # slice; rationale on ReconstructConfig.newest_seat_guarantee): the
+    # newest-FORMED channel-matched candidates get a seat even when
+    # entrenched records outrank them everywhere. Zero-cost when merit
+    # already placed them; otherwise the LOWEST-ordered stimulus seat
+    # yields (never self, never STM, never the phase-0 top match — the
+    # same protection ladder the fill already runs). Token-honest: the
+    # newcomer must fit in the freed + remaining budget or it drops with
+    # its own named reason.
+    newest_seated: List[str] = []
+    newest_evicted: set = set()
+    if newest_seats > 0 and shelf_cap >= 1:
+        newest_matched = sorted(
+            (rid for rid in universe
+             if universe[rid].channel_matched and rid not in excluded_ids),
+            key=lambda rid: (universe[rid].assertion.observed_at or "", rid),
+            reverse=True,
+        )[: int(newest_seats)]
+        # Victim selection is ORDER-indexed, never positional (adversary
+        # P2a: the two-pass stimulus fill can seat a higher-ordered record
+        # AFTER lower-ordered ones, so placed[-1] is not the lowest-merit
+        # member), and the protected set covers the phase-0 top match
+        # (only when it actually seated — P2b), every newest candidate,
+        # and the guarantee's own prior seats (P1: at K>=2 a positional
+        # victim evicted iteration 1's seat or the merit-seated newest —
+        # self-defeating by construction).
+        order_index = {rid: i for i, rid in enumerate(ordered)}
+        protected = set(newest_matched)
+        for rid in newest_matched:
+            if rid in placed_set:
+                continue  # merit seated it — the guarantee is satisfied
+            if _is_dup(rid):
+                continue  # its words already hold a seat — nothing to guarantee
+            estimate = _token_estimate(digests.setdefault(rid, handle_digest(universe[rid].assertion)))
+            freed = 0
+            evicted: Optional[str] = None
+            if _shelf_full():
+                evictable = [
+                    p for p in placed
+                    if p not in protected
+                    and not (p == top_matched and placed and placed[0] == top_matched)
+                ]
+                if evictable:
+                    evicted = max(evictable, key=lambda p: order_index.get(p, -1))
+                if evicted is None:
+                    r.dropped.append({"record_id": rid, "score": universe[rid].fused,
+                                      "reason": "newest_seat_no_evictable"})
+                    continue
+                freed = _token_estimate(digests[evicted])
+            if r.tokens_used - freed + estimate > total_tokens:
+                r.dropped.append({"record_id": rid, "score": universe[rid].fused,
+                                  "reason": "newest_seat_capped"})
+                continue
+            if evicted is not None:
+                placed.remove(evicted)
+                placed_set.discard(evicted)
+                newest_evicted.add(evicted)
+                # UNREGISTER the victim's digest (adversary P1-B): an
+                # evictable victim is the SOLE seated holder of its digest
+                # (eviction picks only from `placed`; every non-self seat is
+                # _is_dup-gated; the one multi-holder case, self+phase-0, is
+                # eviction-protected), so its words genuinely leave the
+                # shelf — a stale registration would make the NEXT newest
+                # candidate _is_dup-skip against a fact no longer present
+                # (the guarantee then fails silently). Discard only when the
+                # victim actually owns the registration.
+                ev_digest = digests.get(evicted)
+                if ev_digest is not None and digest_owner.get(ev_digest) == evicted:
+                    placed_digests.discard(ev_digest)
+                    digest_owner.pop(ev_digest, None)
+                r.tokens_used -= freed
+                r.dropped.append({"record_id": evicted, "score": universe[evicted].fused,
+                                  "reason": "newest_seat_yielded"})
+            placed.append(rid)
+            placed_set.add(rid)
+            _register_digest(rid)
+            r.tokens_used += estimate
+            newest_seated.append(rid)
+            protected.add(rid)
+    r.newest_seated = tuple(newest_seated)
+
     for rid in ordered:
         if rid not in placed_set:
+            if rid in newest_evicted:
+                continue  # already carries its honest newest_seat_yielded entry
+            if rid in dup_dropped:
+                continue  # STM path already emitted its duplicate_digest drop
+            if rid in duplicate_of or _is_dup(rid):
+                # Stimulus-skipped duplicates land HERE (P1-A: they set
+                # duplicate_of at skip time but were never dropped — the
+                # common Veya case, 9 of 10 probes). Exactly one drop each.
+                r.dropped.append({"record_id": rid, "score": universe[rid].fused,
+                                  "reason": "duplicate_digest",
+                                  "duplicate_of": (duplicate_of.get(rid)
+                                                   or digest_owner.get(digests.get(rid, ""), ""))})
+                continue
             reason = "budget_exhausted" if r.token_exhausted else "below_shelf"
             r.dropped.append({"record_id": rid, "score": universe[rid].fused, "reason": reason})
 

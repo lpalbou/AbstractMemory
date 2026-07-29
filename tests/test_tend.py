@@ -97,8 +97,16 @@ _DISTINCT_BASE = ("Walked the harbor at evening: lantern light on the boats, tid
 
 
 def _seed_castor(system):
+    # NEAR-identical retellings, NOT byte-identical (2026-07-27): a real
+    # story retold varies slightly, and the shelf dedup (Veya c5907) now
+    # correctly collapses byte-identical digests to one seat — a DIFFERENT
+    # fix from the tend/silence remedy this scenario tests. Each retelling
+    # carries a distinct trailing clause so the 11/12 keyword match (the
+    # bridge-attractor's usage dominance) is preserved while the digests
+    # stay distinct records the entity must SILENCE, not ones dedup hides.
     retellings = [
-        _form(system, "episode", f"Bridges retelling {i}", _RETOLD, f"retold-{i}")
+        _form(system, "episode", f"Bridges retelling {i}",
+              f"{_RETOLD} (retelling {i})", f"retold-{i}")
         for i in range(1, 7)
     ]
     distinct = [

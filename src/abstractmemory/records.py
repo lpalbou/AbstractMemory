@@ -766,6 +766,35 @@ class ReconstructConfig:
     orientation_admission: bool = True
     orientation_scan_limit: int = 400
     orientation_max_cards: int = 3
+    # NEWEST-SEAT GUARANTEE (c5208 ask 4, the working-set concentration
+    # slice; flow's droste/veil evidence: top-3 records held 49-58% of ALL
+    # selections, and the newest rung of a correction ladder lost every
+    # generic-cue shelf race to the entrenched stale fact — usage-weighted
+    # recall is rich-get-richer, and the burst axis makes each deposit
+    # stay warm LONGER). When > 0, the shelf guarantees that many seats to
+    # the newest-FORMED channel-matched candidates: zero-cost when they
+    # placed on merit, active exactly in the entrenchment failure (evicts
+    # the lowest-ordered stimulus seat; never self, never STM, never the
+    # phase-0 top match). Matched-only by design: an unmatched formation
+    # riding in would be a recency CHANNEL, a bigger design.
+    # DEFAULT 0 — DELIBERATELY OFF: ruling 0020 removed reserved slots
+    # ("pure ordering wins; no quota-forced substitution", pinned by
+    # test_reserved_slots_mechanism_is_gone) and this guarantee is
+    # structurally that class on a new axis. Turning it on by default
+    # requires lived A/B evidence (flow's long-life re-measurement under
+    # the burst axis) + the room's ruling — never a silent override of an
+    # engraved design decision. Hosts may enable per-home today.
+    newest_seat_guarantee: int = 0
+    # ADMISSION-TIME DEDUP (Veya deep-check P1, gateway c5907): collapse
+    # byte-identical digests to ONE shelf seat — the entity never sees the
+    # same fact twice, and the C(n,2) co-selection write flood shrinks at
+    # the source (fewer distinct seats -> fewer pairs the driver commits).
+    # DEFAULT ON: unlike newest_seat_guarantee this overrides no ruling —
+    # showing the same words twice was never desired, self/identity seats
+    # are never gated (they seat even at duplicate text, they just claim
+    # the digest first), and the graph is untouched (every record keeps its
+    # id/counts/recallability; presentation truth, not a merge).
+    shelf_dedup_identical_digests: bool = True
     # Keyword DISCOVERY (0019's FTS5 half): when True and the store carries
     # the FTS5 index, the keyword channel also SEARCHES the store (per scope
     # pair, budget-bounded) instead of only re-scoring the gathered

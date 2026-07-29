@@ -78,13 +78,13 @@ class SessionState:
     runner: SessionRunner
     embedder: OpenAICompatTextEmbedder
     working_set_after_detour: List[str]   # blank-cue membership right after turn 9
-    working_set_at_end: List[str]         # blank-cue membership after turn 12
+    working_set_at_end: List[str]         # blank-cue membership after full session
     turn_seconds: float
 
 
 @pytest.fixture(scope="module")
 def session() -> SessionState:
-    """Run the full 12-turn host loop ONCE per module (embedding calls are
+    """Run the full host loop ONCE per module (embedding calls are
     real network work); tests then assert with pure journal=False probes."""
     embedder = OpenAICompatTextEmbedder(_PROBE.base_url, _PROBE.embed_model, timeout_s=60.0)
     store = InMemoryTripleStore(embedder=embedder)
@@ -147,8 +147,8 @@ def test_semantic_recall_without_keyword_overlap(session: SessionState) -> None:
 
 def test_cross_turn_continuity_across_detour(session: SessionState) -> None:
     """The Pi-5 hardware constraint was formed and committed at turn 3; the
-    probe runs after turn 12 — 9 turns later, with the storage debate, the
-    radio debate, and the tax detour in between — and a related cue still
+    probe runs after the full session — many turns later, with the storage
+    debate, the radio debate, and the tax detour in between — and a related cue still
     reaches it."""
     assert FORMED_AT_TURN["pi-constraint"] == 3
     assert len(TURNS) - FORMED_AT_TURN["pi-constraint"] >= 8  # 8+ intervening turns
@@ -172,8 +172,9 @@ def test_cross_turn_continuity_across_detour(session: SessionState) -> None:
 def test_tax_detour_decays_out_of_working_memory(session: SessionState) -> None:
     """Membership, not score — and under the union, the blank-cue probe IS
     the STM view. Right after the tax turns the tax records sit in working
-    memory (fresh usage trail). Three on-project turns and one refocus later
-    they are gone — decay under presence ≠ use (STM renders deposit nothing,
+    memory (fresh usage trail). After enough post-detour project turns the
+    tax records fall below the membership floor — decay under presence ≠ use
+    (STM renders deposit nothing,
     so standing falls by pure activity displacement) — while storage never
     lost them: a tax cue still retrieves the tax answer via channels."""
     after, end = session.working_set_after_detour, session.working_set_at_end
@@ -270,7 +271,7 @@ def test_pinned_as_of_same_cue_is_byte_identical(session: SessionState) -> None:
 
 
 def test_union_stm_component_live(session: SessionState) -> None:
-    """After the 12-turn session: a blank-cue reconstruct returns a NON-EMPTY
+    """After the full session: a blank-cue reconstruct returns a NON-EMPTY
     STM component (admission="stm") holding the most-committed project
     records; and once the piano fact is genuinely used again, a piano cue
     shows it as admission="both" (trail-hot AND stimulus-matched).
@@ -280,7 +281,7 @@ def test_union_stm_component_live(session: SessionState) -> None:
     stm_labels = [
         session.runner.label_of(h) for h in r.handles if h.admission == "stm"
     ]
-    assert stm_labels, "blank-cue STM component is empty after a 12-turn session"
+    assert stm_labels, "blank-cue STM component is empty after the full session"
     # The storage track dominated the commits — STM must reflect that use.
     assert set(stm_labels) & {
         "storage-question", "storage-answer", "postgres-decision",
@@ -297,16 +298,23 @@ def test_union_stm_component_live(session: SessionState) -> None:
     )
     piano = session.runner.handle_for(first, "piano")
     assert piano is not None, f"piano fact not retrieved by direct cue: {[h.title for h in first.handles]}"
-    assert piano.admission == "stimulus"  # decayed long ago: not trail-hot yet
+    # Under burst-axis decay the piano fact may still sit above stm_floor (1.0)
+    # from its turn-2 commit — channel match then yields "both" even before
+    # this probe's commit. The deposit step must still lift standing.
+    base_before = float(piano.activation["base_level"])
+    assert piano.admission in ("stimulus", "both"), (
+        f"unexpected admission {piano.admission!r} (base={base_before})"
+    )
     system.commit_selection("union-piano-read", [piano.record_id])
 
     second = session.runner.probe(cue, budget=TURN_BUDGET, trace_id="probe-union-2")
     piano2 = session.runner.handle_for(second, "piano")
     assert piano2 is not None
     assert piano2.admission == "both", (
-        f"expected both (trail-hot + matched), got {piano2.admission} "
+        f"expected both (trail-hot + matched), got {piano2.admission!r} "
         f"(base={piano2.activation['base_level']})"
     )
+    assert float(piano2.activation["base_level"]) >= base_before
 
 
 # ---------------------------------------------------------------------------

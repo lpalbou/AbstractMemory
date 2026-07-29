@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added (recall dedup — Veya deep-check P1, gateway c5907, 2026-07-27; fable5 adversary folded)
+
+- **`ReconstructConfig.shelf_dedup_identical_digests` (default ON)**:
+  byte-identical digests collapse to ONE shelf seat — the entity never
+  sees the same fact twice, and the C(n,2) co-selection write flood
+  shrinks at the source (fewer distinct seats → fewer pairs the driver
+  commits). A running placed-digest set dedups ACROSS phases (first to
+  seat by phase-0 > self > stimulus merit > STM wins; SELF is never gated
+  — identity presence is guaranteed, it just claims the digest first so
+  copies elsewhere are the redundant ones). Non-representatives drop with
+  `reason="duplicate_digest"` + `duplicate_of` for observability. The
+  graph is untouched (every record keeps its id/counts/recallability;
+  presentation truth, not a merge). Default ON — unlike the newest-seat
+  guarantee this overrides no ruling (showing the same words twice was
+  never desired). Measured on the Veya shape (10 byte-identical probe
+  episodes + 6 turns): duplicate seats 6→0, total co_selected events
+  103→56 — the pair-volume fix as a consequence of dedup, no separate cap
+  fighting the maintainer's ALL-pairs rule. The Castor scenario fixture
+  updated: its "retellings" are now near-identical-but-distinct (real
+  retellings vary; byte-identical was a determinism shortcut that dedup
+  correctly collapses — a different fix from the tend/silence remedy that
+  scenario tests).
+
+- **Realistic Hearth fixture (burst-axis recalibration, 2026-07-28)**:
+  extended to 14 turns — two post-detour project beats so tax detour
+  records fall below the membership floor after burst-keyed rank decay (3
+  post-detour turns sufficed under the per-event axis, not under
+  one-commit-one-burst). Union STM test accepts piano pre-commit admission
+  ``stimulus`` or ``both`` when base ≥ stm_floor; commit must still lift
+  standing.
+
+### Added (working-set concentration slice — c5208 ask 4, 2026-07-27; fable5 adversary folded)
+
+- **`ReconstructConfig.newest_seat_guarantee` (default 0 — deliberately
+  OFF)**: when enabled, the shelf guarantees N seats to the newest-FORMED
+  channel-matched candidates — zero-cost when merit already placed them,
+  active exactly in the entrenchment failure (the Caspar/Mishka class:
+  a taught correction lost every generic-cue race to the stale fact).
+  Victim selection is order-indexed with a protected set (phase-0 top
+  match only when actually seated, every newest candidate, the
+  guarantee's own prior seats — the adversary's K≥2 self-defeating
+  eviction and both P2s folded); token-honest with named drop reasons
+  (`newest_seat_yielded`/`newest_seat_capped`/`newest_seat_no_evictable`);
+  `FillResult.newest_seated` for observability. DEFAULT OFF because
+  ruling 0020 removed reserved slots ("pure ordering wins") and this is
+  structurally that class on a new axis — enabling by default requires
+  flow's lived A/B under the burst axis + the room's ruling, never a
+  silent override. Measured (24-turn entrenchment sim): default selects
+  only 6/24 distinct records ever; enabled selects 24/24; top-3 share
+  unchanged — a floor for the new, not a ceiling for the old.
+- Finding on the slice's other half (supersedes-aware ordering): no
+  correction-edge vocabulary exists at rest (supersession is a CLOSURE,
+  and closed records are already excluded) — edge-aware demotion waits
+  on a ruled vocabulary rather than guessing semantics for
+  continues/derived_from.
+
 ### Fixed (the c5439 wash — burst-keyed activity axis, 2026-07-25; operator-reported P0, fable5 investigator + live verification)
 
 - **The activity axis counts committed TURNS, not bookkeeping rows**

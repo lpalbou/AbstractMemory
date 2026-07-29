@@ -1,6 +1,6 @@
 """Realistic-session fixtures for the LMStudio integration tests.
 
-One 12-turn assistant session (a developer building "Hearth", a local-first
+One 14-turn assistant session (a developer building "Hearth", a local-first
 home-automation hub) expressed as data + a small host-loop runner. The tests
 in test_realistic_lmstudio.py run this scenario against a REAL local
 embedding model (LMStudio, OpenAI-compatible API) and assert seam behavior
@@ -402,6 +402,35 @@ TURNS: Tuple[TurnSpec, ...] = (
                 "concurrently.",
                 "hearth/rules", ("locking",),
                 (("derived_from", "postgres-decision"),),
+            ),
+        ),
+    ),
+    TurnSpec(
+        13,
+        "Add an MQTT bridge so legacy WiFi devices can join the mesh.",
+        reply_records=(
+            RecordSpec(
+                "mqtt-bridge", "plan", "MQTT bridge for legacy devices",
+                "Bridge legacy WiFi sensors through an MQTT topic namespace so "
+                "they appear alongside Zigbee devices in the rule engine.",
+                "hearth/bridge", ("mqtt", "bridge"),
+                (("derived_from", "zigbee-decision"),),
+            ),
+        ),
+    ),
+    TurnSpec(
+        14,
+        "Write the deployment checklist before we flash the first Pi image.",
+        reply_records=(
+            RecordSpec(
+                "deploy-checklist", "plan", "Hub deployment checklist",
+                "Deployment checklist covers image flash, Postgres init, Zigbee "
+                "coordinator pairing, and a smoke test on the ingest writer.",
+                "hearth/ops", ("deploy", "checklist"),
+                (
+                    ("derived_from", "schema-plan"),
+                    ("derived_from", "ingest-lesson"),
+                ),
             ),
         ),
     ),

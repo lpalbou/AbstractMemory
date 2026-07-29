@@ -411,6 +411,8 @@ def run_reconstruction(
         store=store, universe=universe, ordered=ordered, self_members=self_members,
         stm_hot=stm_hot, base_activation=base_activation, base_of=base_of,
         budget=budget, view=view, scope_pairs=scope_pairs, excluded_ids=excluded_ids,
+        newest_seats=int(getattr(config, "newest_seat_guarantee", 0)),
+        dedup_identical_digests=bool(getattr(config, "shelf_dedup_identical_digests", True)),
     )
     dropped: List[Dict[str, Any]] = [*pre_dropped, *fill.dropped]
     admissions, digests = fill.admissions, fill.digests

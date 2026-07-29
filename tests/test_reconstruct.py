@@ -516,3 +516,184 @@ def test_invalid_view_rejected() -> None:
     store = InMemoryTripleStore()
     with pytest.raises(ValueError, match="view"):
         _run(store, Stimulus(cue_text="x"), view="prompt")
+
+
+def test_newest_seat_guarantee_seats_the_correction_when_enabled(stack) -> None:
+    """c5208 ask 4 (the Caspar/Mishka ladder): entrenched records win every
+    generic-cue race by usage; the taught correction — newest-formed,
+    matched, lower-ordered — dropped below_shelf every turn. With
+    newest_seat_guarantee=1 the newest matched candidate takes a seat
+    (evicting the lowest stimulus member, never the top match); the
+    DEFAULT stays 0 (ruling 0020: pure ordering wins) so default shelves
+    are byte-unchanged — the enabled path is the A/B arm flow measures."""
+    from abstractmemory import MemorySystem, ReconstructConfig
+    from abstractmemory.seam import RecallBudget, Stimulus
+
+    store, journal = stack
+    system = MemorySystem(store=store, journal=journal)
+    system.add([
+        _assertion("old-a", "castor", "keeps", "cat name notes", 1),
+        _assertion("old-b", "castor", "repeats", "cat name stories", 2),
+        _assertion("old-c", "castor", "records", "cat name habits", 3),
+        _assertion("correction", "visitor", "corrected", "cat name yesterday", 4),
+    ])
+    # Entrench the three old records across several committed turns.
+    for turn in range(4):
+        system.commit_selection(f"t-entrench-{turn}", ["old-a", "old-b", "old-c"])
+
+    cue = Stimulus(cue_text="cat name")
+    budget = RecallBudget(shelf_size=3, token_budget=2400, stm_fraction=0.0)
+
+    default_result = system.reconstruct(cue, scopes=SCOPES, budget=budget,
+                                        journal=False, trace_id="t-default")
+    default_ids = {h.record_id for h in default_result.handles}
+
+    enabled_system = MemorySystem(
+        store=store, journal=journal,
+        reconstruct_config=ReconstructConfig(newest_seat_guarantee=1))
+    enabled = enabled_system.reconstruct(
+        cue, scopes=SCOPES, budget=budget, journal=False, trace_id="t-enabled")
+    enabled_ids = {h.record_id for h in enabled.handles}
+
+    assert "correction" in enabled_ids, (
+        f"the newest matched record must hold a seat when enabled (got {enabled_ids})")
+    # The top-ordered match survives the eviction in both worlds.
+    assert default_result.handles[0].record_id == enabled.handles[0].record_id
+    # If the default shelf already seated the correction, the scenario is
+    # not exercising entrenchment — keep the fixture honest.
+    if "correction" in default_ids:
+        raise AssertionError("fixture failed to entrench: correction seated by merit")
+
+
+def test_newest_seat_guarantee_k2_never_evicts_its_own_or_merit_seats(stack) -> None:
+    """Adversary P1 on the c5867 slice: at K>=2 a positional victim
+    (placed[-1]) evicted iteration 1's own seat or the merit-seated
+    newest record — self-defeating. The victim is now order-indexed and
+    the protected set covers every newest candidate + prior guarantee
+    seats: K=2 must seat BOTH newest records, evicting only entrenched
+    non-newest members, with no record both in handles and dropped."""
+    from abstractmemory import MemorySystem, ReconstructConfig
+    from abstractmemory.seam import RecallBudget, Stimulus
+
+    store, journal = stack
+    system = MemorySystem(
+        store=store, journal=journal,
+        reconstruct_config=ReconstructConfig(newest_seat_guarantee=2))
+    system.add([
+        _assertion("old-a", "castor", "keeps", "cat name notes", 1),
+        _assertion("old-b", "castor", "repeats", "cat name stories", 2),
+        _assertion("old-c", "castor", "records", "cat name habits", 3),
+        _assertion("new-1", "visitor", "corrected", "cat name yesterday", 4),
+        _assertion("new-2", "visitor", "confirmed", "cat name today", 5),
+    ])
+    for turn in range(4):
+        system.commit_selection(f"t-k2-{turn}", ["old-a", "old-b", "old-c"])
+
+    r = system.reconstruct(
+        Stimulus(cue_text="cat name"), scopes=SCOPES,
+        budget=RecallBudget(shelf_size=3, token_budget=2400, stm_fraction=0.0),
+        journal=False, trace_id="t-k2")
+    ids = [h.record_id for h in r.handles]
+    assert "new-1" in ids and "new-2" in ids, f"both newest must seat (got {ids})"
+    dropped_ids = {d["record_id"] for d in r.dropped}
+    assert not (set(ids) & dropped_ids), "no record may be both seated and dropped"
+
+
+def test_shelf_dedup_collapses_identical_digests_to_one_seat(stack) -> None:
+    """Veya deep-check P1 (gateway c5907): ~10 of 24 shelf seats were
+    literal duplicates (a probe ran the same prompt 10x -> 10 byte-identical
+    episodes), each holding a seat AND each generating C(n,2) co-selection
+    pairs. Dedup collapses byte-identical digests to ONE seat (default on);
+    the graph is untouched (all records recallable); disabling restores the
+    old all-copies behavior."""
+    from abstractmemory import MemorySystem, ReconstructConfig
+    from abstractmemory.seam import RecallBudget, Stimulus
+
+    store, journal = stack
+    system = MemorySystem(store=store, journal=journal)
+    # Five byte-identical episodes (same digest) + one distinct.
+    for i in range(5):
+        system.add([_assertion(f"dup-{i}", "castor", "recalls", "the harbor story", i + 1)])
+    system.add([_assertion("other", "castor", "mapped", "the north quay", 6)])
+    # Force identical digests: same canonical object across the dup-* rows.
+    cue = Stimulus(cue_text="harbor story quay")
+    budget = RecallBudget(shelf_size=6, token_budget=2400, stm_fraction=0.0)
+
+    r = system.reconstruct(cue, scopes=SCOPES, budget=budget, journal=False,
+                           trace_id="t-dedup")
+    seated_digests = [h.digest for h in r.handles]
+    # No digest appears twice on the shelf.
+    assert len(seated_digests) == len(set(seated_digests)), (
+        f"duplicate digests seated: {seated_digests}")
+    dup_drops = [d for d in r.dropped if d.get("reason") == "duplicate_digest"]
+    if any(seated_digests.count(d) for d in seated_digests):
+        pass  # (kept for readability)
+    # With dedup OFF, the identical copies each get a seat (old behavior).
+    off = MemorySystem(store=store, journal=journal,
+                       reconstruct_config=ReconstructConfig(shelf_dedup_identical_digests=False))
+    r_off = off.reconstruct(cue, scopes=SCOPES, budget=budget, journal=False,
+                            trace_id="t-dedup-off")
+    off_digests = [h.digest for h in r_off.handles]
+    assert len(off_digests) != len(set(off_digests)) or len(dup_drops) == 0, (
+        "dedup-off must not collapse identical digests")
+
+
+def test_dedup_stimulus_skipped_duplicates_are_accounted(stack) -> None:
+    """Adversary P1-A: a duplicate first met by the stimulus fill (the
+    common Veya case, 9 of 10 probes) set duplicate_of but got NO drop
+    entry — it vanished from both handle_order AND dropped (zero trace).
+    Every skipped duplicate now carries exactly one duplicate_digest drop
+    pointing at the seated owner."""
+    from abstractmemory import MemorySystem
+    from abstractmemory.seam import RecallBudget, Stimulus
+
+    store, journal = stack
+    system = MemorySystem(store=store, journal=journal)
+    for i in range(3):
+        system.add([_assertion(f"same-{i}", "castor", "recalls", "harbor story", i + 1)])
+    r = system.reconstruct(Stimulus(cue_text="harbor story"), scopes=SCOPES,
+                           budget=RecallBudget(shelf_size=5, token_budget=2400, stm_fraction=0.0),
+                           journal=False, trace_id="t-acct")
+    seated = {h.record_id for h in r.handles}
+    dup_drops = {d["record_id"]: d for d in r.dropped if d.get("reason") == "duplicate_digest"}
+    all_ids = {"same-0", "same-1", "same-2"}
+    # Every identical record is EITHER seated once OR accounted as a dup drop.
+    assert len(seated & all_ids) == 1, f"exactly one instance seats: {seated}"
+    accounted = (seated & all_ids) | set(dup_drops)
+    assert accounted == all_ids, f"a duplicate vanished from accounting: {all_ids - accounted}"
+    for d in dup_drops.values():
+        assert d["duplicate_of"] in seated, "duplicate_of must point at a SEATED record"
+
+
+def test_dedup_eviction_unregisters_victim_digest(stack) -> None:
+    """Adversary P1-B (the sharp one): the newest-seat guarantee evicts a
+    victim byte-identical to the newest candidate; the stale registration
+    made the newest candidate _is_dup-skip against words no longer on the
+    shelf — the guarantee failed silently and the fact left entirely.
+    Eviction now unregisters the sole-holder victim's digest, so the
+    newest candidate seats its (identical) words."""
+    from abstractmemory import MemorySystem, ReconstructConfig
+    from abstractmemory.seam import RecallBudget, Stimulus
+
+    store, journal = stack
+    # Entrench a filler + a victim whose digest the newest record shares.
+    system = MemorySystem(
+        store=store, journal=journal,
+        reconstruct_config=ReconstructConfig(newest_seat_guarantee=1))
+    system.add([
+        _assertion("filler-a", "castor", "keeps", "harbor notes", 1),
+        _assertion("victim", "castor", "recalls", "the tide story", 2),
+        _assertion("newest", "castor", "recalls", "the tide story", 5),  # identical digest
+    ])
+    for turn in range(4):
+        system.commit_selection(f"t-ev-{turn}", ["filler-a", "victim"])
+    r = system.reconstruct(
+        Stimulus(cue_text="harbor tide story"), scopes=SCOPES,
+        budget=RecallBudget(shelf_size=2, token_budget=2400, stm_fraction=0.0),
+        journal=False, trace_id="t-ev")
+    seated_digests = [h.digest for h in r.handles]
+    # The tide-story words are ON the shelf (via the newest record), and no
+    # digest is seated twice.
+    assert any("tide story" in d for d in seated_digests), (
+        f"the newest record's words must be present, not lost to a stale registration ({seated_digests})")
+    assert len(seated_digests) == len(set(seated_digests))
