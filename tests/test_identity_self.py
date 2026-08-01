@@ -299,40 +299,70 @@ def test_identity_floor_composes_with_phase0_top_match(system) -> None:
 
 
 def test_entity_recall_budget_profile() -> None:
-    """Rounds 8+9: the entity-session budget profile, single source of
-    truth — width over fear. 12% of context above a 2400 starvation floor,
-    NO upper cap (the removed 4800 cap was partly bloat-fear); shelf 12 is
-    the limited-attention DEFAULT, a declared tunable; posture-independent
-    (the gate injects self_fraction)."""
+    """Rounds 8+9 + the 2026-08-01 re-rulings: the entity-session budget
+    profile, single source of truth — width over fear. 12% of context above
+    a 2400 starvation floor, NO upper token cap; shelf 12 is the
+    limited-attention DEFAULT, a declared tunable; posture-independent (the
+    gate injects self_fraction). The 50k context number is a RECOMMENDATION
+    (operator 2026-08-01: "it is acceptable to go to 200k context, but
+    ideally, let's have a (soft) recommended target of 50k tokens") —
+    smaller windows are ACCEPTED, never raised on. The candidate POOL is
+    capped (same day's audit ruling: "the true pools were 321-463
+    candidates ... let's make it at most a 100")."""
     import abstractmemory
-    from abstractmemory import ENTITY_CONTEXT_FLOOR, entity_recall_budget
+    from abstractmemory import (
+        ENTITY_CONTEXT_ACCEPTABLE,
+        ENTITY_CONTEXT_FLOOR,
+        ENTITY_CONTEXT_RECOMMENDED,
+        ENTITY_RECALL_CANDIDATE_CAP,
+        entity_recall_budget,
+    )
 
-    assert ENTITY_CONTEXT_FLOOR == 20_000
-    assert abstractmemory.ENTITY_CONTEXT_FLOOR == 20_000
+    assert ENTITY_CONTEXT_FLOOR == 50_000
+    assert abstractmemory.ENTITY_CONTEXT_FLOOR == 50_000
+    # The honest alias for new call sites; the old name keeps importers alive.
+    assert ENTITY_CONTEXT_RECOMMENDED == ENTITY_CONTEXT_FLOOR
+    # The soft upper guidance — a labeled warning above it, never a block.
+    assert ENTITY_CONTEXT_ACCEPTABLE == 200_000
+    assert ENTITY_RECALL_CANDIDATE_CAP == 100
 
-    at_floor = entity_recall_budget(20_000)
-    assert isinstance(at_floor, RecallBudget)  # passed __post_init__
-    assert (at_floor.token_budget, at_floor.shelf_size) == (2400, 12)
-    assert at_floor.max_candidates == 96       # max(64, 12 x 8): pool scales
-    assert at_floor.self_fraction == 0.0       # posture-independent by design
+    at_target = entity_recall_budget(50_000)
+    assert isinstance(at_target, RecallBudget)  # passed __post_init__
+    assert (at_target.token_budget, at_target.shelf_size) == (6000, 12)
+    assert at_target.max_candidates == 96       # max(64, 12 x 8): still under the cap
+    assert at_target.self_fraction == 0.0       # posture-independent by design
 
     assert entity_recall_budget(25_000).token_budget == 3000
-    assert entity_recall_budget(40_000).token_budget == 4800   # scaling, not a cap
     huge = entity_recall_budget(1_000_000)
     assert (huge.token_budget, huge.shelf_size) == (120_000, 12)  # width; shelf default holds
 
-    # Declared tunables: entity-elected widening honored, pool scales.
-    wide = entity_recall_budget(20_000, shelf_size=24)
-    assert (wide.shelf_size, wide.max_candidates) == (24, 192)
+    # SOFT below the recommendation (operator 2026-08-01): small windows
+    # produce a profile — the 2400 starvation guard is the only floor left.
+    below = entity_recall_budget(19_999)
+    assert below.token_budget == 2400
+    assert entity_recall_budget(8_000).token_budget == 2400
+
+    # Declared tunables: entity-elected widening honored — but the POOL now
+    # caps at 100 (shelf 24 used to derive 192; shelf 50, the gateway's wide
+    # default, used to derive the 400 the operator's audit caught).
+    wide = entity_recall_budget(50_000, shelf_size=24)
+    assert (wide.shelf_size, wide.max_candidates) == (24, 100)
+    assert entity_recall_budget(50_000, shelf_size=50).max_candidates == 100
+    # The sanity floor of the cap: the pool never drops below the seat
+    # count, so every seat CAN fill even past 100 seats.
+    assert entity_recall_budget(50_000, shelf_size=128).max_candidates == 128
+    # Small shelves keep the shelf-scaled pool (unchanged below the cap).
+    assert entity_recall_budget(50_000, shelf_size=8).max_candidates == 64
     # The 2400 floor is a starvation guard: a small fraction cannot dip under.
     assert entity_recall_budget(20_000, token_fraction=0.05).token_budget == 2400
 
-    with pytest.raises(ValueError, match=r"at least 20,000 tokens.*round 8"):
-        entity_recall_budget(19_999)
+    # Arithmetic nonsense still raises — that is not policy.
+    with pytest.raises(ValueError, match="context_window"):
+        entity_recall_budget(0)
     with pytest.raises(ValueError, match=r"arithmetic bound, not a fear one"):
-        entity_recall_budget(20_000, token_fraction=0.6)
+        entity_recall_budget(50_000, token_fraction=0.6)
     with pytest.raises(ValueError, match="shelf_size"):
-        entity_recall_budget(20_000, shelf_size=0)
+        entity_recall_budget(50_000, shelf_size=0)
 
 
 def test_self_fraction_floor_constant_exported() -> None:

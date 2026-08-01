@@ -88,12 +88,30 @@ class Stimulus:
 # remain.
 SELF_FRACTION_FLOOR = 0.05
 
-# THE ENTITY CONTEXT FLOOR (maintainer ruling, round 8): entity sessions
-# require at least this many context tokens — "never less". The gateway
-# refuses smaller summons; entity_recall_budget refuses to even produce a
-# profile for them (works-or-loud; no silent clamping). One constant, both
-# sides import it — same clamp-drift lesson as SELF_FRACTION_FLOOR.
-ENTITY_CONTEXT_FLOOR = 20_000
+# THE ENTITY CONTEXT RECOMMENDATION (operator re-ruling 2026-08-01, second
+# pass — the same day's first pass made 40k soft; this one MOVES the
+# target). Operator verbatim: "40k: it is acceptable to go to 200k context,
+# but ideally, let's have a (soft) recommended target of 50k tokens." So
+# 50k is the RECOMMENDED working size — an efficiency target, not a minimum
+# guarantee; the earlier soft-limit language still governs ("more a soft
+# than a hard limit ... if it needs to grow, it needs to grow").
+# Consequences: smaller windows are ACCEPTED everywhere with a labeled
+# warning (#RECOMMENDED — never a refusal), and growth above the target is
+# never blocked. The exported name ENTITY_CONTEXT_FLOOR stays so no
+# importer breaks (gateway aliases it as SUMMON_CONTEXT_FLOOR_TOKENS;
+# runtime's identity lanes read it too — one constant, both sides, same
+# clamp-drift lesson as SELF_FRACTION_FLOOR); ENTITY_CONTEXT_RECOMMENDED is
+# the honest name for new call sites.
+ENTITY_CONTEXT_FLOOR = 50_000
+ENTITY_CONTEXT_RECOMMENDED = ENTITY_CONTEXT_FLOOR
+
+# THE ACCEPTABLE CEILING, soft (same 2026-08-01 re-ruling: "it is
+# acceptable to go to 200k context"). Upper GUIDANCE only — NEVER a block:
+# a session declaring a window above it proceeds with a labeled
+# #RECOMMENDED-class warning (the standing "if it needs to grow, it needs
+# to grow" ruling keeps growth legal at any width). No code path may turn
+# this number into a refusal.
+ENTITY_CONTEXT_ACCEPTABLE = 200_000
 
 # THE TWO-ANCHOR SUMMON (durable-visits design v4, RULED 2026-07-13): every
 # summon carries a pair of home-journal INTEGER seqs. Normal = (head, head);
@@ -110,6 +128,19 @@ CONTEXT_ANCHOR_FIELD = "context_anchor"
 ANCHOR_SEQ_ATTRIBUTE = "anchor_seq"
 ANCHOR_MOMENT_ATTRIBUTE = "anchor_moment"
 
+# THE CANDIDATE-POOL CAP (operator ruling 2026-08-01, from the within-turn
+# audit: "the true pools were 321-463 candidates ... let's make it at most
+# a 100"). Bounds the per-turn recall candidate gather in the entity
+# profile below — it replaces the unbounded shelf×8 scaling that reached
+# 400 at shelf 50. ONE spelling: reconstruct.py's trace candidate list
+# reads THIS constant too, so the pool the engine gathers and the list the
+# operator sees stay the same number (the display artifact where the trace
+# showed 64 while the pool ran 400 is dead). The cap governs the DERIVED
+# entity profile only — RecallBudget stays policy-free and callers may
+# still construct any explicit max_candidates (engine discipline: the seam
+# validates arithmetic, never policy).
+ENTITY_RECALL_CANDIDATE_CAP = 100
+
 
 def entity_recall_budget(
     context_window: int, *, shelf_size: int = 12, token_fraction: float = 0.12,
@@ -119,8 +150,14 @@ def entity_recall_budget(
     constant's basis, per the round-9 width-over-fear ruling ("width first,
     tune later" — no fear-derived ceilings):
 
-    - Context floor 20k (ENTITY_CONTEXT_FLOOR): maintainer ruling round 8 —
-      a MINIMUM, never a target.
+    - Context recommendation 50k (ENTITY_CONTEXT_FLOOR /
+      ENTITY_CONTEXT_RECOMMENDED): operator 2026-08-01 re-ruling — "it is
+      acceptable to go to 200k context, but ideally, let's have a (soft)
+      recommended target of 50k tokens." A recommendation, not a wall; if
+      it needs to grow, it needs to grow. Smaller windows are accepted
+      (the 2400 starvation guard below still holds), and
+      ENTITY_CONTEXT_ACCEPTABLE (200k) is soft upper guidance — a labeled
+      warning above it, never a block.
     - token_budget = max(2400, round(token_fraction × context_window)) —
       NO upper cap (round 9: the earlier 4800 cap was partly bloat-fear
       and is removed; the fraction itself is the bound — 88% of context
@@ -128,15 +165,22 @@ def entity_recall_budget(
       STARVATION guard (floors are not fear): the 60-token starvation
       repro is impossible at >= 2400 by construction.
     - token_fraction 0.12: a soft approximation, declared tunable
-      (12% of the 20k floor = 2400, the seam default grounded). Bounded at
-      0.5 — a recall payload beyond half the context starves generation;
-      that is an ARITHMETIC bound, not a fear one.
+      (12% of the old 20k floor = 2400, the seam default grounded).
+      Bounded at 0.5 — a recall payload beyond half the context starves
+      generation; that is an ARITHMETIC bound, not a fear one.
     - shelf_size 12 default: the limited-attention model (seats ≈ what a
       mind holds at once — a cognitive basis, not fear) — DECLARED TUNABLE:
       callers/entities may widen it (entity-elected widening composes with
       the round-7 hyperfocus agency rules).
-    - max_candidates = max(64, shelf_size × 8): the candidate pool scales
-      with the shelf (width-first and cheap; default 96 at shelf 12).
+    - max_candidates = max(shelf_size, min(ENTITY_RECALL_CANDIDATE_CAP,
+      max(64, shelf_size × 8))): the pool still scales with the shelf at
+      small shelves (default 96 at shelf 12), but the operator's 2026-08-01
+      cap holds it AT MOST 100 regardless of shelf ("the true pools were
+      321-463 candidates ... let's make it at most a 100" — shelf 50 used
+      to derive 400). The outer max(shelf_size, ...) is the sanity floor:
+      the pool never drops below the seat count, so every seat CAN fill —
+      only a shelf wider than the cap itself (> 100 seats) exceeds 100,
+      and then only by exactly the seats it must feed.
 
     BUDGET MATH, honest (runtime's rich-digest arithmetic, 0007): at the
     20k floor (token_budget 2400), 12 shelf seats × ~200-token rich
@@ -147,14 +191,17 @@ def entity_recall_budget(
 
     POSTURE-INDEPENDENT by design: self_fraction stays 0.0 here — the
     summon POSTURE injects self_fraction (0.5) at the gate; the profile
-    only sizes attention. Contexts below ENTITY_CONTEXT_FLOOR raise.
+    only sizes attention. Contexts below ENTITY_CONTEXT_RECOMMENDED are
+    ACCEPTED (operator 2026-08-01: 50k is a recommendation, not a wall —
+    the old round-8 raise is gone; callers who care attach a #RECOMMENDED
+    warning). Only a non-positive window raises — that is arithmetic
+    nonsense, not policy.
     """
     window = int(context_window)
-    if window < ENTITY_CONTEXT_FLOOR:
+    if window < 1:
         raise ValueError(
-            f"entity sessions require a context window of at least "
-            f"{ENTITY_CONTEXT_FLOOR:,} tokens — maintainer ruling, round 8 "
-            f"(got {window:,}; see ENTITY_CONTEXT_FLOOR)"
+            f"context_window must be >= 1 (got {window:,}) — a session "
+            "cannot run on a non-positive context"
         )
     seats = int(shelf_size)
     if seats < 1:
@@ -167,8 +214,12 @@ def entity_recall_budget(
             "bound, not a fear one)"
         )
     token_budget = max(2400, round(fraction * window))
+    # Pool derivation (operator 2026-08-01, "at most a 100"): shelf-scaled
+    # inside the cap, capped at ENTITY_RECALL_CANDIDATE_CAP, and never
+    # below the seat count (every seat can fill — the sanity floor).
+    pool = max(seats, min(ENTITY_RECALL_CANDIDATE_CAP, max(64, seats * 8)))
     return RecallBudget(token_budget=int(token_budget), shelf_size=seats,
-                        max_candidates=max(64, seats * 8))
+                        max_candidates=pool)
 
 
 @dataclass(frozen=True)

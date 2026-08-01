@@ -41,7 +41,7 @@ from .journal import ReconstructionTrace
 from .models import TripleAssertion
 # ReconstructConfig lives in records.py (kind policy); re-exported here.
 from .records import ReconstructConfig
-from .seam import RecallBudget, ReconstructionResult, Stimulus
+from .seam import ENTITY_RECALL_CANDIDATE_CAP, RecallBudget, ReconstructionResult, Stimulus
 # Shelf assembly (ordering/handles) lives in shelf.py; the union fill and
 # candidate registration live in self_component.py (identity wave split —
 # this module orchestrates the pipeline, those own their tasks).
@@ -56,8 +56,15 @@ from .store import TripleQuery
 __all__ = ["ChannelResult", "ReconstructConfig", "default_ranking_boost", "run_reconstruction"]
 
 # Trace candidate lists are bounded independently of budgets (0020: traces
-# must not become their own storage problem).
-_TRACE_CANDIDATE_CAP = 64
+# must not become their own storage problem). ALIGNED with the seam's pool
+# cap (operator 2026-08-01 "at most a 100" ruling): the old private 64 here
+# was a DISPLAY ARTIFACT — the UI counted this list while the engine's pool
+# ran wider, so the operator's "N considered" read the trace bound, not the
+# truth. One constant, both bounds: a full entity-profile pool now fits the
+# trace whole, and budget_spent.candidates_considered stays the authoritative
+# count when the universe outgrows the list (spreading can add past the
+# gather pool).
+_TRACE_CANDIDATE_CAP = ENTITY_RECALL_CANDIDATE_CAP
 _EMPTY_CONTRIBUTIONS: Mapping[str, Sequence[str]] = MappingProxyType({})
 # bindings: (record_id, scope, owner_id) -> "{search_state}+{prompt_state}"
 # display string from the facade's 0017 fold. Unbound records keep the

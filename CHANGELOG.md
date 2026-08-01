@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed (context floor -> 40k soft recommendation — operator re-ruling 2026-08-01)
+
+- **`ENTITY_CONTEXT_FLOOR` is `40_000` and means a RECOMMENDED working size,
+  not a minimum guarantee** (operator 2026-08-01, superseding the round-8
+  "never less" ruling: "more a soft than a hard limit ... if it needs to
+  grow, it needs to grow"). New honest alias `ENTITY_CONTEXT_RECOMMENDED`
+  (exported; same object). `entity_recall_budget` no longer raises below the
+  number — any positive window produces a profile (the 2400 token-budget
+  starvation guard stays; non-positive windows still raise, arithmetic, not
+  policy). Hosts that care attach labeled `#RECOMMENDED` warnings at their
+  doors (the gateway does). Growth above the recommendation is never blocked
+  (no cap; `token_fraction <= 0.5` remains the one arithmetic bound).
+
 ### Added (recall dedup — Veya deep-check P1, gateway c5907, 2026-07-27; fable5 adversary folded)
 
 - **`ReconstructConfig.shelf_dedup_identical_digests` (default ON)**:

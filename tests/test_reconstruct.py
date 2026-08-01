@@ -447,12 +447,26 @@ def test_trace_is_complete_and_faithful() -> None:
     assert trace3.query_fingerprint != trace.query_fingerprint
 
 
-def test_trace_candidates_bounded_to_64() -> None:
+def test_trace_candidates_bounded_to_pool_cap() -> None:
+    """The trace list is bounded at the SAME 100 as the seam's pool cap
+    (operator 2026-08-01 "at most a 100"; the old private 64 made the UI's
+    candidate count a display artifact while the pool ran wider). When the
+    universe still outgrows the list, budget_spent.candidates_considered
+    stays the authoritative count."""
+    from abstractmemory.reconstruct import _TRACE_CANDIDATE_CAP
+    from abstractmemory.seam import ENTITY_RECALL_CANDIDATE_CAP
+
+    assert _TRACE_CANDIDATE_CAP == ENTITY_RECALL_CANDIDATE_CAP == 100
+
     store = InMemoryTripleStore()
-    store.add([_assertion(f"m-{i:03d}", "alice", "did", f"thing{i}", i % 60, literal=True) for i in range(100)])
-    result, trace = _run(store, Stimulus(cue_text="alice"), budget=RecallBudget(max_candidates=100))
-    assert len(trace.candidates) == 64
-    assert result.budget_spent["candidates_considered"] == 100
+    store.add([_assertion(f"m-{i:03d}", "alice", "did", f"thing{i}", i % 60, literal=True) for i in range(120)])
+    result, trace = _run(store, Stimulus(cue_text="alice"), budget=RecallBudget(max_candidates=120))
+    assert len(trace.candidates) == 100
+    assert result.budget_spent["candidates_considered"] == 120
+    # A full entity-profile pool (<= 100) fits the trace whole: what the
+    # operator sees is the pool the engine gathered.
+    result2, trace2 = _run(store, Stimulus(cue_text="alice"), budget=RecallBudget(max_candidates=100))
+    assert len(trace2.candidates) == result2.budget_spent["candidates_considered"] == 100
 
 
 def test_result_and_trace_json_round_trip() -> None:

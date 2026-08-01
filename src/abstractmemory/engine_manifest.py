@@ -175,7 +175,9 @@ def engine_manifest() -> Dict[str, Any]:
         DIARY_TYPES,
         DISPOSAL_RELATIONS,
         DRIVE_PRESSURE_BOUND,
+        ENTITY_CONTEXT_ACCEPTABLE,
         ENTITY_CONTEXT_FLOOR,
+        ENTITY_RECALL_CANDIDATE_CAP,
         GROUP_BOOST_STEP,
         GROUP_MIN_SHARED_TERMS,
         GROUP_OFFER_FLOOR,
@@ -232,6 +234,12 @@ def engine_manifest() -> Dict[str, Any]:
             "DRIVE_PRESSURE_BOUND": DRIVE_PRESSURE_BOUND,
             "SELF_FRACTION_FLOOR": SELF_FRACTION_FLOOR,
             "ENTITY_CONTEXT_FLOOR": ENTITY_CONTEXT_FLOOR,
+            # 2026-08-01 re-ruling pair: the soft 50k target rides
+            # ENTITY_CONTEXT_FLOOR above; these are its acceptable ceiling
+            # ("acceptable to go to 200k") and the per-turn candidate-pool
+            # cap ("at most a 100").
+            "ENTITY_CONTEXT_ACCEPTABLE": ENTITY_CONTEXT_ACCEPTABLE,
+            "ENTITY_RECALL_CANDIDATE_CAP": ENTITY_RECALL_CANDIDATE_CAP,
             "GROUP_BOOST_STEP": GROUP_BOOST_STEP,
             "GROUP_MIN_SHARED_TERMS": GROUP_MIN_SHARED_TERMS,
             "GROUP_OFFER_FLOOR": GROUP_OFFER_FLOOR,

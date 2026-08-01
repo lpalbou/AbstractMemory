@@ -134,13 +134,13 @@ Vectors are derived data: the pass re-embeds every stored text, swaps atomically
 
 ## Budget guidance (entity sessions)
 
-Entity sessions require a context window of at least 20,000 tokens (`ENTITY_CONTEXT_FLOOR`). The engine ships the budget profile hosts inject at summon:
+Entity sessions RECOMMEND a ~40,000-token context window (`ENTITY_CONTEXT_FLOOR` / `ENTITY_CONTEXT_RECOMMENDED`; operator 2026-08-01: a soft efficiency target, not a wall — smaller windows are accepted with a labeled warning, and if it needs to grow, it needs to grow). The engine ships the budget profile hosts inject at summon:
 
 ```python
 from abstractmemory import entity_recall_budget, ENTITY_CONTEXT_FLOOR
-budget = entity_recall_budget(20_000)                  # token_budget=2400, shelf_size=12
+budget = entity_recall_budget(40_000)                  # token_budget=4800, shelf_size=12
 budget = entity_recall_budget(1_000_000)               # token_budget=120_000 — no upper cap
-budget = entity_recall_budget(20_000, shelf_size=24)   # widened shelf
+budget = entity_recall_budget(40_000, shelf_size=24)   # widened shelf
 ```
 
 The token budget is 12% of the context window, uncapped above the 2,400-token starvation floor — wider contexts buy a wider working set at an efficiency tradeoff you can measure. The default shelf of 12 models limited attention (seats, like what a mind holds at once) and is a declared tunable.

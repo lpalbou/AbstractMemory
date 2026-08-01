@@ -54,7 +54,7 @@ A long-lived entity's identity is a set of records — values, purposes, traits 
 - `self_records(...)` is the folded identity read (binding- and closure-folded): what the entity currently is.
 - Identity evolves at record level, by the entity's own act: close the old record (supersede), form the new one, bind it into the seats. Nothing is lost — the journal's time axis is the version history.
 
-Two exported floors support entity hosting: `SELF_FRACTION_FLOOR` (0.05 — hosts refuse summons below it; a stripped identity is a different person) and `ENTITY_CONTEXT_FLOOR` (20,000 tokens — `entity_recall_budget(context_window)` sizes a session's recall budget and refuses smaller windows).
+Exported floors and targets for entity hosting: `SELF_FRACTION_FLOOR` (0.05 — hosts refuse summons below it; a stripped identity is a different person) and `ENTITY_CONTEXT_FLOOR` / `ENTITY_CONTEXT_RECOMMENDED` (40,000 tokens — a RECOMMENDED working size, operator 2026-08-01: a recommendation, not a wall; `entity_recall_budget(context_window)` sizes a session's recall budget and accepts smaller windows, growth is never blocked).
 
 ## Diary: what the entity elects to remember
 

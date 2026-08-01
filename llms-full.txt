@@ -479,7 +479,7 @@ A long-lived entity's identity is a set of records — values, purposes, traits 
 - `self_records(...)` is the folded identity read (binding- and closure-folded): what the entity currently is.
 - Identity evolves at record level, by the entity's own act: close the old record (supersede), form the new one, bind it into the seats. Nothing is lost — the journal's time axis is the version history.
 
-Two exported floors support entity hosting: `SELF_FRACTION_FLOOR` (0.05 — hosts refuse summons below it; a stripped identity is a different person) and `ENTITY_CONTEXT_FLOOR` (20,000 tokens — `entity_recall_budget(context_window)` sizes a session's recall budget and refuses smaller windows).
+Exported floors and targets for entity hosting: `SELF_FRACTION_FLOOR` (0.05 — hosts refuse summons below it; a stripped identity is a different person) and `ENTITY_CONTEXT_FLOOR` / `ENTITY_CONTEXT_RECOMMENDED` (40,000 tokens — a RECOMMENDED working size, operator 2026-08-01: a recommendation, not a wall; `entity_recall_budget(context_window)` sizes a session's recall budget and accepts smaller windows, growth is never blocked).
 
 ## Diary: what the entity elects to remember
 
@@ -631,7 +631,7 @@ Source: [`src/abstractmemory/seam.py`](src/abstractmemory/seam.py). All JSON-saf
 - `MemoryHandle` — one scored memory: `record_id`, `kind`, `title`, `digest`, `token_estimate`, `relevance` (per present channel), `activation` (`base_level`/`spread`/`total`), `cues` (human-readable "why"), `binding` (folded `"{search_state}+{prompt_state}"`), `scope`, `owner_id`, `provenance` (including `global_count`), `payload_tiers`, and `admission` — `"self" | "stm" | "stimulus" | "both"` (`"historical"` is reserved). Only `stimulus`/`both` admissions deposit at commit.
 - `ReconstructionResult` — `trace_id`, `view`, `as_of_seq`, `handles`, `edges` (working-set view only; render-side, never handles), `dropped` (`{record_id, score, reason}`), `selector_route`, `stop_reason`, `warnings`, `budget_spent`.
 - `ActiveMemorySnapshot` — what actually entered a context: `snapshot_id`, `trace_id`, `used_record_ids`, `display` rows, `prompt_token_estimate`, `observed_at`, `provenance` (including per-id admission labels). References and display metadata only, never payload copies.
-- Constants and helpers: `SELF_FRACTION_FLOOR` (0.05), `ENTITY_CONTEXT_FLOOR` (20,000), and `entity_recall_budget(context_window, *, shelf_size=12, token_fraction=0.12) -> RecallBudget` — the entity-session budget profile (`token_budget = max(2400, round(0.12 × window))`, uncapped above the floor; refuses windows below `ENTITY_CONTEXT_FLOOR`).
+- Constants and helpers: `SELF_FRACTION_FLOOR` (0.05), `ENTITY_CONTEXT_FLOOR` / `ENTITY_CONTEXT_RECOMMENDED` (40,000 — a recommended working size, not a minimum; operator 2026-08-01), and `entity_recall_budget(context_window, *, shelf_size=12, token_fraction=0.12) -> RecallBudget` — the entity-session budget profile (`token_budget = max(2400, round(0.12 × window))`, uncapped above the target; smaller windows are accepted — the 2400 floor is a starvation guard, not policy).
 
 ### The journal
 
@@ -702,7 +702,7 @@ Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-p
 - `canonical_spark_hash(spark) -> str` — the one hash definition shared by the engram guard and host-side spark verification.
 - `engram(system, spark, *, scope="self", owner_id, spark_artifact_ref=None) -> EngramResult` — turn a linted spark into the identity core: value/purpose/trait records (honesty items are traits with `trait_class="limit"`), each bound prompt-active. Idempotent by spark hash; a modified spark under the same version is refused; a higher version is refused while the born core remains prompt-active (re-engram is an exceptional repair, not an amendment path). `EngramResult` carries `record_ids` per section, `binding_ids`, `warnings`, `created`.
 - `self_records(*, scope, owner_id, spark_version=None) -> list[TripleAssertion]` — the folded identity read: prompt-active and closure-folded, identity kinds only, ordered kind rank → precedence → record id. Identity evolves at record level (close the old record, form and bind the new one); the journal's time axis is the version history.
-- Floors: `SELF_FRACTION_FLOOR = 0.05` (summoned entities run at or above it; the engine keeps accepting lower values for non-entity callers) and `ENTITY_CONTEXT_FLOOR = 20_000` with `entity_recall_budget(...)` (see seam types).
+- Floors and targets: `SELF_FRACTION_FLOOR = 0.05` (summoned entities run at or above it; the engine keeps accepting lower values for non-entity callers) and `ENTITY_CONTEXT_FLOOR = 40_000` (= `ENTITY_CONTEXT_RECOMMENDED`; a soft recommendation since the operator's 2026-08-01 re-ruling) with `entity_recall_budget(...)` (see seam types).
 
 ### Valence and gradation
 
@@ -1002,13 +1002,13 @@ snapshots = journal.snapshots(limit=10)    # what entered contexts
 
 ## Budget guidance (entity sessions)
 
-Entity sessions require a context window of at least 20,000 tokens (`ENTITY_CONTEXT_FLOOR`). The engine ships the budget profile hosts inject at summon:
+Entity sessions RECOMMEND a ~40,000-token context window (`ENTITY_CONTEXT_FLOOR` / `ENTITY_CONTEXT_RECOMMENDED`; operator 2026-08-01: a soft efficiency target, not a wall — smaller windows are accepted with a labeled warning, and if it needs to grow, it needs to grow). The engine ships the budget profile hosts inject at summon:
 
 ```python
 from abstractmemory import entity_recall_budget, ENTITY_CONTEXT_FLOOR
-budget = entity_recall_budget(20_000)                  # token_budget=2400, shelf_size=12
+budget = entity_recall_budget(40_000)                  # token_budget=4800, shelf_size=12
 budget = entity_recall_budget(1_000_000)               # token_budget=120_000 — no upper cap
-budget = entity_recall_budget(20_000, shelf_size=24)   # widened shelf
+budget = entity_recall_budget(40_000, shelf_size=24)   # widened shelf
 ```
 
 The token budget is 12% of the context window, uncapped above the 2,400-token starvation floor — wider contexts buy a wider working set at an efficiency tradeoff you can measure. The default shelf of 12 models limited attention (seats, like what a mind holds at once) and is a declared tunable.
