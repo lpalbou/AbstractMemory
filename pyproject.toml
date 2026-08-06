@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "AbstractMemory"
-version = "0.2.6"
+version = "0.3.0"
 description = "AbstractMemory: temporal, provenance-aware semantic memory primitives for AbstractFramework."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -60,6 +60,8 @@ all = [
 [tool.pytest.ini_options]
 markers = [
   "basic: smoke tests that exercise the default local API",
+  "lmstudio: integration tests that need a local LMStudio (OpenAI-compatible) server with an embedding model; auto-skipped when unreachable",
+  "lmstudio_llm: lmstudio tests that additionally call the local chat model as a judge; skipped on timeout",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -30,6 +31,9 @@ def _escape_sql_string(value: str) -> str:
 def _build_where_clause(q: TripleQuery) -> str:
     parts: list[str] = []
 
+    if q.assertion_ids:
+        quoted = ", ".join(f"'{_escape_sql_string(i)}'" for i in q.assertion_ids)
+        parts.append(f"assertion_id IN ({quoted})")
     if q.subject:
         parts.append(f"lower(subject) = '{_escape_sql_string(normalize_term(q.subject))}'")
     if q.predicate:
@@ -54,36 +58,11 @@ def _build_where_clause(q: TripleQuery) -> str:
     return " AND ".join(parts)
 
 
-def _canonical_text(a: TripleAssertion) -> str:
-    # Stable, information-rich representation for embedding retrieval.
-    #
-    # Why include more than "s p o":
-    # - semantic queries often refer to details that aren't present in the triple surface form
-    # - extractor-provided evidence/context improves retrieval selectivity without requiring
-    #   a separate episodic document store in v0
-    base = f"{a.subject} {a.predicate} {a.object}".strip()
-    attrs = a.attributes if isinstance(a.attributes, dict) else {}
-
-    parts: list[str] = [base]
-    st = attrs.get("subject_type")
-    ot = attrs.get("object_type")
-    if isinstance(st, str) and st.strip():
-        parts.append(f"subject_type: {st.strip()}")
-    if isinstance(ot, str) and ot.strip():
-        parts.append(f"object_type: {ot.strip()}")
-
-    eq = attrs.get("evidence_quote")
-    if isinstance(eq, str) and eq.strip():
-        parts.append(f"evidence: {eq.strip()}")
-
-    ctx = attrs.get("original_context")
-    if isinstance(ctx, str) and ctx.strip():
-        ctx2 = ctx.strip()
-        if len(ctx2) > 400:
-            ctx2 = ctx2[:400] + "…"  #[WARNING:TRUNCATION] bounded canonical-text context preview (full context remains in attributes)
-        parts.append(f"context: {ctx2}")
-
-    return "\n".join(parts)
+# Single source of truth for the embedding/keyword text (canonical_text.py
+# v2: clean record digests); the alias keeps this module's established name
+# and the golden parity tests meaningful.
+from .canonical_text import canonical_text as _canonical_text  # noqa: E402
+from .canonical_text import is_record_edge as _is_record_edge  # noqa: E402
 
 
 def _loads_json(raw: object) -> dict:
@@ -133,6 +112,18 @@ class LanceDBTripleStore:
         self._table_name = str(table_name)
         self._vector_column = str(vector_column or "vector")
         self._embedder = embedder
+        if embedder is not None:
+            # M1 gap, loud (2026-07-10 review): this backend has no
+            # embedding-space pin — swapping embedders between sessions can
+            # silently mix embedding spaces here, which the SQLite/InMemory
+            # stores refuse. Absence of the guarantee must be audible.
+            warnings.warn(
+                "#FALLBACK: LanceDBTripleStore has no embedding-space pin (M1): "
+                "the store cannot detect an embedder/model swap between sessions — "
+                "keep the embedder stable, or use SQLiteTripleStore for pinned homes",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         self._table = None
         try:
@@ -158,12 +149,19 @@ class LanceDBTripleStore:
 
         # Always store a canonical text column (useful for debugging and future indexing).
         texts: List[str] = [_canonical_text(a) for a in pending]
-        vectors: Optional[List[List[float]]] = None
+        vectors: Optional[Dict[int, List[float]]] = None
         if self._embedder is not None:
-            vectors = self._embedder.embed_texts(texts)
+            # Edge assertions are never embedded (graph structure, not
+            # memories): rows without the vector column stay invisible to
+            # ANN search instead of consuming vector fetch slots.
+            embeddable = [i for i, a in enumerate(pending) if not _is_record_edge(a)]
+            if embeddable:
+                embedded = self._embedder.embed_texts([texts[i] for i in embeddable])
+                vectors = {i: v for i, v in zip(embeddable, embedded)}
 
         for idx, a in enumerate(pending):
-            assertion_id = str(uuid.uuid4())
+            # Honor caller-supplied ids (deterministic/import flows); default uuid4.
+            assertion_id = a.assertion_id or str(uuid.uuid4())
             ids.append(assertion_id)
             row: Dict[str, Any] = {
                 "assertion_id": assertion_id,
@@ -181,7 +179,7 @@ class LanceDBTripleStore:
                 "text": texts[idx],
             }
 
-            if vectors is not None and idx < len(vectors):
+            if vectors is not None and idx in vectors:
                 row[self._vector_column] = vectors[idx]
 
             # Keep JSON compact (omit nulls).
@@ -279,6 +277,7 @@ class LanceDBTripleStore:
                     confidence=r.get("confidence") if isinstance(r.get("confidence"), (int, float)) else None,
                     provenance=provenance,
                     attributes=attributes,
+                    assertion_id=str(r.get("assertion_id")) if isinstance(r.get("assertion_id"), str) and r.get("assertion_id") else None,
                 )
             )
 

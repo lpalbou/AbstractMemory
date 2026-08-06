@@ -74,9 +74,41 @@ def test_sqlite_triple_store_active_at_window(tmp_path: Path) -> None:
     store.close()
 
 
-def test_sqlite_triple_store_rejects_semantic_queries(tmp_path: Path) -> None:
+def test_sqlite_query_text_requires_embedder_no_fallback(tmp_path: Path) -> None:
+    """Native vectors (a2a 0003): query_text without a configured embedder
+    raises the SAME error as the InMemory reference — never a silent
+    keyword fallback. (query_vector works embedder-less: it is precomputed.)"""
     store = SQLiteTripleStore(tmp_path / "kg.sqlite")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="query_text requires a configured embedder"):
         _ = store.query(TripleQuery(query_text="hello", scope="global"))
     store.close()
 
+
+
+def test_table_name_is_validated_like_the_journal_table_prefix(tmp_path) -> None:
+    """Identifiers cannot be bound as SQL parameters, so they are checked here.
+
+    `SQLiteJournal` already refuses a table_prefix that is not a plain
+    identifier; the store interpolates `table_name` into the same kind of
+    statement and must refuse on the same rule, rather than letting the driver
+    fail later with an opaque message.
+    """
+    import pytest
+
+    from abstractmemory.sqlite_store import read_embedding_pin
+
+    db = tmp_path / "store.db"
+    for bad in ("triples (a TEXT); DROP TABLE triples; --", "has space", "1leading", "t-dash"):
+        with pytest.raises(ValueError, match="table_name"):
+            SQLiteTripleStore(db, table_name=bad)
+
+    # Empty means "use the default", as it does for the journal's prefix.
+    assert SQLiteTripleStore(db, table_name="")._table == "triples"
+
+    # Same rule on the module-level reader, which interpolates it too.
+    with pytest.raises(ValueError, match="table_name"):
+        read_embedding_pin(db, table_name="bad name")
+
+    # Ordinary identifiers still work, and the default stays the default.
+    assert SQLiteTripleStore(db, table_name="triples_v2")._table == "triples_v2"
+    assert SQLiteTripleStore(db)._table == "triples"
