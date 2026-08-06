@@ -80,7 +80,7 @@ Keep one embedding model per store: vectors from different models are not compar
 
 ### Canonical text
 
-- `canonical_text(assertion) -> str` — the shared text rendering stores embed and index (`CANONICAL_TEXT_VERSION` names the current rendering, version 2).
+- `canonical_text(a) -> str` — the shared text rendering stores embed and index (`CANONICAL_TEXT_VERSION` names the current rendering, version 2). Changing this rendering invalidates stored vectors, so it must bump the version and ride a re-embed migration.
 - `token_estimate(text) -> int` — the package-wide token estimate (~4 chars/token) used by budgets and handles.
 
 ---
@@ -204,6 +204,7 @@ Orthogonal to attention by contract: valence never touches activation, never gat
 - `heal_scar(scar_event_id, *, reason, lesson_record_id=None, scope, owner_id, event_id=None, actor="entity-reflection") -> str` and `break_bond(bond_event_id, *, reason, scope, owner_id, event_id=None, actor="entity-reflection") -> str` — append-only resolutions with deterministic default ids (`heal:{id}` / `break:{id}`). A betrayal-scale scar (magnitude ≥ 8 after the bond) breaks it without an explicit call.
 - `gradation(target_ids=None, *, scope, owner_id, at_seq=None) -> dict` — derived dual-channel standing per target: `{net, positive, negative, positive_count, negative_count, scarred, bonded, contributions}`. G⁺/G⁻ accumulate chronologically, each clamped 0..100 — ambivalence is preserved. Presentation: unhealed scar → `net = min(net, 0)`; unbroken bond → `net = max(net, 0)`; both → exactly 0 with both flags visible. `target_ids=None` enumerates every appraised target; requested targets with no events return the neutral shape. No decay of any kind: plasticity comes only from new evidence and resolutions.
 - `compute_gradation(events, *, config=GradationConfig()) -> dict[str, GradationScore]` — the pure fold behind `gradation` (`GradationConfig(channel_clamp=100.0, break_magnitude=8.0)`).
+- `GradationScore` — one target's standing: `positive`, `negative`, `positive_count`, `negative_count`, `net`, `scarred`, `bonded`, `contributions`. The two channels are reported separately so ambivalence survives the fold.
 
 Targets are anything nameable — records, people, tools, ideas, places, moments in time. Namespace-prefixed free strings are the convention (`person:ada`, `tool:web_search`, `time:morning`); there is no registry.
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+*No unreleased changes.*
+
 ## [0.3.0] - 2026-08-06
 
 The first release with **layer 2**: a `MemorySystem` facade that composes the
@@ -56,26 +58,37 @@ triple store with an append-only journal into a usage-weighted memory graph.
 
 ### Fixed
 
-- **Spreading is monotonic in scope-ladder coverage.** A ladder naming both a
-  wildcard owner and an explicit owner for the same scope let the narrow pass
-  claim seeds the broad pass could then not reach, so records reachable only
-  from those seeds silently lost their spread — adding a *broader* pair
-  yielded *less* spread. Each scope is now walked once, at its broadest owner.
-- **Truncation counts no longer enter indexed text.** Cut digests and dream
-  fragments keep a bare `…`, and the counts ride sibling metadata
-  (`attributes._truncation`, `digest_truncation`, `fragment_truncation`). A
-  counted marker inside a digest contributed its own words to the keyword and
-  embedding surface, inflating near-duplicate Jaccard between unrelated
-  records and manufacturing false consolidation proposals; inside a dream
-  fragment it broke the documented 200-character bound that the replay stream
-  relies on to serve signals verbatim.
 - **`SQLiteTripleStore` validates `table_name`** as a plain SQL identifier, as
   `SQLiteJournal` already validated `table_prefix`. Invalid names now raise
-  `ValueError` at construction instead of surfacing a driver error later.
-- **Candidate titles and labels mark their cuts** instead of ending mid-word.
-- **Recall diagnosis fails loudly.** `recall_history` and `explain_recall` no
-  longer swallow store errors and report "absent"; an unformed id already
-  resolves to an honest all-absent read without a guard.
+  `ValueError` at construction instead of surfacing a driver error later. This
+  is the only entry here that changes behavior shipped in 0.2.6; everything
+  under "Layer-2 guarantees" below concerns code that is new in this release.
+
+### Layer-2 guarantees
+
+Settled late in development and easy to break when extending the engine, so
+they are stated rather than left to the code:
+
+- **Spread is monotonic in scope-ladder coverage.** Adding a pair to the ladder
+  never reduces any record's spread. Every pair walks with its own seeds — one
+  pair claiming a seed another could no longer reach would starve records
+  reachable only from it, and dropping the narrower pair instead would let a
+  crowded owner win the shared walk on `fan_out_cap` and starve the narrow
+  owner. Contributions combine by max, so a record two overlapping pairs both
+  reach is counted once. Every ladder the package ships uses disjoint scopes,
+  where exactly one pair can reach a record and max and sum agree.
+- **Truncation counts stay out of indexed text.** Cut digests and dream
+  fragments keep a bare `…`; the counts ride sibling metadata
+  (`attributes._truncation`, `digest_truncation`, `fragment_truncation`). A
+  digest is the keyword and embedding surface, so a counted marker's own words
+  would be shared by every truncated record and would inflate near-duplicate
+  Jaccard between unrelated documents; a dream fragment carries a documented
+  200-character bound the replay stream relies on to serve signals verbatim.
+- **Candidate titles and labels mark their cuts** rather than ending mid-word.
+- **Recall diagnosis fails loudly.** `recall_history` and `explain_recall` do
+  not swallow store errors and report "absent": an unformed id already resolves
+  to an honest all-absent read without a guard, so the only thing a guard could
+  catch is a genuinely broken store.
 
 ### Compatibility
 
@@ -87,9 +100,12 @@ triple store with an append-only journal into a usage-weighted memory graph.
   and report `#FALLBACK: embedding pin created at FIRST WRITE`.
 - Requires Python 3.10+.
 
-### Detailed changes
+## Development history (0.3.0)
 
-The dated entries below record this release's development in full.
+The dated entries below record this release's development in full. They sit
+under their own `##` heading deliberately: the release workflow slices release
+notes from the `## [version]` heading to the next `##`, so this history stays
+in the changelog without being published as the release body.
 
 ### Changed (context floor -> 40k soft recommendation — operator re-ruling 2026-08-01)
 

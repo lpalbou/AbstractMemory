@@ -328,17 +328,19 @@ def run_reconstruction(
         max_edges=int(budget.max_edges),
     )
     all_edges: List[Dict[str, Any]] = []
-    # Each scope is walked ONCE, at its broadest owner. A wildcard-owner pair
-    # covers every owner in that scope, so running an explicit-owner pair for
-    # the same scope as well would let the narrow pass claim seeds that the
-    # broad pass can then no longer reach — records reachable only from those
-    # seeds would silently lose their spread, making the result NON-MONOTONIC
-    # in ladder coverage (adding a broader pair yielded LESS spread). Only the
-    # spreading walk narrows here; `scope_pairs` stays authoritative for the
-    # candidate gather and for the trace's searched_scopes.
-    wildcard_scopes = {s for s, o in scope_pairs if not o}
-    spread_pairs = [(s, o) for s, o in scope_pairs if not o or s not in wildcard_scopes]
-    for scope, owner in (spread_pairs if run_spreading else ()):
+    # EVERY pair walks, and each keeps its OWN seeds. A pair must never claim a
+    # seed another pair would then be unable to reach: that made the result
+    # non-monotonic in ladder coverage, because records reachable only from the
+    # claimed seeds silently lost their spread. Dropping the narrower pair
+    # instead is equally wrong — `fan_out_cap` then lets a crowded owner win
+    # the shared walk and starve the narrow owner's records to zero.
+    #
+    # Contributions COMBINE BY MAX, not by sum, so a record that two
+    # overlapping pairs both reach is counted once, and adding a pair can only
+    # ever RAISE a record's spread. For a ladder of disjoint scopes — every
+    # ladder the package ships — exactly one pair can reach any given record,
+    # so max and sum agree and this changes nothing.
+    for scope, owner in (scope_pairs if run_spreading else ()):
         remaining = eff_params.max_edges - len(all_edges)
         if remaining <= 0:
             break
@@ -371,7 +373,7 @@ def run_reconstruction(
                 _add_candidate(universe, a, "spread", excluded_ids)
         for rid, value in spread_scores.items():
             if rid in universe:
-                universe[rid].spread += float(value)
+                universe[rid].spread = max(universe[rid].spread, float(value))
 
     spread_cue_map: Dict[str, List[str]] = {}
     for edge in all_edges:

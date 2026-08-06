@@ -323,36 +323,74 @@ def test_ranking_boost_reorders_but_never_outranks() -> None:
     assert handles["b-3"].activation == {"base_level": 5.0, "spread": 0.0, "total": 5.0}
 
 
-def test_spread_is_monotonic_in_scope_ladder_coverage() -> None:
-    """Adding a pair to the ladder never REMOVES spread.
+def _spread_of(rows, scopes, budget=None):
+    """Spread per record for one ladder, with eviction ruled out.
 
-    A wildcard-owner pair covers every owner in its scope, so a ladder that
-    also names an explicit owner for that same scope describes exactly the
-    same records. Both must produce identical spread: the narrow pass must not
-    be able to claim seeds the broad pass can then no longer reach, which would
-    leave records reachable only from those seeds with no spread at all.
+    The shelf is sized to hold everything on purpose: a record dropped for a
+    seat is absent from `handles` entirely, which reads identically to one that
+    received no spread. Conflating those two hides exactly the defect these
+    tests exist to catch.
     """
-    def _spread(scopes):
-        store = InMemoryTripleStore()
-        store.add([
-            _assertion("x1", "alice", "knows", "bob", 1),
-            _assertion("y1", "alice", "wrote", "report", 2),
-            TripleAssertion(  # same scope, DIFFERENT owner — wildcard-only reach
-                subject="alice", predicate="filed", object="report copy",
-                scope=SCOPE, owner_id="s2", observed_at=_ts(3),
-                attributes={}, assertion_id="z1",
-            ),
-        ])
-        result, _ = run_reconstruction(
-            store=store, stimulus=Stimulus(cue_text="alice report"),
-            scopes=scopes, budget=RecallBudget(), view="working_set",
-            base_activation={}, trail_activation={},
-        )
-        return {h.record_id: h.activation["spread"] for h in result.handles}
+    store = InMemoryTripleStore()
+    store.add(list(rows))
+    result, _ = run_reconstruction(
+        store=store, stimulus=Stimulus(cue_text="alice report"),
+        scopes=scopes,
+        budget=budget or RecallBudget(max_candidates=200, shelf_size=200,
+                                      token_budget=200_000),
+        view="working_set", base_activation={}, trail_activation={},
+    )
+    return {h.record_id: h.activation["spread"] for h in result.handles}
 
-    broad = _spread([(SCOPE, "")])
+
+def test_spread_is_monotonic_when_a_broader_pair_is_added() -> None:
+    """Adding a pair to the ladder never REMOVES spread from any record.
+
+    A narrow pair must not claim seeds a broader pair can then no longer reach
+    (records reachable only from those seeds would lose their spread), and the
+    narrow pair must not be dropped in favour of the broad one either — a
+    crowded owner would then win the shared walk on `fan_out_cap` and starve
+    the narrow owner's records to zero. Both passes run; contributions combine
+    by max, so a record two overlapping pairs reach is counted once.
+    """
+    rows = [
+        _assertion("x1", "alice", "knows", "bob", 1),
+        _assertion("y1", "alice", "wrote", "report", 2),
+        TripleAssertion(  # same scope, DIFFERENT owner — wildcard-only reach
+            subject="alice", predicate="filed", object="report copy",
+            scope=SCOPE, owner_id="s2", observed_at=_ts(3),
+            attributes={}, assertion_id="z1",
+        ),
+    ]
+    broad = _spread_of(rows, [(SCOPE, "")])
     assert broad["z1"] > 0.0  # the other owner's record is reached at all
-    assert _spread([(SCOPE, OWNER), (SCOPE, "")]) == broad
+    assert _spread_of(rows, [(SCOPE, OWNER), (SCOPE, "")]) == broad
+
+
+def test_a_crowded_owner_cannot_starve_a_narrow_pair_of_spread() -> None:
+    """The fan-out half of the same invariant.
+
+    `fan_out_cap` bounds how many neighbours one hub node spreads to. When a
+    second owner crowds the shared hub with far more records than that cap, the
+    narrow owner's records must still keep the spread their own pair gives
+    them — the broad pass is additional reach, never a replacement for it.
+    """
+    rows = [_assertion("n1", "alice", "wrote", "report", 1),
+            _assertion("n2", "alice", "filed", "report copy", 2)]
+    rows += [                                   # 41 records on the same hub,
+        TripleAssertion(                        # well past fan_out_cap (12)
+            subject="alice", predicate="noted", object=f"thing{i} report",
+            scope=SCOPE, owner_id="crowd", observed_at=_ts(3 + i % 50),
+            attributes={}, assertion_id=f"c-{i}",
+        ) for i in range(41)
+    ]
+    narrow = _spread_of(rows, [(SCOPE, OWNER)])
+    assert narrow["n1"] > 0.0 and narrow["n2"] > 0.0
+    both = _spread_of(rows, [(SCOPE, OWNER), (SCOPE, "")])
+    for rid, value in narrow.items():
+        assert both[rid] >= value, f"{rid} lost spread when a broader pair was added"
+    # And the broader pair genuinely adds reach rather than merely preserving it.
+    assert sum(1 for v in both.values() if v > 0) > sum(1 for v in narrow.values() if v > 0)
 
 
 def test_exact_hits_order_first() -> None:

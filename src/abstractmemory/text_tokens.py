@@ -78,6 +78,8 @@ def bounded_label(text: str, cap: int) -> str:
     genuinely needs them, they belong out-of-band via `truncation_meta`.
     """
     body = str(text or "")
+    if cap <= 0:              # a bound of zero means nothing, never "unlimited"
+        return ""
     return body if len(body) <= cap else body[: cap - 1] + "…"
 
 
