@@ -17,6 +17,7 @@ AbstractMemory is a Python library for durable, append-only agent memory: tempor
 ## Reference
 
 - FAQ: [`faq.md`](faq.md) — common questions and current limits.
+- Troubleshooting: [`troubleshooting.md`](troubleshooting.md) — symptom-oriented fixes for setup, retrieval, embedding-space, durability, and maintenance problems.
 - Development: [`development.md`](development.md) — local setup, tests, and the design backlog.
 
 ## Related
@@ -24,6 +25,7 @@ AbstractMemory is a Python library for durable, append-only agent memory: tempor
 - Package overview: [`README.md`](../README.md)
 - Changelog: [`CHANGELOG.md`](../CHANGELOG.md)
 - Contributing: [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+- Code of conduct: [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md)
 - Security: [`SECURITY.md`](../SECURITY.md)
 - License: [`LICENSE`](../LICENSE)
 - Acknowledgments: [`ACKNOWLEDGMENTS.md`](../ACKNOWLEDGMENTS.md)

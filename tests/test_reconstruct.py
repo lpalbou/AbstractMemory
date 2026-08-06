@@ -288,24 +288,71 @@ def test_excluded_ids_respected_everywhere() -> None:
     assert any("anchor x-2 excluded" in w for w in result.warnings)
 
 
-def test_ranking_boost_reorders_but_never_admits() -> None:
+def test_ranking_boost_reorders_but_never_outranks() -> None:
+    """Relevance admits and orders; activation only reorders WITHIN that order.
+
+    `0026` §4 states the division of labour: activation never gates a
+    channel-matched candidate. b-3 is the control — no channel matches it, so
+    however much base activation it carries it must stay behind every matched
+    record. (It is still PRESENT: under the STM ∪ stimulus union a boosted
+    record is admitted with `admission="stm"` — presence is not precedence.)
+    """
     store = InMemoryTripleStore()
     store.add([
         _assertion("b-1", "alice", "wrote", "report", 1),
         _assertion("b-2", "alice", "filed", "report copy", 2),
+        _assertion("b-3", "zeus", "brews", "tea", 3),  # no channel matches this
     ])
     # Equal keyword relevance (2/2 each): recency tie-break puts b-2 first...
     result_no_base, _ = _run(store, Stimulus(cue_text="alice report"))
-    assert [h.record_id for h in result_no_base.handles] == ["b-2", "b-1"]
+    assert [h.record_id for h in result_no_base.handles] == ["b-2", "b-1", "b-3"]
     # ...but base activation on the OLDER record flips the order (4a boost).
-    result, _ = _run(store, Stimulus(cue_text="alice report"), base={"b-1": 5.0})
-    assert [h.record_id for h in result.handles] == ["b-1", "b-2"]
-    b1 = {h.record_id: h for h in result.handles}["b-1"]
-    assert b1.activation == {"base_level": 5.0, "spread": 0.0, "total": 5.0}
-    # b-2 receives spread from b-1 (shared entity "alice") — and the no-base
-    # run above proves spread contributes to DECOMPOSITION, not to ordering.
-    b2 = {h.record_id: h for h in result.handles}["b-2"]
-    assert b2.activation == {"base_level": 0.0, "spread": 0.5, "total": 0.5}
+    result, _ = _run(store, Stimulus(cue_text="alice report"),
+                     base={"b-1": 5.0, "b-3": 5.0})
+    assert [h.record_id for h in result.handles] == ["b-1", "b-2", "b-3"]
+    handles = {h.record_id: h for h in result.handles}
+    # b-1 and b-2 are BOTH cue-matched seeds (`0026` §2: seed = cue-matched
+    # records with W_j), so spreading warms them symmetrically across the
+    # shared entity "alice" — the seed-peer hop. Spread contributes to
+    # DECOMPOSITION, not to ordering: the no-base run above fixes the order.
+    assert handles["b-1"].activation == {"base_level": 5.0, "spread": 0.5, "total": 5.5}
+    assert handles["b-2"].activation == {"base_level": 0.0, "spread": 0.5, "total": 0.5}
+    # The contract: b-3 carries the SAME 5.0 base as b-1 and no relevance, and
+    # still sorts behind b-2, whose total activation is a tenth of it.
+    assert handles["b-3"].relevance == {}
+    assert handles["b-3"].activation == {"base_level": 5.0, "spread": 0.0, "total": 5.0}
+
+
+def test_spread_is_monotonic_in_scope_ladder_coverage() -> None:
+    """Adding a pair to the ladder never REMOVES spread.
+
+    A wildcard-owner pair covers every owner in its scope, so a ladder that
+    also names an explicit owner for that same scope describes exactly the
+    same records. Both must produce identical spread: the narrow pass must not
+    be able to claim seeds the broad pass can then no longer reach, which would
+    leave records reachable only from those seeds with no spread at all.
+    """
+    def _spread(scopes):
+        store = InMemoryTripleStore()
+        store.add([
+            _assertion("x1", "alice", "knows", "bob", 1),
+            _assertion("y1", "alice", "wrote", "report", 2),
+            TripleAssertion(  # same scope, DIFFERENT owner — wildcard-only reach
+                subject="alice", predicate="filed", object="report copy",
+                scope=SCOPE, owner_id="s2", observed_at=_ts(3),
+                attributes={}, assertion_id="z1",
+            ),
+        ])
+        result, _ = run_reconstruction(
+            store=store, stimulus=Stimulus(cue_text="alice report"),
+            scopes=scopes, budget=RecallBudget(), view="working_set",
+            base_activation={}, trail_activation={},
+        )
+        return {h.record_id: h.activation["spread"] for h in result.handles}
+
+    broad = _spread([(SCOPE, "")])
+    assert broad["z1"] > 0.0  # the other owner's record is reached at all
+    assert _spread([(SCOPE, OWNER), (SCOPE, "")]) == broad
 
 
 def test_exact_hits_order_first() -> None:

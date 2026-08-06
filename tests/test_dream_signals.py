@@ -19,6 +19,7 @@ from typing import Any, Dict
 
 from abstractmemory import MemorySystem, Stimulus, dream_pass, sleep_pass
 from abstractmemory.dream_signals import (
+    FRAGMENT_CAP,
     SIGNAL_KINDS,
     compose_signals,
     night_feelings,
@@ -424,3 +425,29 @@ def test_narration_names_the_nights_acts_and_feelings_color(system) -> None:
     assert created, "fixture drift: the duplicate titles must mint a candidate"
     assert "The night also moved:" in digest
     assert "feels warm" in digest or "feels mixed" in digest
+
+
+def test_fragment_bound_holds_and_the_cut_is_counted_out_of_band() -> None:
+    """`fragment` never exceeds FRAGMENT_CAP — the bound is load-bearing.
+
+    `replay` serves the signal stream verbatim precisely because fragments are
+    bounded by construction, and `consolidation` splices fragments into the
+    stored dream digest, where marker words would enter the keyword and
+    embedding surface. So the cut shows as a bare "…" and the counts ride a
+    sibling key.
+    """
+    long_words = "recovering the harbour dredging permit schedule " * 20
+    s = signal("unresolved_tension", phase="dream", act="pressed",
+               fragment=long_words, touched=["ex:episode-1"])
+
+    assert len(s["fragment"]) <= FRAGMENT_CAP
+    assert s["fragment"].endswith("…")
+    assert "#TRUNCATION" not in s["fragment"]
+    assert s["fragment_truncation"]["of"] == len(long_words.strip())
+    assert s["fragment_truncation"]["kept"] < s["fragment_truncation"]["of"]
+
+    # A fragment that fits carries no cut record at all.
+    short = signal("changed_navigation", phase="resolution", act="closed",
+                   fragment="a question closed", touched=["ex:question-1"])
+    assert short["fragment"] == "a question closed"
+    assert "fragment_truncation" not in short

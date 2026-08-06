@@ -187,3 +187,32 @@ def test_apply_is_idempotent_and_never_touches_identity(archive) -> None:
     # And the observer can tell seeded from lived.
     assert all(a.attributes.get("seeded_from") == "archive-import"
                for a in rows if a.attributes.get("record_kind") in ("episode", "instruction"))
+
+
+def test_digest_truncation_is_counted_out_of_band_not_spliced_into_the_text() -> None:
+    """The cut shows as a bare "…"; the COUNTS ride attributes, never the digest.
+
+    A record digest is the embedding and keyword surface (`canonical_text`),
+    and the near-duplicate detector fingerprints `title + digest`. A counted
+    marker inside the digest contributes its own words ("chars", "source",
+    "truncation") to every truncated import, so unrelated files drift toward
+    each other and cross the Jaccard floor as false near-duplicates.
+    """
+    from abstractmemory.archive_import import _first_sentences
+    from abstractmemory.sleep_policy import NEAR_DUP_JACCARD_FLOOR
+    from abstractmemory.text_tokens import jaccard, token_set
+
+    short = "One short line that fits well under the cap."
+    assert _first_sentences(short) == (short, None)  # unmarked when it fits
+
+    left = ("weekly report reviewed budget timeline staffing risks "
+            "harbour dredging permits ") * 12
+    right = ("weekly report reviewed budget timeline staffing risks "
+             "cannery refrigeration licence ") * 12
+    left_digest, left_meta = _first_sentences(left.strip())
+    right_digest, _ = _first_sentences(right.strip())
+
+    assert left_digest.endswith("…") and "#TRUNCATION" not in left_digest
+    assert left_meta["kept"] < left_meta["of"] and left_meta["unit"] == "prose chars"
+    # Two unrelated documents stay unrelated: the marker adds no shared tokens.
+    assert jaccard(token_set(left_digest), token_set(right_digest)) < NEAR_DUP_JACCARD_FLOOR

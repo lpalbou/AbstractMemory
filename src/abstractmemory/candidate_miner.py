@@ -59,7 +59,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from .records import MemoryRecordInput, record_id_for
 from .sleep_policy import DEFAULT_SLEEP_TUNING, SleepTuning
 from .store import TripleQuery
-from .text_tokens import token_set
+from .text_tokens import bounded_label, token_set
 from .world_model import _evidence_scan, _interest_subject_head, discovery_keyword_ok
 
 __all__ = ["mine_candidates_pass", "resolve_questions_pass"]
@@ -510,11 +510,12 @@ def mine_candidates_pass(
         # boilerplate, the question's own text head is the honest label).
         label = q["title"]
         if not (_terms(q["title"]) - boilerplate):
-            head = " ".join(str(q["text"] or "").split())[:90].strip()
+            # `question_id` below carries the record these words came from.
+            head = bounded_label(" ".join(str(q["text"] or "").split()), 90).strip()
             label = head or q["title"]
         entry = {
             "proposed_kind": "lesson", "question_id": q["record_id"],
-            "title": f"Lesson candidate: {label}"[:120],
+            "title": bounded_label(f"Lesson candidate: {label}", 120),
             "sessions": row["sessions"],
         }
         out["lesson_candidates"].append(entry)
@@ -582,7 +583,7 @@ def mine_candidates_pass(
     interest_rows.sort(key=lambda r: (-r[1], r[0]))  # most-recurrent first
     for theme, n_sessions, rids in interest_rows:
         entry = {"proposed_kind": "interest", "theme": theme,
-                 "title": f"Interest candidate: {theme}"[:120],
+                 "title": bounded_label(f"Interest candidate: {theme}", 120),
                  "sessions": n_sessions}
         out["interest_candidates"].append(entry)
         example = evidence[rids[0]]["title"] if rids else ""
@@ -654,8 +655,9 @@ def mine_candidates_pass(
             new_gid = _mint(
                 f"{family}_group",
                 key_seed=f"group|{family}|{g['exemplar']}|{members_hash}",
-                title=(f"Group offer: {g['size']} {family}s around "
-                       f"{(g['shared_terms'][0] if g['shared_terms'] else g['exemplar'])}")[:120],
+                title=bounded_label(
+                    f"Group offer: {g['size']} {family}s around "
+                    f"{(g['shared_terms'][0] if g['shared_terms'] else g['exemplar'])}", 120),
                 digest=digest,
                 source_ids=ordered_members,
                 extra={"group_size": g["size"], "group_family": family,

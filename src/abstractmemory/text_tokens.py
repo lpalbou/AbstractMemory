@@ -38,16 +38,19 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import List, Sequence, Set
+from typing import Any, Dict, List, Sequence, Set
 
 __all__ = [
     "TOKEN_RE",
+    "TRUNCATION_MARK",
+    "bounded_label",
     "facet_tokens",
     "fold_text",
     "jaccard",
     "title_key",
     "token_set",
     "tokenize",
+    "truncation_meta",
 ]
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -60,6 +63,43 @@ TOKEN_RE = re.compile(r"[a-z0-9]+")
 # fix for both. Evidence sets (near-dup) keep floor 3 deliberately.
 RECALL_MIN_TOKEN_LEN = 4
 EVIDENCE_MIN_TOKEN_LEN = 3
+
+# The one in-band marker for a lossy cut. Greppable, and stable across every
+# surface that can cut content.
+TRUNCATION_MARK = "#TRUNCATION"
+
+
+def bounded_label(text: str, cap: int) -> str:
+    """A display label cut to `cap`, the cut shown by a bare "…".
+
+    Labels and titles carry a hard length contract and always travel beside
+    the id of the record they name, so a reader can open the source for the
+    rest. Counts would overflow the very bound they describe; when a caller
+    genuinely needs them, they belong out-of-band via `truncation_meta`.
+    """
+    body = str(text or "")
+    return body if len(body) <= cap else body[: cap - 1] + "…"
+
+
+def truncation_meta(kept: int, total: int, *, unit: str = "chars") -> Dict[str, Any]:
+    """The out-of-band record of a lossy cut. ONE shape, package-wide.
+
+    Framework ADR-0026 §1 forbids SILENT truncation and accepts three channels
+    for the warning: a marker in the text, runtime metadata, or a logged event.
+    This package uses the first two TOGETHER and never a counted marker alone —
+    cut text keeps a bare "…" so the reader sees that words are missing, and
+    the counts ride here, in a sibling field.
+
+    The counts must stay OUT of the text, because cut strings here are rarely
+    inert. A record digest is the embedding and keyword surface rendered by
+    `canonical_text`, so a marker's own words ("chars", "source", "truncation")
+    become tokens shared by every truncated record and inflate near-duplicate
+    Jaccard between documents that have nothing to do with each other. A dream
+    fragment carries a documented <=200 bound that `replay` relies on to serve
+    the signal stream verbatim. In both cases a marker spliced into the text
+    corrupts the very thing it was meant to describe.
+    """
+    return {"mark": TRUNCATION_MARK, "kept": int(kept), "of": int(total), "unit": unit}
 
 
 def fold_text(text: str) -> str:

@@ -53,6 +53,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .gradation import GradationConfig, compute_gradation
+from .text_tokens import truncation_meta
 
 __all__ = ["FRAGMENT_CAP", "SIGNAL_KINDS", "TOP_K_SIGNALS",
            "compose_signals", "night_feelings", "signal"]
@@ -75,6 +76,25 @@ _TOP_K_SIGNALS = 12  # bounded composition (C constraint 4; ~7KB ceiling)
 # imports — public names only, never underscores).
 TOP_K_SIGNALS = _TOP_K_SIGNALS
 FRAGMENT_CAP = _FRAGMENT_CAP
+
+
+def _bounded_fragment(fragment: Any) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """The signal's fragment bounded at FRAGMENT_CAP, with the cut counted.
+
+    Framework ADR-0026 §1: signals ride the dream stream into reports and
+    surfaces the entity reads, so an unmarked cut would read as the record's
+    own whole words — the fragment keeps a bare "…". The COUNTS stay out of
+    the string: `_FRAGMENT_CAP` is a documented bound that `replay` relies on
+    to serve the stream verbatim, and `consolidation` splices fragments into
+    the stored dream digest, where marker words would pollute the keyword and
+    embedding surface. `touched` always names the records quoted from.
+    #[WARNING:TRUNCATION] dream-signal fragment bounded at FRAGMENT_CAP
+    """
+    text = str(fragment or "").strip()
+    if len(text) <= _FRAGMENT_CAP:
+        return text, None
+    return (text[:_FRAGMENT_CAP - 1] + "…",
+            truncation_meta(_FRAGMENT_CAP - 1, len(text)))
 
 
 def night_feelings(
@@ -167,13 +187,16 @@ def signal(
     if k not in SIGNAL_KINDS:
         raise ValueError(
             f"signal kind must be one of {sorted(SIGNAL_KINDS)} (got {kind!r})")
+    text, fragment_truncation = _bounded_fragment(fragment)
     out: Dict[str, Any] = {
         "kind": k,
         "phase": str(phase or "").strip(),
         "act": str(act or "").strip(),
-        "fragment": str(fragment or "").strip()[:_FRAGMENT_CAP],
+        "fragment": text,
         "touched": [str(t) for t in touched if str(t or "").strip()],
     }
+    if fragment_truncation:
+        out["fragment_truncation"] = fragment_truncation
     felt = _felt(feelings or {}, felt_targets)
     if felt is not None:
         out["felt"] = felt

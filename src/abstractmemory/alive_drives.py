@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from .consolidation import unresolved_dreams
 from .diary import open_commitments, open_ideas, open_problems, open_questions
 from .store import TripleQuery
+from .text_tokens import truncation_meta
 
 __all__ = ["alive_drives"]
 
@@ -51,6 +52,27 @@ _DRIVE_LABELS = {
     "interest": "unexplored interest",
     "dream": "unresolved tension",
 }
+
+# The day-cue digest bound. These items ride an EffectOutcome payload into
+# the run ledger and into flow bindings (LIFE_QUERY "items"), so a reader
+# downstream cannot tell a cut digest from a short one — framework ADR-0026
+# §1: the bound stays, the SILENCE goes. `read_memory(#tag)` opens the record.
+_DIGEST_CHARS = 280
+
+
+def _digest_of(assertion: Any) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """The drive's digest bounded at `_DIGEST_CHARS`, with the cut counted.
+
+    The bare "…" rides the text and the counts ride the item's own
+    `digest_truncation` key: consumers re-cut these digests for display, and
+    a counted marker inside the string is the first thing such a re-cut drops.
+    #[WARNING:TRUNCATION] day-cue digest preview; read_memory opens the record
+    """
+    text = str(getattr(assertion, "object", None) or "")
+    if len(text) <= _DIGEST_CHARS:
+        return text, None
+    return (text[:_DIGEST_CHARS - 1] + "…",
+            truncation_meta(_DIGEST_CHARS - 1, len(text)))
 
 
 def _origin_of(assertion: Any) -> str:
@@ -179,18 +201,22 @@ def alive_drives(
         if aliveness <= 0.0:
             continue  # dormant: an empty result IS the quiet desk
         attrs = a.attributes if isinstance(a.attributes, dict) else {}
-        out.append({
+        digest, digest_truncation = _digest_of(a)
+        item: Dict[str, Any] = {
             "record_id": a.subject,
             "kind": str(attrs.get("record_kind") or ""),
             "drive": label,
             "title": str(attrs.get("title") or "").strip(),
-            "digest": str(a.object or "")[:280],
+            "digest": digest,
             "born_at": str(a.observed_at or "")[:10] or None,
             "origin": _origin_of(a),
             "aliveness": round(aliveness, 4),
             "alive_via": ("both" if trail > 0 and recent > 0
                           else "trail" if trail > 0 else "recency"),
-        })
+        }
+        if digest_truncation:
+            item["digest_truncation"] = digest_truncation
+        out.append(item)
 
     # GROUP FOLD (laurent room#277: "the more there are the higher the
     # signal they get to be treated"): the ONE partition over the FULL
@@ -264,12 +290,13 @@ def alive_drives(
                 continue
             a, label = anchor
             attrs = a.attributes if isinstance(a.attributes, dict) else {}
-            folded.append({
+            digest, digest_truncation = _digest_of(a)
+            folded_item: Dict[str, Any] = {
                 "record_id": a.subject,
                 "kind": str(attrs.get("record_kind") or ""),
                 "drive": label,
                 "title": str(attrs.get("title") or "").strip(),
-                "digest": str(a.object or "")[:280],
+                "digest": digest,
                 "born_at": str(a.observed_at or "")[:10] or None,
                 "origin": _origin_of(a),
                 "aliveness": round(GROUP_BOOST_STEP * (g["size"] - 1), 4),
@@ -278,6 +305,9 @@ def alive_drives(
                 "group_members": g["members"],
                 "group_alive_members": [],
                 "group_shared_terms": g["shared_terms"],
-            })
+            }
+            if digest_truncation:
+                folded_item["digest_truncation"] = digest_truncation
+            folded.append(folded_item)
     folded.sort(key=lambda d: (-d["aliveness"], d["record_id"]))
     return folded[: max(0, int(k))]

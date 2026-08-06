@@ -328,19 +328,27 @@ def run_reconstruction(
         max_edges=int(budget.max_edges),
     )
     all_edges: List[Dict[str, Any]] = []
-    seeded: set = set()
-    for scope, owner in (scope_pairs if run_spreading else ()):
+    # Each scope is walked ONCE, at its broadest owner. A wildcard-owner pair
+    # covers every owner in that scope, so running an explicit-owner pair for
+    # the same scope as well would let the narrow pass claim seeds that the
+    # broad pass can then no longer reach — records reachable only from those
+    # seeds would silently lose their spread, making the result NON-MONOTONIC
+    # in ladder coverage (adding a broader pair yielded LESS spread). Only the
+    # spreading walk narrows here; `scope_pairs` stays authoritative for the
+    # candidate gather and for the trace's searched_scopes.
+    wildcard_scopes = {s for s, o in scope_pairs if not o}
+    spread_pairs = [(s, o) for s, o in scope_pairs if not o or s not in wildcard_scopes]
+    for scope, owner in (spread_pairs if run_spreading else ()):
         remaining = eff_params.max_edges - len(all_edges)
         if remaining <= 0:
             break
         pair_seeds: Dict[str, float] = {}
         for rid, cand in universe.items():
-            if rid in seeded or not cand.channel_matched:
+            if not cand.channel_matched:
                 continue
             a = cand.assertion
             if a.scope == scope and (not owner or (a.owner_id or "") == owner):
                 pair_seeds[rid] = cand.fused
-                seeded.add(rid)
         if not pair_seeds:
             continue
         spread_scores, edges = spread_activation(

@@ -114,12 +114,14 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 - Stores/backends: [`docs/stores.md`](docs/stores.md)
 - Operator guide (entity homes): [`docs/operator.md`](docs/operator.md)
 - FAQ: [`docs/faq.md`](docs/faq.md)
+- Troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Development: [`docs/development.md`](docs/development.md)
 
 ## Project
 
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Code of conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 - Security: [`SECURITY.md`](SECURITY.md)
 - License: [`LICENSE`](LICENSE)
 - Acknowledgments: [`ACKNOWLEDGMENTS.md`](ACKNOWLEDGMENTS.md)

@@ -18,6 +18,7 @@ Key facts for agents:
 - [docs/architecture.md](docs/architecture.md): the two-layer model, journal-as-time-axis, the reconstruction union, presence ≠ use, append-only posture
 - [docs/api.md](docs/api.md): full API reference, grouped by surface
 - [docs/faq.md](docs/faq.md): common questions and current limits
+- [docs/troubleshooting.md](docs/troubleshooting.md): symptom-oriented fixes — setup, retrieval, embedding spaces, durability, maintenance
 
 ## Topic Deep Dives
 
@@ -28,7 +29,8 @@ Key facts for agents:
 ## Contributing
 
 - [docs/development.md](docs/development.md): local setup and test workflow
-- [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow, and how to cite the three design-record series
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): participation standards and reporting
 - [SECURITY.md](SECURITY.md): vulnerability reporting
 
 ## Optional

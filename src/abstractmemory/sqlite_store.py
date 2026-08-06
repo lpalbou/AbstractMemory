@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -28,6 +29,21 @@ from .vector_scoring import rank_by_cosine
 # the golden parity tests meaningful.
 from .canonical_text import canonical_text as _canonical_text  # noqa: E402
 from .canonical_text import is_record_edge as _is_record_edge  # noqa: E402
+
+# The table name is interpolated into SQL identifiers, which cannot be bound
+# as parameters — so it is validated at the door, exactly as SQLiteJournal
+# validates its table_prefix. Same rule, same reason, both backends.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _checked_table(table_name: Optional[str]) -> str:
+    table = str(table_name or "triples").strip() or "triples"
+    if not _IDENTIFIER_RE.match(table):
+        raise ValueError(
+            f"table_name must match [A-Za-z_][A-Za-z0-9_]* (got {table_name!r}); "
+            "it is interpolated into SQL identifiers"
+        )
+    return table
 
 
 class SQLiteTripleStore:
@@ -67,7 +83,7 @@ class SQLiteTripleStore:
     ) -> None:
         self._path = Path(path).expanduser()
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._table = str(table_name or "triples").strip() or "triples"
+        self._table = _checked_table(table_name)
         self._embedder = embedder
 
         self._lock = threading.RLock()
@@ -623,7 +639,7 @@ def read_embedding_pin(path: Any, *, table_name: str = "triples") -> Optional[di
     file_path = Path(path).expanduser()
     if not file_path.is_file():
         return None
-    table = str(table_name or "triples").strip() or "triples"
+    table = _checked_table(table_name)
     try:
         conn = sqlite3.connect(f"file:{file_path}?mode=ro", uri=True)
     except sqlite3.Error:

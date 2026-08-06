@@ -50,6 +50,22 @@ Good first contributions:
   - `CHANGELOG.md` for notable changes
 - If you add a new dependency, keep it optional unless strictly required.
 
+## Citing design records
+
+Three numbered series are referenced from code comments and docs, and their
+numbers overlap. Always cite them in the form that names the series:
+
+| Series | Cite as | Lives in |
+| --- | --- | --- |
+| This package's design records | `0026` (bare number) | [`docs/backlog/`](docs/backlog/) |
+| AbstractFramework ADRs | `framework ADR-0026` | `docs/adr/` in the [monorepo](https://github.com/lpalbou/abstractframework) |
+| Cross-package agreement threads | `a2a 0003`, `a2a 0001/012` | `a2a/threads/` in the monorepo |
+
+A bare number always means this package's own backlog record. Framework ADRs
+and a2a threads live outside this repository, so name them explicitly — both
+series run in the same `0001`–`0037` range as the backlog and are otherwise
+indistinguishable.
+
 ## PR checklist
 
 - `python -m pytest -q` passes locally

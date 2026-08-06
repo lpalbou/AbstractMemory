@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.3.0] - 2026-08-06
+
+The first release with **layer 2**: a `MemorySystem` facade that composes the
+triple store with an append-only journal into a usage-weighted memory graph.
+0.2.6 shipped layer 1 alone — triples, queries, and the three stores.
+
+### Added
+
+- **`MemorySystem` facade** — one object over a store plus a journal, with
+  typed record formation (`remember`), stimulus-driven reconstruction,
+  `commit_selection` as the only strengthening path, bindings and closures.
+- **Reconstruction** — a pure pipeline over retrieval channels (exact,
+  keyword/FTS, vector), fusion, spreading activation, and a bounded shelf.
+  Working memory emerges from use rather than being stored.
+- **Attention and decay** — activation over rank distance, with strengthen,
+  weaken, and refocus. Storage never decays; only retrieval strength changes.
+- **Identity** — spark, engram, and a folded self core with identity kinds
+  (`value`, `purpose`, `trait`, `interest`) that order ahead of other records.
+- **Valence and gradation** — signed appraisals on dual channels, so
+  ambivalence is preserved rather than summed away. No decay: plasticity comes
+  only from new evidence and explicit resolutions.
+- **Diary conventions**, including open questions, problems, ideas, and
+  standing commitments with a verifiable content-hash chain.
+- **Sleep and consolidation** — one night in canonical order (resolution →
+  maintenance → world models → dream), deterministic and LLM-free, with
+  graceful cancellation at sub-phase boundaries.
+- **Deliberate reach** — `probe`, `probe_expand`, and `familiarity`, which
+  reports match density rather than content so a caller can tell "I hold
+  nothing here" from "I hold a lot" before answering.
+- **World models** — append-only orientation cards per target, with aliasing.
+- **`situate`** — rebuild the context of one past moment as a pure read.
+- **Replay stream** — `export_replay` serves the journal verbatim in seq order
+  for history scrub and live tail.
+- **Operator tooling** — maintenance and cadence reads, mind-mass health,
+  redigestion of mechanical digests, atomic re-embedding, and cold-cut
+  doctoring with measured parity checks.
+- **`SQLiteJournal`** — durable journal that can share one file with the store.
+
+### Changed
+
+- `docs/api.md` now documents **every** public export (152) with signatures
+  verified against source. New `docs/troubleshooting.md` covers setup,
+  retrieval, embedding-space, durability, and maintenance symptoms.
+- `CONTRIBUTING.md` records how to cite the three design-record series, whose
+  numbers overlap: bare `0026` is this package's backlog, `framework ADR-0026`
+  is the monorepo ADR, `a2a 0003` is a cross-package thread.
+
+### Fixed
+
+- **Spreading is monotonic in scope-ladder coverage.** A ladder naming both a
+  wildcard owner and an explicit owner for the same scope let the narrow pass
+  claim seeds the broad pass could then not reach, so records reachable only
+  from those seeds silently lost their spread — adding a *broader* pair
+  yielded *less* spread. Each scope is now walked once, at its broadest owner.
+- **Truncation counts no longer enter indexed text.** Cut digests and dream
+  fragments keep a bare `…`, and the counts ride sibling metadata
+  (`attributes._truncation`, `digest_truncation`, `fragment_truncation`). A
+  counted marker inside a digest contributed its own words to the keyword and
+  embedding surface, inflating near-duplicate Jaccard between unrelated
+  records and manufacturing false consolidation proposals; inside a dream
+  fragment it broke the documented 200-character bound that the replay stream
+  relies on to serve signals verbatim.
+- **`SQLiteTripleStore` validates `table_name`** as a plain SQL identifier, as
+  `SQLiteJournal` already validated `table_prefix`. Invalid names now raise
+  `ValueError` at construction instead of surfacing a driver error later.
+- **Candidate titles and labels mark their cuts** instead of ending mid-word.
+- **Recall diagnosis fails loudly.** `recall_history` and `explain_recall` no
+  longer swallow store errors and report "absent"; an unformed id already
+  resolves to an honest all-absent read without a guard.
+
+### Compatibility
+
+- Layer 1 is source-compatible with 0.2.6: `TripleAssertion`, `TripleQuery`,
+  and the three stores keep their behavior. Layer 2 is additive — existing
+  layer-1 code needs no changes.
+- SQLite store files created before the vector column existed upgrade in place
+  on open. Homes created before creation-time embedding pinning keep working
+  and report `#FALLBACK: embedding pin created at FIRST WRITE`.
+- Requires Python 3.10+.
+
+### Detailed changes
+
+The dated entries below record this release's development in full.
+
 ### Changed (context floor -> 40k soft recommendation — operator re-ruling 2026-08-01)
 
 - **`ENTITY_CONTEXT_FLOOR` is `40_000` and means a RECOMMENDED working size,

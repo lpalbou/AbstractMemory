@@ -62,18 +62,20 @@ def _identity_set(store: Any, record_id: str) -> Set[str]:
     Unknown ids return just themselves — history over an unformed id is an
     honest all-absent read, and the diagnosis surface names the namespace
     problem explicitly."""
+    from .records import resolve_digest_assertion
+
     rid = str(record_id or "").strip()
     ids = {rid}
-    try:
-        from .records import resolve_digest_assertion
-
-        digest = resolve_digest_assertion(store, rid)
-        if digest is not None:
-            ids.add(str(digest.subject or rid))
-            if digest.assertion_id:
-                ids.add(str(digest.assertion_id))
-    except Exception:
-        pass  # a diagnosis read must never crash on a store hiccup
+    # No exception guard, by the silent-fallback law (the same rule
+    # `alive_drives` states): an unformed id already resolves to None and
+    # reads as honestly absent, so the only thing a guard here could catch is
+    # a genuinely broken store — which must raise loudly, never read as a
+    # quiet desk with nothing recalled.
+    digest = resolve_digest_assertion(store, rid)
+    if digest is not None:
+        ids.add(str(digest.subject or rid))
+        if digest.assertion_id:
+            ids.add(str(digest.assertion_id))
     return ids
 
 
