@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import replace
 from typing import Any, Iterable, List, Optional, Sequence
 
 from .embedding_pin import (
@@ -111,6 +112,28 @@ class InMemoryTripleStore:
             if embedder is not None:
                 self._embedder = embedder
         return len(clean)
+
+    def close_assertion(self, assertion_id: str, valid_until: str) -> bool:
+        """Close one assertion's validity window in place (SQLite parity):
+        sets `valid_until` only while it is still open; everything else is
+        untouched. True when a row changed; False for an unknown id or an
+        already-closed window."""
+        rid = str(assertion_id or "").strip()
+        until = str(valid_until or "").strip()
+        if not rid:
+            raise ValueError("close_assertion requires an assertion_id")
+        if not until:
+            raise ValueError("close_assertion requires a valid_until timestamp")
+        with self._lock:
+            for row in self._rows:
+                if row.get("assertion_id") != rid:
+                    continue
+                a = row.get("assertion")
+                if not isinstance(a, TripleAssertion) or a.valid_until is not None:
+                    return False
+                row["assertion"] = replace(a, valid_until=until)
+                return True
+        return False
 
     def close(self) -> None:
         return None

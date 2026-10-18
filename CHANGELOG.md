@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-*No unreleased changes.*
+### Added
+
+- **`close_assertion(assertion_id, valid_until)`** on `SQLiteTripleStore` and
+  `InMemoryTripleStore`: closes an assertion's open validity window in place
+  (only while `valid_until` is still empty; terms, provenance, attributes,
+  keyword index and vector are untouched) and returns whether a row changed.
+  It lets a writer that supersedes a fact make `TripleQuery(active_at=...)`
+  agree with its own belief window (AbstractNote supersession, paired with a
+  journal `ClosureRecord(kind="supersede")`). Existing callers are unaffected;
+  `add` stays append-only.
 
 ## [0.3.0] - 2026-08-06
 

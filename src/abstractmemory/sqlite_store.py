@@ -51,7 +51,8 @@ class SQLiteTripleStore:
 
     Notes:
     - Uses stdlib `sqlite3` (portable; no daemon).
-    - Append-only: there is no update/delete API (see AbstractMemory FAQ).
+    - Append-only: there is no update/delete API (see AbstractMemory FAQ),
+      except `close_assertion`, which only closes an open validity window.
     - VECTORS (a2a 0003, the entity-home pairing): pass `embedder=` and each
       added assertion's canonical text is embedded and persisted in the SAME
       .sqlite3 file (JSON-encoded `embedding` column; in-place ALTER TABLE
@@ -525,6 +526,39 @@ class SQLiteTripleStore:
         with self._lock:
             rows = self._conn.cursor().execute(sql, params).fetchall()
         return [self._row_to_assertion(r) for r in rows]
+
+    def close_assertion(self, assertion_id: str, valid_until: str) -> bool:
+        """Close one assertion's validity window IN PLACE (additive, backlog:
+        abstractnote supersession). Sets `valid_until` only while it is still
+        open (NULL); every other column — terms, provenance, attributes, the
+        FTS row, the vector — is untouched, so the store stays append-only
+        for content. Returns True when a row changed, False when the id is
+        unknown or the window was already closed (idempotent replays).
+
+        Why: a later fact superseding an earlier one must make
+        `TripleQuery(active_at=...)` agree with the writer's belief window;
+        journal closures alone only reach ranked retrieval, never `query`."""
+        rid = str(assertion_id or "").strip()
+        until = str(valid_until or "").strip()
+        if not rid:
+            raise ValueError("close_assertion requires an assertion_id")
+        if not until:
+            raise ValueError("close_assertion requires a valid_until timestamp")
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute(
+                    f"UPDATE {self._table} SET valid_until = ? "
+                    "WHERE assertion_id = ? AND valid_until IS NULL",
+                    (until, rid),
+                )
+                changed = int(cur.rowcount or 0) > 0
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+        return changed
 
     def replace_vectors(
         self, vectors: dict, pin: dict, *,
