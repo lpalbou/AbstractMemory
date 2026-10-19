@@ -593,6 +593,8 @@ Vector results carry retrieval metadata in `attributes["_retrieval"]` (`score`, 
 
 `add(assertions) -> list[str]` (returns assertion ids), `query(q) -> list[TripleAssertion]`, `close()`.
 
+`InMemoryTripleStore` and `SQLiteTripleStore` also expose `close_assertion(assertion_id, valid_until) -> bool`: the one in-place change the stores allow. It sets `valid_until` on an assertion whose window is still open and touches nothing else (terms, provenance, attributes, the keyword index and the stored vector stay as written). It returns `True` when a row changed and `False` for an unknown id or a window that is already closed, so a replay is harmless; an empty `assertion_id` or `valid_until` raises `ValueError`. Use it when a later fact supersedes an earlier one and `TripleQuery(active_at=...)` must stop returning the old row from that moment on. The layer-2 `close_assertions` (below) is a different operation: it appends a closure record and leaves the row's window as written.
+
 - `InMemoryTripleStore(embedder=None)` — dependency-free, volatile, vector-capable.
 - `SQLiteTripleStore(path, embedder=None)` — persistent single file (stdlib only), structured queries and native vector search. With an embedder, `add(...)` embeds each assertion's canonical text and persists the vector in the same file; files created before the vector column existed upgrade in place on open. Rows added without an embedder stay vectorless (vector queries skip them; layer-2 recall labels the degradation `#FALLBACK`).
 - `LanceDBTripleStore(uri, embedder=None, ...)` — persistent, vector-capable; requires the optional `lancedb` dependency (constructing without it raises `ImportError` with an install hint).
@@ -1045,6 +1047,7 @@ Canonicalization:
 
 Append-only:
 - There is no update/delete API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
+- The one in-place change: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer it.
 
 Timestamps are strings:
 - All stores compare `observed_at` / `valid_*` as strings.
@@ -1276,7 +1279,7 @@ Canonicalization (trim + lowercase) is part of the matching contract: it prevent
 
 There is no update or delete API, by design:
 
-- At layer 1, represent changes by adding a new assertion with fresh provenance.
+- At layer 1, represent changes by adding a new assertion with fresh provenance. When the new assertion supersedes an earlier one, `close_assertion(assertion_id, valid_until)` (in-memory and SQLite stores) closes the earlier validity window in place, so `TripleQuery(active_at=...)` stops returning it from that moment; nothing else about the row changes.
 - At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract or supersede with replacements) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
 - Forgetting is decay of retrieval strength plus closures and silencing. The substrate is lossless; there is no compaction.
 

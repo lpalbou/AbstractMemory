@@ -128,6 +128,7 @@ Canonicalization:
 
 Append-only:
 - There is no update/delete API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
+- The one in-place change: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer it.
 
 Timestamps are strings:
 - All stores compare `observed_at` / `valid_*` as strings.

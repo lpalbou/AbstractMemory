@@ -64,6 +64,8 @@ Vector results carry retrieval metadata in `attributes["_retrieval"]` (`score`, 
 
 `add(assertions) -> list[str]` (returns assertion ids), `query(q) -> list[TripleAssertion]`, `close()`.
 
+`InMemoryTripleStore` and `SQLiteTripleStore` also expose `close_assertion(assertion_id, valid_until) -> bool`: the one in-place change the stores allow. It sets `valid_until` on an assertion whose window is still open and touches nothing else (terms, provenance, attributes, the keyword index and the stored vector stay as written). It returns `True` when a row changed and `False` for an unknown id or a window that is already closed, so a replay is harmless; an empty `assertion_id` or `valid_until` raises `ValueError`. Use it when a later fact supersedes an earlier one and `TripleQuery(active_at=...)` must stop returning the old row from that moment on. The layer-2 `close_assertions` (below) is a different operation: it appends a closure record and leaves the row's window as written.
+
 - `InMemoryTripleStore(embedder=None)` — dependency-free, volatile, vector-capable.
 - `SQLiteTripleStore(path, embedder=None)` — persistent single file (stdlib only), structured queries and native vector search. With an embedder, `add(...)` embeds each assertion's canonical text and persists the vector in the same file; files created before the vector column existed upgrade in place on open. Rows added without an embedder stay vectorless (vector queries skip them; layer-2 recall labels the degradation `#FALLBACK`).
 - `LanceDBTripleStore(uri, embedder=None, ...)` — persistent, vector-capable; requires the optional `lancedb` dependency (constructing without it raises `ImportError` with an install hint).
