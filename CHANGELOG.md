@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+*No unreleased changes.*
+
+## [0.3.2] - 2026-10-20
+
 ### Added
 
-- `ClosureRecord.kind` accepts `reinterpreted` (additive; `CLOSURE_KINDS` in `abstractmemory.journal`): the writer
-  no longer reads its source this way (AbstractNote ADR 0008: a note understood again against an earlier foundation
-  withdraws its previous reading). It is neither `retract` (the fact was wrong) nor `supersede` (a later fact
-  replaced it); `replacement_ids` is optional; like the other kinds it leaves ranked retrieval. Existing callers are
-  unaffected.
+- **A third closure kind, `reinterpreted`**, for an assertion whose reading was
+  superseded by a re-interpretation of its source: the writer no longer reads
+  that source this way (for example, AbstractNote understanding a note again
+  against an earlier foundation withdraws its previous reading). It is neither
+  `retract` (the fact was wrong) nor `supersede` (a later fact replaced it).
+  `ClosureRecord`, `close_assertions` and `close_record` accept it;
+  `replacement_ids` is optional (the new reading's assertions, when there are
+  any); like the other kinds, a `reinterpreted` closure takes the assertion out
+  of ranked retrieval while it stays in the store and in history. The accepted
+  kinds are listed in `abstractmemory.journal.CLOSURE_KINDS`.
+  Additive: existing callers and stored journals are unaffected.
 
 ## [0.3.1] - 2026-10-19
 

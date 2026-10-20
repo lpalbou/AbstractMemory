@@ -128,7 +128,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 ## Design principles
 
-- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
+- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
 - **Reads are pure**: reconstruction, inspection, replay, and the entity card deposit nothing. `commit_selection` is the only strengthening path.
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.

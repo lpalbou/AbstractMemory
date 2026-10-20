@@ -62,7 +62,7 @@ The same discipline extends to every derived read: inspection (`activation`, `ac
 There is no delete surface anywhere in the package:
 
 - Updates are new assertions with fresh provenance.
-- Belief revision is a `ClosureRecord` (`retract` or `supersede` with replacements) — the old record leaves ranked retrieval but remains in the store and in history.
+- Belief revision is a `ClosureRecord` (`retract`, `supersede` with replacements, or `reinterpreted` when the writer reads the source differently) — the old record leaves ranked retrieval but remains in the store and in history.
 - Visibility is a `ScopeBinding` fold (latest per record/scope/owner wins): `hidden` removes a record from ranked retrieval in that scope pair only; re-binding `indexed` restores it.
 - Forgetting is decay of retrieval strength plus closures and silencing. Storage never decays; only the temporal-access signal does. The global access count (`selected_count`) never decays at all.
 

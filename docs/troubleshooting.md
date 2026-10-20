@@ -70,7 +70,7 @@ explain_recall(store, journal, record_id, trace_id=trace_id)
 recall_history(journal, record_id)
 ```
 
-`absence_diagnosis` reports structural reasons in plain sentences (never formed, retracted, hidden, out of scope, vectorless). `explain_recall` answers the same question against one specific recall. Common structural causes: the record is in a scope the ladder does not include; a closure retracted or superseded it; it is an inactive candidate; or it was formed after the `as_of` seq you anchored to.
+`absence_diagnosis` reports structural reasons in plain sentences (never formed, retracted, hidden, out of scope, vectorless). `explain_recall` answers the same question against one specific recall. Common structural causes: the record is in a scope the ladder does not include; a closure retracted, superseded or reinterpreted it; it is an inactive candidate; or it was formed after the `as_of` seq you anchored to.
 
 ### Recall results change between runs with the same input
 

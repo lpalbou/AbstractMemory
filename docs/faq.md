@@ -39,7 +39,7 @@ Canonicalization (trim + lowercase) is part of the matching contract: it prevent
 There is no update or delete API, by design:
 
 - At layer 1, represent changes by adding a new assertion with fresh provenance. When the new assertion supersedes an earlier one, `close_assertion(assertion_id, valid_until)` (in-memory and SQLite stores) closes the earlier validity window in place, so `TripleQuery(active_at=...)` stops returning it from that moment; nothing else about the row changes.
-- At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract or supersede with replacements) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
+- At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract, supersede with replacements, or reinterpreted when the source is read differently) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
 - Forgetting is decay of retrieval strength plus closures and silencing. The substrate is lossless; there is no compaction.
 
 ## What do `scope` and `owner_id` mean?

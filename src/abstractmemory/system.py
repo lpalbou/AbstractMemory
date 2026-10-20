@@ -853,7 +853,8 @@ class MemorySystem(ValenceOps, AccessOps):
         replacement_ids: Sequence[str] = (),
         reason: str,
     ) -> List[str]:
-        """Append one ClosureRecord per assertion (retract | supersede);
+        """Append one ClosureRecord per assertion (retract | supersede |
+        reinterpreted);
         returns closure ids. Supersede requires replacement_ids; reason is
         mandatory — validated by ClosureRecord BEFORE any append. A multi-
         assertion supersede shares one replacement set. Accepts either id

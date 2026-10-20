@@ -154,7 +154,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 ## Design principles
 
-- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
+- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
 - **Reads are pure**: reconstruction, inspection, replay, and the entity card deposit nothing. `commit_selection` is the only strengthening path.
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.
@@ -389,7 +389,7 @@ The same discipline extends to every derived read: inspection (`activation`, `ac
 There is no delete surface anywhere in the package:
 
 - Updates are new assertions with fresh provenance.
-- Belief revision is a `ClosureRecord` (`retract` or `supersede` with replacements) — the old record leaves ranked retrieval but remains in the store and in history.
+- Belief revision is a `ClosureRecord` (`retract`, `supersede` with replacements, or `reinterpreted` when the writer reads the source differently) — the old record leaves ranked retrieval but remains in the store and in history.
 - Visibility is a `ScopeBinding` fold (latest per record/scope/owner wins): `hidden` removes a record from ranked retrieval in that scope pair only; re-binding `indexed` restores it.
 - Forgetting is decay of retrieval strength plus closures and silencing. Storage never decays; only the temporal-access signal does. The global access count (`selected_count`) never decays at all.
 
@@ -664,7 +664,7 @@ Record families (all append-only, all `seq`-stamped by the journal):
 
 - `MemoryEvent` — attention events. Scoring kinds: `selected`, `co_selected` (pair trails), `pinned`, `silenced`; decay marker: `refocus`; audit-only (recorded, never scored): `listed`, `shown`, `expanded`, `cited`.
 - `ScopeBinding` — visibility: `search_state` (`indexed`/`hidden`), `prompt_state` (`active`/`inactive`), `lifecycle`, `source`, `reason`. Latest per `(record_id, scope, owner_id)` wins; `fold_bindings(bindings)` applies that fold.
-- `ClosureRecord` — belief lifecycle: `kind` (`retract`/`supersede`), mandatory `reason`, `replacement_ids` (required for supersede).
+- `ClosureRecord` — belief lifecycle: `kind` (`retract`/`supersede`/`reinterpreted`), mandatory `reason`, `replacement_ids` (required for supersede, optional otherwise). `reinterpreted` means the writer no longer reads its source this way (a note understood again): neither a correction nor a later fact; it leaves ranked retrieval like the others.
 - `ReconstructionTrace` — one recall: fingerprint, searched scopes, candidates, selected/dropped, cues, budgets, admission labels, warnings.
 - `ActiveMemorySnapshot` — see seam types.
 - `ValenceEvent` — signed appraisals and standing markers (see valence below).
@@ -715,7 +715,7 @@ Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-p
 ### Bindings and closures
 
 - `bind(record_id, *, scope, owner_id, search_state, prompt_state="inactive", lifecycle="none", source="operator", reason=None, binding_id=None) -> ScopeBinding` — append a visibility event. A folded `hidden` binding removes the record from ranked retrieval in that scope pair only; re-binding `indexed` restores it. `prompt_state="active"` admits the record into the identity (self) component. Record-level bindings hide the digest and its edge assertions together. Direct `store.query` id lookups bypass folds by design.
-- `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede`).
+- `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede` | `reinterpreted`).
 - `close_record(record_id, *, reason, kind="retract", replacement_ids=()) -> list[str]` — close a whole record (digest and its edges) as one belief-revision act; closure ids are deterministic, so replays dedupe.
 
 ### Identity: spark, engram, self core, floors
@@ -1280,7 +1280,7 @@ Canonicalization (trim + lowercase) is part of the matching contract: it prevent
 There is no update or delete API, by design:
 
 - At layer 1, represent changes by adding a new assertion with fresh provenance. When the new assertion supersedes an earlier one, `close_assertion(assertion_id, valid_until)` (in-memory and SQLite stores) closes the earlier validity window in place, so `TripleQuery(active_at=...)` stops returning it from that moment; nothing else about the row changes.
-- At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract or supersede with replacements) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
+- At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract, supersede with replacements, or reinterpreted when the source is read differently) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
 - Forgetting is decay of retrieval strength plus closures and silencing. The substrate is lossless; there is no compaction.
 
 ## What do `scope` and `owner_id` mean?
@@ -1413,7 +1413,7 @@ explain_recall(store, journal, record_id, trace_id=trace_id)
 recall_history(journal, record_id)
 ```
 
-`absence_diagnosis` reports structural reasons in plain sentences (never formed, retracted, hidden, out of scope, vectorless). `explain_recall` answers the same question against one specific recall. Common structural causes: the record is in a scope the ladder does not include; a closure retracted or superseded it; it is an inactive candidate; or it was formed after the `as_of` seq you anchored to.
+`absence_diagnosis` reports structural reasons in plain sentences (never formed, retracted, hidden, out of scope, vectorless). `explain_recall` answers the same question against one specific recall. Common structural causes: the record is in a scope the ladder does not include; a closure retracted, superseded or reinterpreted it; it is an inactive candidate; or it was formed after the `as_of` seq you anchored to.
 
 ### Recall results change between runs with the same input
 
