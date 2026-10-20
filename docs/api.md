@@ -135,7 +135,7 @@ Record families (all append-only, all `seq`-stamped by the journal):
 
 - `MemoryEvent` — attention events. Scoring kinds: `selected`, `co_selected` (pair trails), `pinned`, `silenced`; decay marker: `refocus`; audit-only (recorded, never scored): `listed`, `shown`, `expanded`, `cited`.
 - `ScopeBinding` — visibility: `search_state` (`indexed`/`hidden`), `prompt_state` (`active`/`inactive`), `lifecycle`, `source`, `reason`. Latest per `(record_id, scope, owner_id)` wins; `fold_bindings(bindings)` applies that fold.
-- `ClosureRecord` — belief lifecycle: `kind` (`retract`/`supersede`), mandatory `reason`, `replacement_ids` (required for supersede).
+- `ClosureRecord` — belief lifecycle: `kind` (`retract`/`supersede`/`reinterpreted`), mandatory `reason`, `replacement_ids` (required for supersede, optional otherwise). `reinterpreted` means the writer no longer reads its source this way (a note understood again): neither a correction nor a later fact; it leaves ranked retrieval like the others.
 - `ReconstructionTrace` — one recall: fingerprint, searched scopes, candidates, selected/dropped, cues, budgets, admission labels, warnings.
 - `ActiveMemorySnapshot` — see seam types.
 - `ValenceEvent` — signed appraisals and standing markers (see valence below).
@@ -186,7 +186,7 @@ Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-p
 ### Bindings and closures
 
 - `bind(record_id, *, scope, owner_id, search_state, prompt_state="inactive", lifecycle="none", source="operator", reason=None, binding_id=None) -> ScopeBinding` — append a visibility event. A folded `hidden` binding removes the record from ranked retrieval in that scope pair only; re-binding `indexed` restores it. `prompt_state="active"` admits the record into the identity (self) component. Record-level bindings hide the digest and its edge assertions together. Direct `store.query` id lookups bypass folds by design.
-- `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede`).
+- `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede` | `reinterpreted`).
 - `close_record(record_id, *, reason, kind="retract", replacement_ids=()) -> list[str]` — close a whole record (digest and its edges) as one belief-revision act; closure ids are deterministic, so replays dedupe.
 
 ### Identity: spark, engram, self core, floors

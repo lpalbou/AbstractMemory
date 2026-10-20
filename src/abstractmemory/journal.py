@@ -221,12 +221,22 @@ class ScopeBinding:
         return _jsonify(asdict(self))
 
 
+#: The closure kinds a ClosureRecord accepts (``reinterpreted`` is additive, 0.3.2).
+CLOSURE_KINDS = frozenset({"retract", "supersede", "reinterpreted"})
+
+
 @dataclass(frozen=True)
 class ClosureRecord:
-    """Append-only belief-lifecycle record (backlog 0010): retract or supersede."""
+    """Append-only belief-lifecycle record (backlog 0010): retract, supersede or reinterpreted.
+
+    ``reinterpreted`` (additive, 0.3.2): the writer no longer reads its source this way (AbstractNote ADR 0008: a
+    note understood again against an earlier foundation withdraws its previous reading). It is neither a
+    correction of the fact (``retract``) nor a later fact replacing it (``supersede``); like both it leaves
+    ranked retrieval. ``replacement_ids`` is optional (the new reading's assertions, when there are any).
+    """
 
     assertion_id: str
-    kind: str                        # retract | supersede
+    kind: str                        # retract | supersede | reinterpreted
     reason: str
     replacement_ids: Tuple[str, ...] = ()
     observed_at: str = field(default_factory=utc_now_iso)
@@ -240,8 +250,8 @@ class ClosureRecord:
             raise ValueError("ClosureRecord requires assertion_id")
         object.__setattr__(self, "assertion_id", self.assertion_id.strip())
         kind = str(self.kind or "").strip().lower()
-        if kind not in {"retract", "supersede"}:
-            raise ValueError("ClosureRecord.kind must be 'retract' or 'supersede'")
+        if kind not in CLOSURE_KINDS:
+            raise ValueError("ClosureRecord.kind must be 'retract', 'supersede' or 'reinterpreted'")
         object.__setattr__(self, "kind", kind)
         if not (isinstance(self.reason, str) and self.reason.strip()):
             raise ValueError("ClosureRecord requires a non-empty reason")

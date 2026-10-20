@@ -462,6 +462,21 @@ def test_record_validation_errors_surface() -> None:
         make_event(kind="co_selected", pair_ids=("rec-a", "rec-a"))
 
 
+def test_reinterpreted_closure_kind(journal) -> None:
+    """Additive closure kind (0.3.2): a source read again withdraws its previous reading; replacements optional."""
+    from abstractmemory.journal import CLOSURE_KINDS
+
+    assert "reinterpreted" in CLOSURE_KINDS
+    journal.append_closure(make_closure(assertion_id="as-r", kind="reinterpreted", reason="read again"))
+    journal.append_closure(make_closure(assertion_id="as-s", kind="REINTERPRETED", reason="read again",
+                                        replacement_ids=("as-t",)))
+    got = {c.assertion_id: c for c in journal.closures()}
+    assert got["as-r"].kind == "reinterpreted" and got["as-r"].replacement_ids == ()
+    assert got["as-s"].kind == "reinterpreted" and got["as-s"].replacement_ids == ("as-t",)
+    with pytest.raises(ValueError, match="kind"):
+        make_closure(kind="revised")
+
+
 # ---------------------------------------------------------------------------
 # JSON round-trip
 # ---------------------------------------------------------------------------
