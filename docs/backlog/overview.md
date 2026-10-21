@@ -20,6 +20,9 @@ inspect the current code first, then update the item if reality has changed.
 - Recurrent: 0
 
 GENUINELY OPEN (the honest desk, 2026-07-20):
+- `proposed/ripple_wave/0001` — change records with magnitude, closure causes,
+  `narrow_assertion`, ripple-aware `maintenance_due`, the bound read (ADR 0001,
+  operator ruling 2026-10-21: an altered memory ripples through connected memories).
 - `proposed/memory_system_v1/0012` — LanceDB backend hardening (legacy
   store still in tree; low priority while SQLite is the home store).
 - `proposed/memory_system_v1/0015` — capabilities surface + deterministic
