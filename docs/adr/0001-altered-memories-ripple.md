@@ -1,6 +1,6 @@
 # ADR 0001: An altered memory ripples through the memories connected to it
 
-Status: Accepted (operator ruling, 2026-10-21). Aspirational for AbstractMemory's own maintenance passes;
+Status: Accepted (operator ruling, 2026-10-21; activation model confirmed with the operator the same day). Aspirational for AbstractMemory's own maintenance passes;
 already implemented by a consumer (AbstractNote, see Related).
 
 ## Context
@@ -52,7 +52,25 @@ asks "given that A changed this much, what must be reconsidered about B and E?".
 6. **History is kept.** A reconsidered memory keeps its previous reading in the journal; the as-received view of
    the graph before the ripple stays answerable. Closures caused by a ripple carry their cause (the source memory
    and the hop count) so that a later reader, human or model, can see why a belief moved.
-7. **Stable systems ripple rarely; young systems ripple often, and that is expected.** The cadence predicate of
+7. **The ripple is an activation with a threshold, not a distance rule.** Whether a connected memory is
+   reconsidered is decided by an activation function over the impact it receives: each memory accumulates the
+   reliance-weighted impacts of every changed neighbour within a pass (several small changes together can
+   cross what none crosses alone), the accumulated potential passes through a smooth gate (a logistic
+   `1 / (1 + e^-k(x - θ))` or an equivalent monotone function; the gate is a configuration, not a model), and
+   the memory is reconsidered when the gated potential is above the floor. The potential's input is a weighted
+   sum of standardised signals (type change, summary distance, statements replaced, relationships replaced),
+   each standardised against the reader's own rewrite noise, and divided by the memory's **mass** (how much
+   evidence already supports it): a thinly evidenced memory moves on little, a heavily evidenced one needs
+   more, which is how a stable system comes to ripple rarely without anyone scheduling quiet. Onward
+   propagation beyond one hop uses the **measured** change of the reconsidered memory, never the predicted
+   impact alone. Termination is guaranteed by three rules together: a memory is reconsidered at most once per
+   pass (a refractory period), impact never amplifies (loop gain `decay × max reliance × max gate slope < 1`),
+   and the floor stops the tail. Every gate decision is recorded with its potential, so thresholds can be
+   re-tuned from the record without re-running the ripple.
+8. **Edges learn.** The reliance weight of an edge may be adjusted from history: an edge whose ripples
+   repeatedly produced an unchanged reconsideration conducts less next time; an edge whose ripples produced
+   real change conducts more. Adjustments are bounded, recorded, and never silence an edge entirely.
+9. **Stable systems ripple rarely; young systems ripple often, and that is expected.** The cadence predicate of
    the sleep pass (`maintenance_due`) and any consumer's scheduler MUST treat pending ripples as work due,
    with priority given to the largest sources, and MUST NOT suppress ripples to keep a young system quiet.
 
@@ -93,9 +111,11 @@ asks "given that A changed this much, what must be reconsidered about B and E?".
 
 ## Validation
 
-- Unit: a deep change spreads one hop; a shallow change does not; the floor stops a hub; a cycle dies within a
-  bounded number of hops; a second pass with nothing new makes no reader call; a budget stop records `left_out`
-  equal to what is pending. Each check MUST go red when its mechanism is removed (mutation list in the test file).
+- Unit: a deep change spreads one hop; a shallow change does not; two sub-threshold changes on the same neighbour
+  together cross the gate; a heavily evidenced memory needs more impact than a thin one; the floor stops a hub;
+  a cycle dies within a bounded number of hops with the loop gain below one; a second pass with nothing new makes
+  no reader call; a budget stop records `left_out` equal to what is pending; every gate decision is on record with
+  its potential. Each check MUST go red when its mechanism is removed (mutation list in the test file).
 - Calibration: the summary-distance threshold is set from a measured distribution of same-memory rewrites by the
   reader in use, and the report that set it is linked from the constants module.
 - Scenario: a dated archive that changes the type of one memory (project → person) must reconsider the memories
