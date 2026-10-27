@@ -60,6 +60,7 @@ from ..journal_sqlite import SQLiteJournal
 from ..models import TripleAssertion, canonicalize_term, utc_now_iso_seconds
 from ..sqlite_store import SQLiteTripleStore
 from ..vector_matrix import encode_vector
+from .backend import GraphBackend, GraphTx, backend_for, register_backend
 from .provenance import Provenance, ProvenanceRequired, SourceRef
 from .revisions import Revision, RevisionOp, RevisionResult
 
@@ -219,7 +220,7 @@ def _prepare(rev: Revision) -> _Prepared:
 # ---------------------------------------------------------------------------------------------------------------
 
 
-class _SQLiteTx:
+class _SQLiteTx(GraphTx):
     def __init__(self, backend: "_SQLiteBackend", cur: sqlite3.Cursor) -> None:
         self.b, self.cur = backend, cur
 
@@ -340,7 +341,7 @@ def _same_file(a: Any, b: Any) -> bool:
         return False
 
 
-class _SQLiteBackend:
+class _SQLiteBackend(GraphBackend):
     def __init__(self, store: SQLiteTripleStore, journal: Any) -> None:
         self.store, self.journal = store, journal
         self.table = store._table
@@ -539,6 +540,9 @@ class _SQLiteBackend:
         rows = self._read(self.sql["closed_payload"], (aid, rid, _EVENT_CLOSED))
         return json.loads(rows[0][0]) if rows else None
 
+    def repair_projections(self) -> int:
+        return 0  # one SQLite transaction: a revision is whole or absent
+
     def mark_journal_applied(self, rid: str) -> None:
         with self.store._lock:
             self.store._conn.cursor().execute(
@@ -594,7 +598,7 @@ def _sqlite_rows(store: SQLiteTripleStore,
     return rows, pin_update, first_write
 
 
-class _MemoryTx:
+class _MemoryTx(GraphTx):
     """InMemory transaction: every mutation registers its undo; a failure replays them in reverse."""
 
     def __init__(self, backend: "_MemoryBackend") -> None:
@@ -757,7 +761,7 @@ class _MemoryTx:
         return int(entry["seq"])
 
 
-class _MemoryBackend:
+class _MemoryBackend(GraphBackend):
     """The graph tables of one InMemoryTripleStore. Shared by every MemoryGraph over the same store object (the
     SQLite tables are shared through the file; this is the in-process equivalent)."""
 
@@ -867,6 +871,9 @@ class _MemoryBackend:
                     return json.loads(_dump(h["detail"]))
             return None
 
+    def repair_projections(self) -> int:
+        return 0  # the undo log: a revision is whole or absent
+
     def mark_journal_applied(self, rid: str) -> None:
         with self._lock:
             self.rev_by_id[rid]["journal_applied"] = True
@@ -899,15 +906,7 @@ class MemoryGraph:
 
     def __init__(self, store: Any, journal: Any = None) -> None:
         self._store, self._journal = store, journal
-        if isinstance(store, SQLiteTripleStore):
-            self._b: Any = _SQLiteBackend(store, journal)
-        elif isinstance(store, InMemoryTripleStore):
-            self._b = _memory_backend(store)
-        else:
-            raise NotImplementedError(
-                f"MemoryGraph: {type(store).__name__} is not a graph home; use SQLiteTripleStore (InMemoryTripleStore "
-                "for tests). LanceDB: see backlog 0057"
-            )
+        self._b: GraphBackend = backend_for(store, journal)  # the connector registered for this store's class
 
     @property
     def store(self) -> Any:
@@ -1217,7 +1216,9 @@ class MemoryGraph:
         """Append the journal closures of revisions a crash left with `journal_applied = 0` (only possible when the
         journal is not in the store's file), oldest first, at most `limit` revisions per call. Idempotent
         (deterministic closure ids). Returns how many revisions were repaired (call again while it returns
-        `limit`)."""
+        `limit`). First, a connector without cross-table transactions (LanceDB) finishes the revisions a crash left
+        half-projected (`GraphBackend.repair_projections`); those count too."""
+        projected = self._b.repair_projections()
         pending = self._b.pending_journal(_check_limit(limit))
         if pending and self._journal is None:
             raise RuntimeError("MemoryGraph.repair: revisions await their journal closures but no journal is attached")
@@ -1229,7 +1230,7 @@ class MemoryGraph:
                     continue
                 self._journal.append_closure(_closure_record(rev, op.payload))
             self._b.mark_journal_applied(rev.revision_id)
-        return len(pending)
+        return projected + len(pending)
 
     # -- reads -----------------------------------------------------------------------------------------------------
 
@@ -1350,3 +1351,7 @@ class MemoryGraph:
             for rev in page:
                 if target.apply_revision(rev, replay=True).applied:
                     applied += 1
+
+
+register_backend(InMemoryTripleStore, lambda store, journal: _memory_backend(store))
+register_backend(SQLiteTripleStore, _SQLiteBackend)

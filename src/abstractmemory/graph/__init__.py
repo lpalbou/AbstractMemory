@@ -5,6 +5,7 @@ and `MemoryGraph`: atomic, idempotent revision apply with mandatory grounded pro
 `sources_of`, `derived_from_source`, the lossless change feed `revisions(after=)` and `replay_into`.
 """
 
+from .backend import GraphBackend, GraphTx, backend_for, register_backend, registered_backends
 from .graph import (
     ADOPTING_CAUSES,
     DEFAULT_READ_LIMIT,
@@ -28,6 +29,11 @@ from .provenance import (
 from .revisions import CLOSE_KINDS, REVISION_CAUSES, REVISION_OPS, Revision, RevisionOp, RevisionResult
 
 __all__ = [
+    "GraphBackend",
+    "GraphTx",
+    "backend_for",
+    "register_backend",
+    "registered_backends",
     "ADOPTING_CAUSES",
     "CLOSE_KINDS",
     "DEFAULT_READ_LIMIT",
