@@ -116,6 +116,14 @@ def _content(a: TripleAssertion) -> Tuple[Any, ...]:
             a.confidence, _dump(a.attributes))
 
 
+def _identity(a: TripleAssertion) -> Tuple[Any, ...]:
+    """What makes a re-assert of a memory the graph holds the SAME claim: its terms, partition and start. (The end,
+    observation time and provenance may legitimately differ on a replayed or re-sent assert: the graph may have
+    closed it since, and a re-sent op fills observed_at from its own revision.)"""
+    return (a.subject, a.predicate, a.object, a.scope, a.owner_id,
+            _instant(a.valid_from) if a.valid_from else None)
+
+
 def _closure_record(rev: Revision, payload: Mapping[str, Any]) -> ClosureRecord:
     """The journal closure of one `close` op: kind, reason and successor from the op; the cause, the revision and
     the ripple fields on its provenance. `observed_at` is the revision's observation time (ADR 0003 decision 5),
@@ -837,6 +845,12 @@ class MemoryGraph:
             by_id = {str(a.assertion_id): a for a in prep.assertions}
             in_store = tx.existing_ids(list(by_id))
             known = {aid for aid in in_store if tx.memory_known(aid)}
+            for aid in sorted(known):  # a different claim under a held id is refused, never silently "skipped"
+                if _identity(tx.stored(aid)) != _identity(by_id[aid]):
+                    raise ValueError(
+                        f"revision {rev.revision_id!r} asserts {aid!r}, which this graph already holds as a different "
+                        "claim (terms, scope, owner or valid_from differ); a changed claim gets a new id (and a close "
+                        "of the old one)")
             previous = self._adopt(tx, rev, by_id, in_store - known)
             tx.write_pin(pin_update)
             tx.insert_assertions(rows)

@@ -100,6 +100,24 @@ def test_ops_apply_and_report(home) -> None:
     assert _row(home.store, "c-bounded").valid_until == T(4)  # never widened
 
 
+def test_a_held_id_reasserted_as_a_different_claim_is_refused(home) -> None:
+    """Review M6: only an identical re-assert is "skipped"; a different claim under a held id would log a payload the
+    graph does not hold. Mutant: the identity check in apply_revision removed -> red."""
+    _seed(home)
+    before = home_state(home)
+    for changed in ({"o": "ex:globex"}, {"s": "ex:eve"}, {"valid_from": T(2)}, {"scope": "session"},
+                    {"owner_id": "entity:x"}):
+        kw = {"valid_from": T(1), **changed}
+        with pytest.raises(ValueError, match="already holds as a different claim"):
+            home.graph.apply_revision(rev("r-x", claim("x-new"), claim("a-open", **kw),
+                                          provenance=prov(step("run-2", 9))))
+        assert home_state(home) == before
+    # The same claim re-sent (other observed_at, a later end, another source) is a reported skip.
+    same = home.graph.apply_revision(rev("r-same", claim("a-open", valid_from=T(1), valid_until=T(12),
+                                                         observed_at=T(5)), provenance=prov(step("run-3", 1))))
+    assert same.applied and same.skipped[0]["op"] == "assert" and same.assertion_ids == []
+
+
 def test_ops_apply_in_order(home) -> None:
     _seed(home)
     before = home_state(home)
