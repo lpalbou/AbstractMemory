@@ -563,3 +563,55 @@ def test_replay_reproduces_an_adoption(tmp_path: Path) -> None:
             "previous_provenance": {"source": "made-up"}}}), cause="import", provenance=prov(art("file-2"))))
     for h in (src, dst):
         h.close()
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Re-observation, not duplication (architect review E1). Mutants (each turned the named test red):
+# - `apply_revision`: `target = None` (no held-claim lookup)                 -> test_reasserting_a_held_open_claim_re_observes_it[*]
+# - `apply_revision`: re-observed rows inserted anyway (insert filter removed) -> test_reasserting_a_held_open_claim_re_observes_it[*]
+# - `apply_revision`: a later op's payload id not mapped to the held memory   -> test_reasserting_a_held_open_claim_re_observes_it[*]
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def test_reasserting_a_held_open_claim_re_observes_it(home) -> None:
+    from abstractmemory.graph import RevisionOp
+
+    def ops():  # no ids given: each revision derives its own deterministic ids (a re-run of the same workflow)
+        return (RevisionOp("assert", {"subject": "ex:alice", "predicate": "schema:knows", "object": "ex:bob"}),
+                RevisionOp("assert", {"subject": "ex:alice", "predicate": "schema:name", "object": "alice"}))
+
+    first = home.graph.apply_revision(rev("run-1-rev", *ops(), provenance=prov(step("run-1", 3))))
+    second = home.graph.apply_revision(rev("run-2-rev", *ops(), provenance=prov(step("run-2", 5))))
+    assert len(first.assertion_ids) == 2 and second.assertion_ids == []
+    assert second.re_observed == first.assertion_ids
+    assert [s["why"] for s in second.skipped] == ["re-observed", "re-observed"]
+    rows = home.store.query(TripleQuery(subject="ex:alice", limit=0))
+    assert len(rows) == 2  # one row per claim, not two
+    held = first.assertion_ids[0]
+    assert [s.key() for s in home.graph.sources_of(held)] == ["step:run-1#3", "step:run-2#5"]
+    assert home.graph.derived_from_source(step("run-2", 5)) == first.assertion_ids
+    assert [(h["event"], h["revision_id"]) for h in home.graph.history(held)] == [
+        ("asserted", "run-1-rev"), ("re-observed", "run-2-rev")]
+    # Inside one revision a duplicate claim re-observes the first; a later op naming the duplicate's id acts on
+    # the memory that holds the claim.
+    third = home.graph.apply_revision(rev(
+        "r-3", claim("dup-a", s="ex:carol"), claim("dup-b", s="ex:carol"), close("dup-b", T(5))))
+    assert third.assertion_ids == ["dup-a"] and third.re_observed == ["dup-a"] and third.closed == ["dup-a"]
+    assert len(home.store.query(TripleQuery(subject="ex:carol", limit=0))) == 1
+    # A closed claim asserted again is a new memory (it holds again); a bounded assert is its own claim.
+    again = home.graph.apply_revision(rev("r-4", claim("carol-again", s="ex:carol")))
+    bounded = home.graph.apply_revision(rev("r-5", RevisionOp("assert", {
+        "subject": "ex:alice", "predicate": "schema:knows", "object": "ex:bob", "valid_until": T(9)})))
+    assert again.assertion_ids == ["carol-again"] and len(bounded.assertion_ids) == 1 and bounded.re_observed == []
+
+
+def test_replay_reproduces_re_observations(tmp_path: Path) -> None:
+    src = open_home(tmp_path, "sqlite", "src")
+    for i, run in enumerate(("run-a", "run-b", "run-a2")):
+        src.graph.apply_revision(rev(f"r-{i}", claim(f"c-{i}", s="ex:same"), provenance=prov(step(run, i + 1))))
+    dst = open_home(tmp_path, "sqlite", "dst")
+    assert src.graph.replay_into(dst.graph) == 3
+    assert file_state(dst.path) == file_state(src.path)
+    assert len(dst.store.query(TripleQuery(subject="ex:same", limit=0))) == 1
+    for h in (src, dst):
+        h.close()

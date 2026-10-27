@@ -86,6 +86,7 @@ DIGEST_PREDICATE = "dcterms:abstract"
 ADOPTING_CAUSES = ("import", "migration")
 
 _EVENT_ASSERTED, _EVENT_CLOSED, _EVENT_NARROWED = "asserted", "closed", "narrowed"
+_EVENT_REOBSERVED = "re-observed"  # an assert of a claim the graph already holds open: new sources, no new row
 #: How a provenance-index row reached a memory: the memory's own provenance, or the revision that wrote it (a memory
 #: whose own provenance is lineage only is still found from the step that produced it).
 VIA_MEMORY, VIA_REVISION = "memory", "revision"
@@ -228,6 +229,18 @@ class _SQLiteTx:
 
     def memory_known(self, mid: str) -> bool:
         return self.cur.execute(self.b.sql["memory_known"], (mid, _EVENT_ASSERTED)).fetchone() is not None
+
+    def open_same_claim(self, a: TripleAssertion) -> Optional[str]:
+        """The first (rowid order) OPEN memory of this graph holding the same claim as `a` (`_identity`)."""
+        for row in self.cur.execute(
+            f"SELECT assertion_id, subject, predicate, object, scope, owner_id, observed_at, valid_from, valid_until, "
+            f"confidence, provenance_json, attributes_json FROM {self.b.table} WHERE subject = ? AND predicate = ? "
+            "AND object = ? AND valid_until IS NULL ORDER BY rowid LIMIT ?",
+            (a.subject, a.predicate, a.object, MAX_READ_LIMIT)).fetchall():
+            held = SQLiteTripleStore._row_to_assertion(row)
+            if _identity(held) == _identity(a) and self.memory_known(str(held.assertion_id)):
+                return str(held.assertion_id)
+        return None
 
     def closing_revision(self, mid: str) -> Optional[str]:
         row = self.cur.execute(self.b.sql["closing_revision"], (mid, _EVENT_CLOSED)).fetchone()
@@ -595,6 +608,14 @@ class _MemoryTx:
     def memory_known(self, mid: str) -> bool:
         return mid in self.b.known
 
+    def open_same_claim(self, a: TripleAssertion) -> Optional[str]:
+        for row in self.b.store._rows:
+            held = row.get("assertion")
+            if (isinstance(held, TripleAssertion) and held.valid_until is None and _identity(held) == _identity(a)
+                    and str(row.get("assertion_id")) in self.b.known):
+                return str(row.get("assertion_id"))
+        return None
+
     def closing_revision(self, mid: str) -> Optional[str]:
         for h in self.b.hist:
             if h["memory_id"] == mid and h["event"] == _EVENT_CLOSED:
@@ -920,8 +941,27 @@ class MemoryGraph:
                         "claim (terms, scope, owner or valid_from differ); a changed claim gets a new id (and a close "
                         "of the old one)")
             previous = self._adopt(tx, rev, by_id, in_store - known)
+            # RE-OBSERVATION, not duplication (architect E1): an open assert of a claim this graph already holds OPEN
+            # (same `_identity`, hence the same owner) records the new sources on that memory instead of a second
+            # row; so does a later duplicate inside this revision. A held id re-asserted while closed is a skip.
+            reobserved: Dict[str, str] = {}
+            fresh: Dict[Tuple[Any, ...], str] = {}
+            for a in prep.assertions:
+                aid = str(a.assertion_id)
+                if a.valid_until is not None or aid in previous:
+                    continue
+                if aid in known:
+                    if tx.window(aid)[1] is None:
+                        reobserved[aid] = aid
+                    continue
+                key = _identity(a)
+                target = fresh.get(key) or tx.open_same_claim(a)
+                if target is not None:
+                    reobserved[aid] = target
+                else:
+                    fresh[key] = aid
             tx.write_pin(pin_update)
-            tx.insert_assertions(rows)
+            tx.insert_assertions([r for r, a in zip(rows, prep.assertions) if str(a.assertion_id) not in reobserved])
             for aid in previous:
                 tx.set_provenance(aid, by_id[aid].provenance)
             at, rid = rev.recorded_at, rev.revision_id
@@ -933,6 +973,23 @@ class MemoryGraph:
                 if op.op == "assert":
                     aid = str(payload["assertion_id"])
                     asserted.add(aid)
+                    if aid in reobserved:
+                        target, prov = reobserved[aid], prep.effective[aid]
+                        result.re_observed.append(target)
+                        result.skipped.append({"op": "assert", "index": index, "assertion_id": target,
+                                               "why": "re-observed"})
+                        tx.add_history(target, _EVENT_REOBSERVED, at, rid, {
+                            "asserted_as": aid, "observed_at": by_id[aid].observed_at,
+                            "sources": [s.key() for s in prov.sources],
+                            "derived_from": [reobserved.get(d, d) for d in derived[aid]]})
+                        for ref in prov.sources:
+                            tx.add_source(target, ref, rid, by_id[aid].owner_id)
+                        for ref in rev.provenance.sources:
+                            tx.add_source(target, ref, rid, by_id[aid].owner_id, VIA_REVISION)
+                        for parent in derived[aid]:
+                            if reobserved.get(parent, parent) != target:
+                                tx.add_derivation(target, reobserved.get(parent, parent), rid)
+                        continue
                     if aid in known:
                         result.skipped.append({"op": "assert", "index": index, "assertion_id": aid,
                                                "why": "already asserted in this graph"})
@@ -963,12 +1020,13 @@ class MemoryGraph:
                     for ref in rev.provenance.sources:  # the revision that wrote it (A7): found from its step too
                         tx.add_source(aid, ref, rid, a.owner_id, VIA_REVISION)
                     for parent in derived[aid]:
-                        tx.add_derivation(aid, parent, rid)
+                        tx.add_derivation(aid, reobserved.get(parent, parent), rid)
                     continue
                 aid = payload["assertion_id"]
                 if aid in by_id and aid not in asserted:
                     raise ValueError(f"revision {rid!r}: op {index} ({op.op!r}) names {aid!r} before the op that "
                                      "asserts it (ops apply in order)")
+                aid = reobserved.get(aid, aid)  # an id this revision re-observed names the memory that holds it
                 window = tx.window(aid)
                 if window is None:
                     raise ValueError(f"revision {rid!r}: a {op.op!r} op names an unknown assertion {aid!r}")
