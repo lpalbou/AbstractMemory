@@ -82,10 +82,17 @@ __all__ = [
     "decode_vector",
     "encode_vector",
     "numpy_module",
+    "VECTOR_ENCODING_KEY",
+    "VECTOR_ENCODING_FLOAT32_BLOB",
 ]
 
 VECTOR_ENGINE_NUMPY = "numpy-matrix-cache"
 VECTOR_ENGINE_PYTHON = "python-linear-scan"
+#: The stored vector encoding a 0.4.0 home declares in its meta table (key `vector_encoding`) once its JSON vectors
+#: were rewritten: a ONE-WAY migration (a 0.3.x reader decodes JSON only and silently finds no vectors), so a reader
+#: can tell what it opened.
+VECTOR_ENCODING_KEY = "vector_encoding"
+VECTOR_ENCODING_FLOAT32_BLOB = "float32-blob"
 
 # float32 unit roundoff.
 _U32 = 2.0 ** -24

@@ -27,6 +27,8 @@ from .vector_matrix import (
     ID_FETCH_CHUNK,
     SYNC_FETCH_ROWS,
     VECTOR_ENGINE_NUMPY,
+    VECTOR_ENCODING_FLOAT32_BLOB,
+    VECTOR_ENCODING_KEY,
     VECTOR_ENGINE_PYTHON,
     VECTOR_UPGRADE_BATCH,
     VectorMatrix,
@@ -257,6 +259,13 @@ class SQLiteTripleStore:
                 cur.execute("ROLLBACK")
                 raise
         self._upgrade_vector_encoding(cur)
+        # Declare the encoding once the upgrade above has run to the end (review M4): this home's vectors are float32
+        # BLOBs from now on, which a 0.3.x reader cannot decode. Written only when absent (an open stays a read).
+        marker = cur.execute(
+            f"SELECT value FROM {self._table}_meta WHERE key = ?", (VECTOR_ENCODING_KEY,)).fetchone()
+        if marker is None or marker[0] != VECTOR_ENCODING_FLOAT32_BLOB:
+            cur.execute(f"INSERT OR REPLACE INTO {self._table}_meta (key, value) VALUES (?, ?)",
+                        (VECTOR_ENCODING_KEY, VECTOR_ENCODING_FLOAT32_BLOB))
 
     def _upgrade_vector_encoding(self, cur: sqlite3.Cursor) -> None:
         """IN-PLACE UPGRADE (0058): rewrite JSON-text vectors as float32

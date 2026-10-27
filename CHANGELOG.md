@@ -82,6 +82,13 @@ a handle 0.44 s, it builds the matrix); file 449 MB -> 122 MB; MemorySystem
   the float64 value an embedder returned by about 1e-7. A value float32 cannot
   hold raises `ValueError` at write (zero rows written) instead of being
   stored as infinity; `stored_vector` returns the float32 values.
+  **This is a ONE-WAY migration.** A 0.3.x reader decodes JSON vectors only:
+  on a home a 0.4.0 process has opened it silently finds no vectors (zero
+  semantic hits, no error). Every process sharing a home or a plane must move
+  to 0.4.0 together, and an entity home copied to a 0.3.x install loses
+  semantic recall. A 0.4.0 home declares it in its meta table
+  (`<table>_meta`: `vector_encoding = float32-blob`,
+  `abstractmemory.vector_matrix.VECTOR_ENCODING_KEY`) so a reader can tell.
 - **Vector queries from an in-process matrix cache.** With numpy installed
   (new extra `abstractmemory[fast]`; also in `all`, `all-apple`, `all-gpu`
   and `test`), vector queries are served from a float32 matrix built at a
