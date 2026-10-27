@@ -17,6 +17,8 @@ Mutants checked by hand (each turns this file red):
 7. `SQLiteTripleStore.assertions_after` returns the next cursor as the last
    rowid of a short page instead of the snapshot top (rows of other
    partitions re-read: rows_read grows).
+8. `_fold` keeps a subject's first row instead of its oldest.
+9. a new component edge does not invalidate the cached counts.
 """
 
 from __future__ import annotations
@@ -244,3 +246,51 @@ def test_a_store_without_a_change_feed_keeps_the_full_scan(pair) -> None:
     scopes = [("life", "entity:a")]
     assert maintenance_due(plain, journal, scopes=scopes) == maintenance_due(store, journal, scopes=scopes)
     assert plain not in sleep_cadence._FOLDS  # noqa: SLF001
+
+
+def _record(aid: str, subject: str, title: str, *, at: str = STAMPS[0], **attrs) -> TripleAssertion:
+    return TripleAssertion(subject=subject, predicate="dcterms:abstract", object=f"digest {aid}",
+                           scope="life", owner_id="entity:a", observed_at=at,
+                           attributes={"record_kind": "episode", "title": title, **attrs},
+                           assertion_id=aid)
+
+
+def test_each_fact_alone_changes_the_answer(pair) -> None:
+    """One row at a time, with nothing else moving: the cached answer must
+    follow (a fact that does not invalidate the cache shows here)."""
+    store, journal = pair
+    scopes = [("life", "entity:a")]
+    store.add([_record("r-1", "rec:1", "One"), _record("r-2", "rec:2", "Two")])
+    bound = journal.append_binding(ScopeBinding(record_id="rec:9", scope="life", owner_id="entity:a",
+                                                source="maintenance"))
+    base = _both(store, journal, scopes)
+    assert (base["isolated"], base["duplicate_groups"], base["since_seq"]) == (2, 0, 0)
+    # A component edge alone links two records.
+    store.add([TripleAssertion(subject="rec:1", predicate="summarizes", object="rec:2", scope="life",
+                               owner_id="entity:a", observed_at=STAMPS[1],
+                               attributes={"record_edge": True}, assertion_id="e-1")])
+    assert _both(store, journal, scopes)["isolated"] == 0
+    # An artifact row alone (no journal write) moves the anchor to its binding.
+    store.add([TripleAssertion(subject="rec:9", predicate="dcterms:abstract", object="dream",
+                               scope="life", owner_id="entity:a", observed_at=STAMPS[2],
+                               attributes={"record_kind": "dream", "title": "A dream"},
+                               assertion_id="d-1")])
+    assert _both(store, journal, scopes)["since_seq"] == bound.seq > 0
+    # A candidate alone cuts its edges out of the components.
+    store.add([_record("c-1", "rec:2", "Two", at=STAMPS[3], maintenance_candidate=True)])
+    assert _both(store, journal, scopes)["isolated"] == 2
+
+
+def test_equal_timestamps_follow_each_store_s_own_order(pair) -> None:
+    """Two rows of one subject with the SAME observed_at and different
+    titles: the scan keeps the one its store orders last (SQLite: the
+    smaller assertion_id; InMemory: the later insert). The fold must agree,
+    on each backend."""
+    store, journal = pair
+    scopes = [("life", "entity:a")]
+    store.add([_record("a1", "rec:x", "Alpha")])
+    store.add([_record("z2", "rec:x", "Beta")])
+    store.add([_record("m3", "rec:y", "Alpha")])
+    due = _both(store, journal, scopes)
+    expected = 1 if isinstance(store, SQLiteTripleStore) else 0   # rec:x reads "Alpha" only on SQLite
+    assert due["duplicate_groups"] == expected
