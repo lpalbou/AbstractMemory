@@ -45,25 +45,66 @@ The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provena
   `derived_from_source` by step 0.05 ms and by run 0.8 ms, a change-feed page of 100 revisions 4 ms; the 0.3
   alternative (scanning provenance JSON) took 18 ms.
 
-### Changed
+### Performance (0058)
 
-- **SQLite store: owner-filtered reads use the indexes** (backlog 0058). The
-  owner filter is now `owner_id = ?` instead of `COALESCE(owner_id, '') = ?`
-  (same rows: the filter only applies to a non-empty owner, which a NULL or
-  empty stored owner never equals). A new index
-  `idx_<table>_scope_owner_observed (scope, owner_id, observed_at,
-  assertion_id)` serves "latest N in a (scope, owner)", as-of windows and
-  per-pair scans in query order without sorting the partition; reads anchored
-  on ids, a subject or an object use their own index and check scope/owner per
-  row. Existing homes gain the index when the store is opened; no row is
-  rewritten. `SQLiteTripleStore.query_plan(q)` returns SQLite's
-  `EXPLAIN QUERY PLAN` lines for a query (tests pin the plans).
-- **SQLite store: structured reads no longer fetch the vector column** (backlog
-  0058). `query` (without `query_text`/`query_vector`) and `query_keywords`
-  select the assertion columns only, instead of `SELECT *` dragging the stored
-  embedding (several KB per row) and the canonical text through every scan.
-  Semantic queries and `stored_vector` still read the vector; `TripleAssertion`
-  is unchanged.
+Backlog 0058 (ADR 0003 decisions 3 and 12): the SQLite home store holds a
+notebook-sized corpus. Measured with `tests/bench/bench_store.py`, `main`
+versus this release on the same machine, back to back: subject + owner query
+at 50k rows 14.8 ms -> 0.33 ms; scope "latest 100" 377 ms -> 0.9 ms; scope
+full scan 2.6 s -> 0.5 s; vector query at 50k 5.3 s -> 1.4 ms (first query of
+a handle 0.44 s, it builds the matrix); file 449 MB -> 122 MB; MemorySystem
+`reconstruct` at 20k records 2.7 s -> 0.2 s; `maintenance_due` at 20k 1.9 s ->
+0.07 ms when nothing is new, 0.1 s after new records. Full table: backlog
+0058's Report.
+
+- **Owner-filtered reads use the indexes.** The owner filter is now
+  `owner_id = ?` instead of `COALESCE(owner_id, '') = ?` (same rows: the
+  filter only applies to a non-empty owner, which a NULL or empty stored owner
+  never equals). A new index `idx_<table>_scope_owner_observed (scope,
+  owner_id, observed_at, assertion_id)` serves "latest N in a (scope, owner)",
+  as-of windows and per-pair scans in query order without sorting the
+  partition; reads anchored on ids, a subject or an object use their own index
+  and check scope/owner per row. Existing homes gain the index when the store
+  is opened; no row is rewritten. `SQLiteTripleStore.query_plan(q)` returns
+  SQLite's `EXPLAIN QUERY PLAN` lines for a query (tests pin the plans).
+- **Structured reads no longer fetch the vector column.** `query` (without
+  `query_text`/`query_vector`) and `query_keywords` select the assertion
+  columns only, instead of `SELECT *` dragging the stored embedding (several KB
+  per row) and the canonical text through every scan. They no longer read the
+  embedding pin either (it guards semantic queries only). Semantic queries and
+  `stored_vector` still read the vector; `TripleAssertion` is unchanged.
+- **Vectors are float32 BLOBs.** `SQLiteTripleStore` stores vectors as float32
+  little-endian BLOBs (4 bytes per dimension instead of ~20 bytes of JSON
+  text). Homes holding JSON vectors are upgraded in place when the store opens:
+  rows above the `vector_blob_high_water` cursor are rewritten in bounded
+  transactions (idempotent; an interrupted upgrade resumes; ~5 s once for 50k
+  rows of 384-d vectors). Stored precision is float32: a score differs from
+  the float64 value an embedder returned by about 1e-7. A value float32 cannot
+  hold raises `ValueError` at write (zero rows written) instead of being
+  stored as infinity; `stored_vector` returns the float32 values.
+- **Vector queries from an in-process matrix cache.** With numpy installed
+  (new extra `abstractmemory[fast]`; also in `all`, `all-apple`, `all-gpu`
+  and `test`), vector queries are served from a float32 matrix built at a
+  handle's first semantic query, appended with rows written since by any
+  handle or process, and rebuilt when the vectors are rewritten
+  (`replace_vectors`, the upgrade; `vector_generation` in the meta sidecar).
+  Results are the reference scan's (`vector_scoring.rank_by_cosine`): same
+  rows, same order (ties in rowid order), bit-identical scores — a float32
+  pass picks the candidates with a margin above its error bound, and they are
+  re-scored with the reference arithmetic. Without numpy, or when a stored
+  vector cannot be scored exactly (mixed dimensions, non-finite values), the
+  Python scan answers, labelled once per handle with a `#FALLBACK`
+  `RuntimeWarning`. `SQLiteTripleStore.vector_engine` reports the path.
+- **`maintenance_due` bounded by a cursor.** For the SQLite and in-memory
+  stores the answer is folded from the new store change feed
+  `assertions_after(cursor, *, scope, owner_id, limit)`: a check reads only the
+  rows written since the previous check of the same (store, journal, scopes)
+  and re-reads the journal's formation bindings only when the journal moved.
+  `last_maintenance_seq` uses the same fold. The answer is the full scan's
+  (other stores keep the scan).
+- Tuning constants of the store (margins, batch and page sizes) live in
+  `abstractmemory.store_tuning`, each with its bound or measurement.
+- The benchmark lives in the repository: `tests/bench/bench_store.py`.
 
 ## [0.3.2] - 2026-10-20
 

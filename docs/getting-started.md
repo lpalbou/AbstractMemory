@@ -18,6 +18,13 @@ Optional LanceDB backend:
 python -m pip install -e ".[lancedb]"
 ```
 
+Fast vector search on the SQLite store (numpy; without it the store serves the
+same results from a labelled Python scan):
+
+```bash
+python -m pip install -e ".[fast]"
+```
+
 PyPI (packaged release):
 
 ```bash

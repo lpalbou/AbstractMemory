@@ -84,14 +84,16 @@ class SQLiteTripleStore:
       except `close_assertion`, which only closes an open validity window.
     - VECTORS (a2a 0003, the entity-home pairing): pass `embedder=` and each
       added assertion's canonical text is embedded and persisted in the SAME
-      .sqlite3 file (JSON-encoded `embedding` column; in-place ALTER TABLE
-      upgrade for pre-vector homes — old rows stay NULL/vectorless and the
-      VECTOR CHANNEL labels that degradation at recall). Mirrors the
-      InMemory reference semantics exactly: edge assertions are never
-      embedded; `query_text` requires the embedder (no keyword fallback);
-      `query_vector` is accepted directly; cosine ranking happens in Python
-      over the SQL-filtered candidates (honest v1: linear scan —
-      comfortable at entity-home scale; ANN lifts are backlog 0019).
+      .sqlite3 file (float32 BLOB `embedding` column since 0058; JSON-text
+      homes upgrade in place on open; in-place ALTER TABLE upgrade for
+      pre-vector homes — old rows stay NULL/vectorless and the VECTOR
+      CHANNEL labels that degradation at recall). Mirrors the InMemory
+      reference semantics exactly: edge assertions are never embedded;
+      `query_text` requires the embedder (no keyword fallback);
+      `query_vector` is accepted directly; cosine ranking over the
+      SQL-filtered candidates is the reference scan's, served from the
+      in-process matrix cache when numpy is importable (`vector_matrix.py`)
+      or by the labelled Python scan (ANN lifts are backlog 0019).
 
     Concurrency (0013 contract, hardened after the persistence audit):
     ``check_same_thread=False`` + one internal RLock around ALL cursor use, so
