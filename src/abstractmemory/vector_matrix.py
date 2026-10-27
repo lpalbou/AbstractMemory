@@ -201,8 +201,8 @@ class VectorMatrix:
         # store then serves the Python scan until the cache is rebuilt.
         self.exact = True
         self.inexact_reason = ""
-        # Vectors read so far (a test/diagnostic counter: appends are
-        # O(new rows), never a rescan).
+        # Rows handed to `append` so far, i.e. read from the table (a
+        # test/diagnostic counter: appends are O(new rows), never a rescan).
         self.rows_read = 0
         self._capacity = 0
         self._matrix = np.zeros((0, 0), dtype=np.float32)
@@ -232,9 +232,9 @@ class VectorMatrix:
             rowid = int(rowid)
             if rowid > self.high_water:
                 self.high_water = rowid
+            self.rows_read += 1
             if raw is None or not self.exact or assertion_id in self._position:
                 continue
-            self.rows_read += 1
             decoded = self._decode(raw)
             if decoded is None:
                 continue  # unreadable / not a list: the reference skips it too
