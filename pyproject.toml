@@ -40,18 +40,28 @@ dev = [
 test = [
   "pytest>=7.0.0",
   "lancedb",
+  "numpy>=1.24",
+]
+# Vector search over the SQLite home store from an in-process float32 matrix
+# (backlog 0058). Without numpy the store serves the same results from the
+# labelled Python scan (#FALLBACK warning), only slower.
+fast = [
+  "numpy>=1.24",
 ]
 lancedb = [
   "lancedb",
 ]
 all-apple = [
   "lancedb",
+  "numpy>=1.24",
 ]
 all-gpu = [
   "lancedb",
+  "numpy>=1.24",
 ]
 all = [
   "lancedb",
+  "numpy>=1.24",
 ]
 
 [project.urls]

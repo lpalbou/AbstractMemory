@@ -5,29 +5,49 @@ Encoding: a stored vector is a float32 little-endian BLOB (4 bytes per
 dimension; the JSON text it replaces cost ~20 bytes per dimension and a
 `json.loads` per row per query). `decode_vector` reads both encodings, so a
 home part-way through its in-place upgrade, or written to by an older
-process, keeps serving every row.
+process, keeps serving every row. `encode_vector` refuses a finite value
+float32 cannot hold (it would become infinity): nothing is clipped silently.
 
 Scoring: `VectorMatrix` holds one store's vectored rows as a float32 matrix
 in memory, keyed by assertion id, with the (scope, owner_id) of each row so
 the vector channel's partition filter is a mask instead of a query. It is
 built once from a scan, then APPENDED from the rows above its rowid
 high-water (the store's own adds and any other writer's), and dropped when
-the vectors are rewritten (`replace_vectors`, detected across processes by
-the `vector_generation` meta key and the embedding pin). Ranking is exact:
-a float32 pass selects the candidates (with a margin wide enough for float32
-error), and those are re-scored in float64 with the reference formula of
-`vector_scoring.cosine`; ties order by rowid, as the reference scan does.
+the vectors are rewritten (`replace_vectors` or the in-place upgrade,
+detected across handles and processes by the `vector_generation` meta key
+and the embedding pin).
 
-numpy is OPTIONAL (`pip install "abstractmemory[fast]"`). Without it, or when
-a store holds vectors the matrix cannot represent exactly (mixed dimensions,
-non-finite values, legacy JSON that is not a list of numbers), the store uses
-the reference Python scan (`vector_scoring.rank_by_cosine`) and says so once
-with a `#FALLBACK` warning; results are the same, only slower.
+Ranking is EXACTLY the reference scan (`vector_scoring.rank_by_cosine`):
+same rows, same order, bit-identical scores.
+- A float32 pass over unit-scaled vectors selects the candidates. Its error
+  is bounded by the standard dot-product bound (dim + 4) * 2**-24 in cosine
+  units (the +4 covers the query's and a legacy row's rounding to float32);
+  candidates are kept within TWICE that bound of the min_score floor and of
+  the limit-th coarse score, so no row of the exact answer can be dropped.
+- The candidates are re-scored in float64 with the reference arithmetic:
+  products summed left to right (`cumsum`, never pairwise or BLAS
+  summation, which differ from `vector_scoring.cosine` in the last bits on
+  most rows), `sqrt(|q|^2) * sqrt(|r|^2)` as the denominator, 0.0 for a
+  zero vector; min_score applies to those exact scores, before the limit;
+  ties keep rowid order (the reference scan reads rows in rowid order).
+- Legacy JSON rows hold float64 values: the matrix keeps their float64
+  originals beside the float32 row and the exact pass scores those. A row
+  outside the float32 pass's error bound (a norm outside `ROW_NORM_RANGE`,
+  a legacy value beyond float32) is FORCED: always a candidate, scored
+  exactly from its float64 values.
+
+numpy is OPTIONAL (`pip install "abstractmemory[fast]"`). Without it, or
+when a store holds vectors the matrix cannot score exactly (mixed
+dimensions, non-finite values, an empty vector, JSON that is not a list of
+numbers, a query of another dimension, a score that overflows), the store
+uses the reference Python scan and says so once per store handle with a
+`#FALLBACK` warning; results are the same, only slower.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import sys
 from array import array
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -38,9 +58,17 @@ except Exception:  # pragma: no cover - exercised by monkeypatching _np
     _np = None
 
 __all__ = [
+    "COARSE_MARGIN_FLOOR",
+    "EXACT_CHUNK_ROWS",
+    "ID_FETCH_CHUNK",
+    "ROW_NORM_RANGE",
+    "SUBSET_SHARE",
+    "SYNC_FETCH_ROWS",
     "VECTOR_ENGINE_NUMPY",
     "VECTOR_ENGINE_PYTHON",
+    "VECTOR_UPGRADE_BATCH",
     "VectorMatrix",
+    "coarse_margin",
     "decode_vector",
     "encode_vector",
     "numpy_module",
@@ -49,13 +77,50 @@ __all__ = [
 VECTOR_ENGINE_NUMPY = "numpy-matrix-cache"
 VECTOR_ENGINE_PYTHON = "python-linear-scan"
 
-# Candidate margin of the float32 pass, in cosine units. float32 dot products
-# of unit-scaled vectors err by well under 1e-4 even at 4096 dimensions; the
-# margin only widens the float64 re-scoring set, it never decides a result.
-_COARSE_MARGIN = 1e-3
-# Below this share of the matrix, score the candidate rows directly instead
-# of the whole matrix.
-_SUBSET_SHARE = 0.25
+# ---------------------------------------------------------------------------
+# Tuning constants: ONE place (ADR 0003 enforcement), each with the
+# measurement or the bound it rests on. Numbers measured 2026-10-27 on the
+# operator's Mac (Darwin 27, Python 3.12, numpy 2.4), `tests/bench/bench_store.py`.
+# ---------------------------------------------------------------------------
+
+# float32 unit roundoff.
+_U32 = 2.0 ** -24
+# Floor of the coarse-pass candidate margin, in cosine units. The rigorous
+# bound (`coarse_margin`) is 2 * 388 * 2**-24 = 4.6e-5 at 384 dimensions; the
+# floor only widens the exact re-scoring set (at 50k random 384-d rows and
+# limit 20 it adds no candidate in practice), it never decides a result.
+COARSE_MARGIN_FLOOR = 1e-4
+# Rows whose non-zero norm lies outside this range skip the float32 pass:
+# below it float32 products with the unit-scaled query underflow, above it
+# their sums can overflow, so the error bound above no longer holds. Such a
+# row is FORCED: always a candidate, scored by the exact pass. Embedding
+# models emit norms near 1 (at most a few hundred unnormalised).
+ROW_NORM_RANGE = (1e-12, 1e12)
+# Below this share of the matrix, the coarse pass multiplies only the
+# partition's rows; above it one full matrix-vector product is cheaper than
+# gathering the rows (gather copies, the product streams).
+SUBSET_SHARE = 0.25
+# Rows per exact float64 re-scoring chunk: 4096 x 384 x 8 B = 12.6 MB of
+# temporaries, whatever the candidate count (a limit=0 query re-scores all).
+EXACT_CHUNK_ROWS = 4096
+# Rows per fetch while (re)building or appending the matrix from SQLite.
+SYNC_FETCH_ROWS = 4096
+# Ids per `assertion_id IN (...)` read of the ranked rows (old SQLite builds
+# cap bound variables at 999).
+ID_FETCH_CHUNK = 500
+# Rows per transaction of the in-place JSON -> BLOB upgrade: bounds the WAL
+# growth and the write-lock hold; the `vector_blob_high_water` cursor makes
+# an interrupted upgrade resume. Measured: see `upgrade_open_s` in the 0058
+# report (50k rows of 384-d JSON vectors).
+VECTOR_UPGRADE_BATCH = 2000
+
+
+def coarse_margin(dim: int) -> float:
+    """Candidate margin of the float32 pass at `dim` dimensions: twice the
+    worst-case error of a float32 cosine of unit-scaled vectors
+    (gamma_{dim+4} = (dim+4)u / (1 - (dim+4)u)), floored."""
+    n = (int(dim) + 4) * _U32
+    return max(COARSE_MARGIN_FLOOR, 2.0 * n / (1.0 - n))
 
 
 def numpy_module() -> Any:
@@ -64,8 +129,15 @@ def numpy_module() -> Any:
 
 
 def encode_vector(vector: Sequence[float]) -> bytes:
-    """float32 little-endian bytes of a vector."""
-    packed = array("f", [float(x) for x in vector])
+    """float32 little-endian bytes of a vector. Raises ValueError for a finite
+    value outside the float32 range (it would be stored as infinity)."""
+    values = [float(x) for x in vector]
+    packed = array("f", values)
+    for stored, given in zip(packed, values):
+        if math.isinf(stored) and not math.isinf(given):
+            raise ValueError(
+                f"vector component {given!r} is outside the float32 range; "
+                "the store keeps vectors as float32 (backlog 0058)")
     if sys.byteorder != "little":  # pragma: no cover - big-endian hosts
         packed.byteswap()
     return packed.tobytes()
@@ -94,8 +166,20 @@ def decode_vector(raw: Any) -> Optional[List[float]]:
     return vector if isinstance(vector, list) else None
 
 
+# `_decode`'s norm for a forced row (see there).
+_FORCED = -1.0
+
+
 class _Unrepresentable(Exception):
     """The matrix cannot serve this query exactly; use the Python scan."""
+
+
+def _sequential_sum(np: Any, products: Any) -> Any:
+    """Row sums added left to right, as `vector_scoring.cosine` does
+    (`np.sum` is pairwise and BLAS reorders: both differ in the last bits).
+    `+ 0.0` turns the -0.0 of an all-negative-zero row into the reference's
+    0.0."""
+    return np.cumsum(products, axis=-1)[..., -1] + 0.0
 
 
 class VectorMatrix:
@@ -113,19 +197,27 @@ class VectorMatrix:
         self.high_water = 0
         self.size = 0
         self.dim: Optional[int] = None
-        # False once a vector the matrix cannot represent exactly was seen:
-        # the store then serves the Python scan until the cache is rebuilt.
+        # False once a vector the matrix cannot score exactly was seen: the
+        # store then serves the Python scan until the cache is rebuilt.
         self.exact = True
+        self.inexact_reason = ""
+        # Vectors read so far (a test/diagnostic counter: appends are
+        # O(new rows), never a rescan).
+        self.rows_read = 0
         self._capacity = 0
         self._matrix = np.zeros((0, 0), dtype=np.float32)
         self._inv_norm = np.zeros(0, dtype=np.float64)
-        self._rowid = np.zeros(0, dtype=np.int64)
+        self._forced = np.zeros(0, dtype=bool)
         self._scope = np.zeros(0, dtype=np.int32)
         self._owner = np.zeros(0, dtype=np.int32)
         self._ids: List[str] = []
         self._position: Dict[str, int] = {}
         self._scope_codes: Dict[Any, int] = {}
         self._owner_codes: Dict[Any, int] = {}
+        # Rows whose float64 values float32 does not hold exactly (legacy
+        # JSON) and forced rows: position -> float64 original (the exact
+        # pass scores it).
+        self._wide: Dict[int, Any] = {}
 
     # -- building ---------------------------------------------------------
 
@@ -135,25 +227,33 @@ class VectorMatrix:
         an id already present is skipped. Returns the number of vectors
         added."""
         np = _np
-        fresh: List[Tuple[int, str, str, Optional[str], Any]] = []
-        for rowid, assertion_id, scope, owner, vector in self._decoded(rows):
-            if vector is None or assertion_id in self._position:
+        fresh: List[Tuple[str, str, Optional[str], Any, Any, float]] = []
+        for rowid, assertion_id, scope, owner, raw in rows:
+            rowid = int(rowid)
+            if rowid > self.high_water:
+                self.high_water = rowid
+            if raw is None or not self.exact or assertion_id in self._position:
                 continue
-            fresh.append((rowid, assertion_id, scope, owner, vector))
-        if not fresh or not self.exact:
+            self.rows_read += 1
+            decoded = self._decode(raw)
+            if decoded is None:
+                continue  # unreadable / not a list: the reference skips it too
+            if not self.exact:
+                return 0
+            narrow, wide, norm = decoded
+            fresh.append((assertion_id, scope, owner, narrow, wide, norm))
+        if not fresh:
             return 0
-        block = np.vstack([v for *_, v in fresh])
         start = self.size
-        self._reserve(start + len(fresh))
         end = start + len(fresh)
-        self._matrix[start:end] = block
-        wide = block.astype(np.float64)
-        norms = np.sqrt(np.einsum("ij,ij->i", wide, wide))
-        with np.errstate(divide="ignore"):
-            self._inv_norm[start:end] = np.where(norms > 0.0, 1.0 / norms, 0.0)
-        for offset, (rowid, assertion_id, scope, owner, _) in enumerate(fresh):
+        self._reserve(end)
+        self._matrix[start:end] = np.vstack([f[3] for f in fresh])
+        for offset, (assertion_id, scope, owner, _, wide, norm) in enumerate(fresh):
             pos = start + offset
-            self._rowid[pos] = rowid
+            self._inv_norm[pos] = 1.0 / norm if norm > 0.0 else 0.0
+            self._forced[pos] = norm == _FORCED
+            if wide is not None:
+                self._wide[pos] = wide
             self._scope[pos] = self._scope_codes.setdefault(scope, len(self._scope_codes))
             self._owner[pos] = self._owner_codes.setdefault(owner, len(self._owner_codes))
             self._ids.append(assertion_id)
@@ -161,43 +261,58 @@ class VectorMatrix:
         self.size = end
         return len(fresh)
 
-    def _decoded(self, rows):
+    def _inexact(self, reason: str) -> None:
+        self.exact = False
+        self.inexact_reason = reason
+
+    def _decode(self, raw: Any) -> Optional[Tuple[Any, Any, float]]:
+        """`(float32 row, float64 original or None, norm)` for a stored vector;
+        None when the reference scan would skip the row; marks the matrix
+        inexact (and returns a placeholder) when only the scan can score
+        it."""
         np = _np
-        for rowid, assertion_id, scope, owner, raw in rows:
-            rowid = int(rowid)
-            if rowid > self.high_water:
-                self.high_water = rowid
-            if raw is None or not self.exact:
-                yield rowid, assertion_id, scope, owner, None
-                continue
-            vector = None
-            if isinstance(raw, (bytes, bytearray, memoryview)):
-                data = bytes(raw)
-                if len(data) % 4 == 0:
-                    vector = np.frombuffer(data, dtype="<f4")
-            else:
-                listed = decode_vector(raw)
-                if listed is None:
-                    yield rowid, assertion_id, scope, owner, None  # reference skips it too
-                    continue
-                try:
-                    vector = np.asarray([float(x) for x in listed], dtype=np.float64)
-                except (TypeError, ValueError):
-                    vector = None
-                else:
-                    # Legacy JSON holds float64: the matrix is float32, so
-                    # only values float32 represents exactly stay exact.
-                    narrowed = vector.astype(np.float32)
-                    vector = narrowed if np.array_equal(narrowed, vector) else None
-            if (vector is None or vector.ndim != 1 or vector.shape[0] == 0
-                    or (self.dim is not None and vector.shape[0] != self.dim)
-                    or not np.isfinite(vector).all()):
-                self.exact = False
-                yield rowid, assertion_id, scope, owner, None
-                continue
-            if self.dim is None:
-                self.dim = int(vector.shape[0])
-            yield rowid, assertion_id, scope, owner, vector
+        wide = None
+        if isinstance(raw, (bytes, bytearray, memoryview)):
+            data = bytes(raw)
+            if len(data) % 4:
+                return None  # decode_vector: unreadable -> vectorless
+            narrow = np.frombuffer(data, dtype="<f4")
+        else:
+            listed = decode_vector(raw)
+            if listed is None:
+                return None
+            try:
+                wide = np.asarray([float(x) for x in listed], dtype=np.float64)
+            except (TypeError, ValueError, OverflowError):
+                self._inexact("a stored JSON vector holds non-numeric values")
+                return (None, None, 0.0)
+            with np.errstate(over="ignore"):
+                narrow = wide.astype(np.float32)
+            if np.array_equal(narrow, wide):
+                wide = None  # float32 holds it exactly: no side copy
+        reference = wide if wide is not None else narrow
+        if narrow.ndim != 1 or narrow.shape[0] == 0:
+            self._inexact("a stored vector is empty")
+            return (None, None, 0.0)
+        if self.dim is not None and narrow.shape[0] != self.dim:
+            self._inexact(f"stored vectors of {self.dim} and {narrow.shape[0]} dimensions")
+            return (None, None, 0.0)
+        if not np.isfinite(reference).all():
+            self._inexact("a stored vector holds non-finite values")
+            return (None, None, 0.0)
+        if self.dim is None:
+            self.dim = int(narrow.shape[0])
+        wide64 = reference.astype(np.float64)
+        with np.errstate(over="ignore"):
+            norm = math.sqrt(float(wide64 @ wide64))
+        low, high = ROW_NORM_RANGE
+        if not np.isfinite(narrow).all() or (norm > 0.0 and not (low <= norm <= high)):
+            # Outside the float32 pass's error bound (a legacy JSON value
+            # beyond float32, or a norm outside ROW_NORM_RANGE): the row is
+            # FORCED, i.e. always a candidate of the exact pass, scored from
+            # its float64 values; its float32 row is zeros.
+            return np.zeros(self.dim, dtype=np.float32), wide64, _FORCED
+        return narrow, wide, norm
 
     def _reserve(self, needed: int) -> None:
         if needed <= self._capacity:
@@ -215,7 +330,7 @@ class VectorMatrix:
             return new
 
         self._inv_norm = grown(self._inv_norm, np.float64)
-        self._rowid = grown(self._rowid, np.int64)
+        self._forced = grown(self._forced, bool)
         self._scope = grown(self._scope, np.int32)
         self._owner = grown(self._owner, np.int32)
         self._capacity = capacity
@@ -245,6 +360,31 @@ class VectorMatrix:
         found = sorted(p for p in (self._position.get(a) for a in assertion_ids) if p is not None)
         return np.asarray(found, dtype=np.int64)
 
+    def _exact_scores(self, positions: Any, q64: Any, q_sq: float) -> Any:
+        """Reference cosine (`vector_scoring.cosine`), bit for bit, for the
+        rows at `positions`."""
+        np = _np
+        out = np.zeros(len(positions), dtype=np.float64)
+        if q_sq <= 0.0:
+            return out  # reference: a zero query scores every row 0.0
+        q_root = math.sqrt(q_sq)
+        for k in range(0, len(positions), EXACT_CHUNK_ROWS):
+            idx = positions[k:k + EXACT_CHUNK_ROWS]
+            wide = self._matrix[idx].astype(np.float64)
+            if self._wide:
+                for j, pos in enumerate(idx.tolist()):
+                    original = self._wide.get(pos)
+                    if original is not None:
+                        wide[j] = original
+            dots = _sequential_sum(np, wide * q64)
+            r_sq = _sequential_sum(np, wide * wide)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                scores = np.where(r_sq > 0.0, dots / (q_root * np.sqrt(r_sq)), 0.0)
+            out[k:k + len(idx)] = scores
+        if not np.isfinite(out).all():
+            raise _Unrepresentable("an exact score is not finite")
+        return out
+
     def rank(
         self, query_vector: Sequence[float], positions: Any, *,
         min_score: Optional[float], limit: Optional[int],
@@ -255,42 +395,43 @@ class VectorMatrix:
         Python scan can answer exactly."""
         np = _np
         if not self.exact:
-            raise _Unrepresentable("matrix holds vectors it cannot represent exactly")
+            raise _Unrepresentable(self.inexact_reason or "the matrix cannot score these vectors exactly")
         if len(positions) == 0:
             return []
         q64 = np.asarray([float(x) for x in query_vector], dtype=np.float64)
-        if self.dim is None or q64.shape[0] != self.dim or not np.isfinite(q64).all():
-            raise _Unrepresentable("query vector does not match the matrix dimension")
-        q_norm = float(np.sqrt(q64 @ q64))
-        matrix = self._matrix[: self.size]
-        if q_norm <= 0.0:
-            coarse = np.zeros(len(positions), dtype=np.float64)
-        else:
-            q32 = q64.astype(np.float32)
-            if len(positions) < _SUBSET_SHARE * self.size:
-                dots = matrix[positions] @ q32
-            else:
-                dots = (matrix @ q32)[positions]
-            coarse = dots.astype(np.float64) * self._inv_norm[positions] / q_norm
-            if not np.isfinite(coarse).all():
-                raise _Unrepresentable("float32 pass overflowed")
+        if self.dim is None or q64.shape[0] != self.dim:
+            raise _Unrepresentable(
+                f"a {q64.shape[0]}-dimension query against {self.dim}-dimension vectors "
+                "(the reference scores the overlapping prefix)")
+        if not np.isfinite(q64).all():
+            raise _Unrepresentable("the query vector holds non-finite values")
+        q_sq = float(_sequential_sum(np, q64 * q64))
+        if not math.isfinite(q_sq):
+            raise _Unrepresentable("the query vector's norm overflows")
         candidates = positions
-        if min_score is not None:
-            keep = coarse >= float(min_score) - _COARSE_MARGIN
-            candidates, coarse = candidates[keep], coarse[keep]
-        if limit is not None and len(candidates) > limit:
-            kth = np.partition(coarse, len(coarse) - limit)[len(coarse) - limit]
-            keep = coarse >= kth - _COARSE_MARGIN
-            candidates = candidates[keep]
+        forced = positions[self._forced[positions]] if self._wide else positions[:0]
+        if len(forced):
+            candidates = positions[~self._forced[positions]]
+        if q_sq > 0.0:
+            unit = (q64 / math.sqrt(q_sq)).astype(np.float32)
+            matrix = self._matrix[: self.size]
+            if len(candidates) < SUBSET_SHARE * self.size:
+                dots = matrix[candidates] @ unit
+            else:
+                dots = (matrix @ unit)[candidates]
+            coarse = dots.astype(np.float64) * self._inv_norm[candidates]
+            margin = coarse_margin(self.dim)
+            if min_score is not None:
+                keep = coarse >= float(min_score) - margin
+                candidates, coarse = candidates[keep], coarse[keep]
+            if limit is not None and len(candidates) > limit:
+                kth = np.partition(coarse, len(coarse) - limit)[len(coarse) - limit]
+                candidates = candidates[coarse >= kth - margin]
+        if len(forced):
+            candidates = np.union1d(candidates, forced)  # sorted: rowid order
         if len(candidates) == 0:
             return []
-        # Exact pass: float64, the formula of vector_scoring.cosine.
-        wide = matrix[candidates].astype(np.float64)
-        dots = wide @ q64
-        norms = np.sqrt(np.einsum("ij,ij->i", wide, wide))
-        denom = norms * q_norm
-        with np.errstate(divide="ignore", invalid="ignore"):
-            exact = np.where(denom > 0.0, dots / np.where(denom > 0.0, denom, 1.0), 0.0)
+        exact = self._exact_scores(candidates, q64, q_sq)
         if min_score is not None:
             keep = ~(exact < float(min_score))
             candidates, exact = candidates[keep], exact[keep]

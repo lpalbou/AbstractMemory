@@ -23,8 +23,11 @@ from .embeddings import TextEmbedder
 from .models import TripleAssertion
 from .store import TripleQuery
 from .vector_matrix import (
+    ID_FETCH_CHUNK,
+    SYNC_FETCH_ROWS,
     VECTOR_ENGINE_NUMPY,
     VECTOR_ENGINE_PYTHON,
+    VECTOR_UPGRADE_BATCH,
     VectorMatrix,
     _Unrepresentable,
     decode_vector,
@@ -62,6 +65,9 @@ def _checked_table(table_name: Optional[str]) -> str:
 # (the canonical text, which only the FTS index and the embedder consume).
 # Vectors are read only by semantic queries and the explicit vector reads
 # (`stored_vector`, the vector matrix cache).
+# Sentinel of `_rank_in_snapshot`: the matrix named a row the table lacks.
+_STALE = object()
+
 _ASSERTION_COLUMNS = (
     "assertion_id", "subject", "predicate", "object", "scope", "owner_id",
     "observed_at", "valid_from", "valid_until", "confidence",
@@ -249,17 +255,17 @@ class SQLiteTripleStore:
                 raise
         self._upgrade_vector_encoding(cur)
 
-    # Rows per transaction of the in-place vector upgrade (bounded WAL growth
-    # and lock hold; the cursor makes an interrupted upgrade resume).
-    _VECTOR_UPGRADE_BATCH = 2000
-
     def _upgrade_vector_encoding(self, cur: sqlite3.Cursor) -> None:
         """IN-PLACE UPGRADE (0058): rewrite JSON-text vectors as float32
         BLOBs, above the `vector_blob_high_water` rowid cursor of the meta
         sidecar (the FTS backfill pattern): idempotent, resumable, O(rows
-        written since the last open). Unreadable or non-numeric JSON stays as
-        it is (the reference scan treats it as before). The file does not
-        shrink until a VACUUM; new rows are written as BLOBs by `add`."""
+        written since the last open), `VECTOR_UPGRADE_BATCH` rows per
+        transaction. Unreadable or non-numeric JSON, and values float32
+        cannot hold, stay as they are (the reference scan reads them as
+        before). A batch that rewrote rows bumps `vector_generation` in the
+        same transaction, so a matrix another handle built from the JSON
+        values rebuilds. The file does not shrink until a VACUUM; new rows
+        are written as BLOBs by `add`."""
         row = cur.execute(
             f"SELECT value FROM {self._table}_meta WHERE key = 'vector_blob_high_water'"
         ).fetchone()
@@ -268,7 +274,7 @@ class SQLiteTripleStore:
         if top is None or int(top) <= high_water:
             return
         top = int(top)
-        size = int(self._VECTOR_UPGRADE_BATCH)
+        size = int(VECTOR_UPGRADE_BATCH)
         while high_water < top:
             cur.execute("BEGIN IMMEDIATE")
             try:
@@ -284,11 +290,12 @@ class SQLiteTripleStore:
                         continue
                     try:
                         updates.append((encode_vector(vector), rowid))
-                    except (TypeError, ValueError):
-                        continue  # non-numeric legacy content: left untouched
+                    except (TypeError, ValueError, OverflowError):
+                        continue  # non-numeric / beyond float32: left untouched
                 if updates:
                     cur.executemany(
                         f"UPDATE {self._table} SET embedding = ? WHERE rowid = ?", updates)
+                    self._bump_vector_generation(cur)
                 high_water = int(batch[-1][0]) if len(batch) == size else top
                 cur.execute(
                     f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
@@ -297,6 +304,13 @@ class SQLiteTripleStore:
             except BaseException:
                 cur.execute("ROLLBACK")
                 raise
+
+    def _bump_vector_generation(self, cur: sqlite3.Cursor) -> None:
+        """Mark every stored vector as rewritten (caller owns the
+        transaction): each handle's matrix sees a new token and rebuilds."""
+        cur.execute(
+            f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
+            "VALUES ('vector_generation', ?)", (str(uuid.uuid4()),))
 
     def _sync_fts_index(self, cur: sqlite3.Cursor) -> None:
         """Index rows above the high-water rowid (caller owns the
@@ -658,15 +672,21 @@ class SQLiteTripleStore:
 
     @property
     def vector_engine(self) -> str:
-        """Which path serves semantic queries: `"numpy-matrix-cache"` or the
-        labelled `"python-linear-scan"` (numpy absent, or stored vectors the
-        matrix cannot represent exactly)."""
+        """Which path serves semantic queries: `"numpy-matrix-cache"`, or the
+        labelled `"python-linear-scan"` (numpy not importable, or the stored
+        vectors include one the matrix cannot score exactly). Before the
+        first semantic query of a handle the matrix is not built yet and the
+        answer is `"numpy-matrix-cache"` whenever numpy is importable; the
+        build itself may still find an unrepresentable vector (it then warns
+        with `#FALLBACK` and this property turns to the scan)."""
         if numpy_module() is None:
             return VECTOR_ENGINE_PYTHON
         matrix = self._vectors
         return VECTOR_ENGINE_NUMPY if matrix is None or matrix.exact else VECTOR_ENGINE_PYTHON
 
     def _warn_python_path(self, reason: str) -> None:
+        """The labelled fallback: once per store handle (the scan answers
+        every later query the same way, only slower)."""
         if self._vector_fallback_warned:
             return
         self._vector_fallback_warned = True
@@ -674,22 +694,29 @@ class SQLiteTripleStore:
             f"#FALLBACK: SQLite vector search uses the Python linear scan: {reason}",
             RuntimeWarning, stacklevel=4)
 
+    def _vector_token(self, cur: sqlite3.Cursor) -> Tuple[Any, ...]:
+        """Identity of the stored vector space: the embedding pin plus the
+        `vector_generation` that every whole-store rewrite bumps."""
+        return tuple(
+            (str(k), str(v)) for k, v in cur.execute(
+                f"SELECT key, value FROM {self._table}_meta "
+                "WHERE key IN ('embedding_pin', 'vector_generation') ORDER BY key"
+            ).fetchall())
+
     def _synced_vectors(self) -> Optional[VectorMatrix]:
-        """The vector matrix brought up to date (caller holds the lock), or
-        None when the Python scan must serve. Rebuilt from a scan only when
-        absent or when the vector space changed (`vector_generation` or the
-        embedding pin, written by `replace_vectors` in any process); otherwise
-        only the rows above its rowid high-water are read."""
+        """The vector matrix brought up to date (caller holds the lock and,
+        for a consistent snapshot, a read transaction), or None when the
+        Python scan must serve. Rebuilt from a scan only when absent or when
+        the vector space changed (`vector_generation` or the embedding pin,
+        written by `replace_vectors` and the in-place upgrade in any
+        process); otherwise only the rows above its rowid high-water are
+        read."""
         if numpy_module() is None:
             self._warn_python_path(
                 "numpy is not importable (install abstractmemory[fast] for the matrix cache)")
             return None
         cur = self._conn.cursor()
-        token = tuple(
-            (str(k), str(v)) for k, v in cur.execute(
-                f"SELECT key, value FROM {self._table}_meta "
-                "WHERE key IN ('embedding_pin', 'vector_generation') ORDER BY key"
-            ).fetchall())
+        token = self._vector_token(cur)
         matrix = self._vectors
         if matrix is None or matrix.token != token:
             matrix = VectorMatrix(token)
@@ -701,15 +728,14 @@ class SQLiteTripleStore:
                 "WHERE rowid > ? AND rowid <= ? AND embedding IS NOT NULL ORDER BY rowid",
                 (matrix.high_water, int(top)))
             while True:
-                chunk = rows.fetchmany(4096)
+                chunk = rows.fetchmany(SYNC_FETCH_ROWS)
                 if not chunk:
                     break
                 matrix.append(tuple(r) for r in chunk)
             matrix.high_water = max(matrix.high_water, int(top))
         if not matrix.exact:
             self._warn_python_path(
-                "the store holds vectors the float32 matrix cannot represent exactly "
-                "(mixed dimensions, non-finite values or legacy JSON vectors)")
+                f"the store holds a vector the float32 matrix cannot score exactly ({matrix.inexact_reason})")
             return None
         return matrix
 
@@ -717,11 +743,31 @@ class SQLiteTripleStore:
         self, q: TripleQuery, query_vector: List[float], limit: Optional[int],
     ) -> Optional[List[Tuple[float, sqlite3.Row]]]:
         """`(score, row)` best first from the matrix (caller holds the lock),
-        or None when the Python scan must answer."""
+        or None when the Python scan must answer. Sync, candidate filter,
+        ranking and the row read share ONE read transaction (one snapshot:
+        a concurrent writer cannot slip rows or a new vector space in
+        between)."""
+        for attempt in (0, 1):
+            cur = self._conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                ranked = self._rank_in_snapshot(cur, q, query_vector, limit)
+            finally:
+                cur.execute("COMMIT")
+            if ranked is not _STALE:
+                return ranked
+            # The matrix names a row the table no longer has (the file was
+            # rewritten under this handle): rebuild once from the table.
+            self._vectors = None
+        self._warn_python_path("the vector matrix disagrees with the table after a rebuild")
+        return None
+
+    def _rank_in_snapshot(
+        self, cur: sqlite3.Cursor, q: TripleQuery, query_vector: List[float], limit: Optional[int],
+    ) -> Any:
         matrix = self._synced_vectors()
         if matrix is None:
             return None
-        cur = self._conn.cursor()
         partition_only = not (q.assertion_ids or q.subject or q.predicate or q.object
                               or q.since or q.until or q.active_at)
         if partition_only:
@@ -740,8 +786,8 @@ class SQLiteTripleStore:
             return None
         ids = [aid for _, aid in scored]
         rows: dict = {}
-        for k in range(0, len(ids), 500):
-            chunk = ids[k:k + 500]
+        for k in range(0, len(ids), ID_FETCH_CHUNK):
+            chunk = ids[k:k + ID_FETCH_CHUNK]
             marks = ", ".join("?" for _ in chunk)
             for r in cur.execute(
                 f"SELECT {', '.join(_ASSERTION_COLUMNS)} FROM {self._table} "
@@ -749,10 +795,7 @@ class SQLiteTripleStore:
             ).fetchall():
                 rows[r["assertion_id"]] = r
         if len(rows) != len(set(ids)):
-            # The matrix names a row the table no longer has (the file was
-            # rewritten under this handle): drop it, answer by the scan.
-            self._vectors = None
-            return None
+            return _STALE
         return [(score, rows[aid]) for score, aid in scored]
 
     def query_plan(self, q: TripleQuery) -> List[str]:
@@ -829,9 +872,7 @@ class SQLiteTripleStore:
                     [(vec, rid) for rid, vec in sorted(payload.items())],
                 )
                 # Every vector changed: other handles' matrices must rebuild.
-                cur.execute(
-                    f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
-                    "VALUES ('vector_generation', ?)", (str(uuid.uuid4()),))
+                self._bump_vector_generation(cur)
                 self._write_pin(pin, cursor=cur)
                 cur.execute("COMMIT")
             except BaseException:
