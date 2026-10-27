@@ -1,21 +1,34 @@
 """MemoryGraph: the revision log, the provenance index and their reads (ADR 0003; contract §3).
 
-`MemoryGraph(store, journal=None).apply_revision(rev)` is the write path: it validates provenance (every asserted
-memory, and the revision itself, is sourced or derived from a grounded memory), then applies the ops.
+`MemoryGraph(store, journal=None).apply_revision(rev)` is the write path. In order:
+
+1. PURE checks (nothing read, nothing embedded): the ops normalize (deterministic ids, scope/owner/observed_at
+   filled, so the logged revision replays byte-identically), and every asserted memory AND the revision itself name
+   sources or derived_from (`ProvenanceRequired` otherwise).
+2. Idempotency pre-check: a revision id already in the log returns `applied=False` before any embedding.
+3. Embedding (outside any transaction, like `SQLiteTripleStore.add`); the pin a first embedded write sets is written
+   INSIDE the transaction, so a refused revision leaves no pin behind.
+4. ONE transaction: the derived_from chains are resolved and must reach a ledger source (cycles and chains to
+   nothing refused); a store row written outside the graph may only be ADOPTED by an `import`/`migration` revision
+   that carries it as stored (only its provenance changes, to the graph shape; the old one stays in the history
+   detail); a `close`/`narrow` may only name a memory of this graph (asserted through a revision, or in this one by
+   an EARLIER op); then triples (+ FTS rows), window changes, closures, history, provenance and derivation rows and
+   the revision row are written; any failure (a `narrow` that would widen, an unknown id) rolls all of it back.
 
 ATOMICITY (SQLite). The graph tables live in the store's file and are written on the STORE'S connection, under the
-store's lock, in ONE `BEGIN IMMEDIATE .. COMMIT`: triples (+ their FTS rows), window changes, the revision row, the
-provenance and derivation index and the history rows. The journal closure joins that same transaction when the
-journal is a `SQLiteJournal` on the SAME file (the entity-home and plane-home deployment): `SQLiteJournal` and
+store's lock, in ONE `BEGIN IMMEDIATE .. COMMIT`. The journal closure joins that same transaction when the journal
+is a `SQLiteJournal` on the SAME file (the entity-home and plane-home deployment): `SQLiteJournal` and
 `SQLiteTripleStore` hold separate connections, but the journal's seq counter is in-database and its closure insert
-runs on any cursor of that file (`SQLiteJournal._append_closure_on`), so one transaction covers both. When the
-journal lives elsewhere (another file, `InMemoryJournal`) no transaction can span both: the closures are appended
-AFTER the store transaction commits, the revision row records `journal_applied = 0` until they are, and
-`repair()` re-appends the closures of any revision a crash left at 0 (closure ids are deterministic, so the journal's
-supplied-id dedup makes the repair idempotent).
+runs on any cursor of that file (`SQLiteJournal._append_closure_on`), so one transaction covers both, and
+`TripleQuery(active_at=)` and ranked recall (which folds journal closures) can never disagree. When the journal
+lives elsewhere (another file, `InMemoryJournal`) no transaction can span both: the closures are appended AFTER the
+store transaction commits, the revision row records `journal_applied = 0` until they are, and `repair()` re-appends
+the closures of any revision a crash left at 0 (closure ids are deterministic, so the journal's supplied-id dedup
+makes the repair idempotent).
 
 InMemoryTripleStore: same semantics, applied under the store's lock with an undo log (a failing op rolls back what
-the revision already did); closures always go to the journal after the apply (`journal_applied` as above).
+the revision already did, the embedding pin included); the graph state is shared by every MemoryGraph over the same
+store object; closures always go to the journal after the apply (`journal_applied` as above).
 """
 
 from __future__ import annotations
@@ -25,6 +38,8 @@ import json
 import os
 import sqlite3
 import threading
+import weakref
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
@@ -46,15 +61,24 @@ from ..sqlite_store import SQLiteTripleStore
 from .provenance import Provenance, ProvenanceRequired, SourceRef
 from .revisions import Revision, RevisionOp, RevisionResult
 
-# -- named constants (ADR 0003 enforcement: page sizes live in one place) ------------------------------------------
-#: Default change-feed page (`revisions(limit=)`), and the largest page one call may ask for.
+# -- named constants (ADR 0003 enforcement: page sizes and bounds live in one place) --------------------------------
+# Measured 2026-10-27 on a temporary SQLite home with 50,000 graph-asserted memories (tests/test_graph_performance.py;
+# numbers in backlog 0056 "Report"): every bounded read below stays an index read, so the bounds are set by what a
+# caller can usefully consume in one call, not by cost.
+#: Default change-feed page (`revisions(limit=)`).
 DEFAULT_REVISION_PAGE = 100
+#: The largest page any one graph read returns; a larger `limit` is clamped to it.
 MAX_READ_LIMIT = 1000
 #: Default bound of `sources_of` / `derived_from_source` / `history`.
 DEFAULT_READ_LIMIT = 200
+#: The most memories one lineage walk (`sources_of(transitive=True)`, `derived_from_source`) visits.
+MAX_LINEAGE_VISITS = 1000
 #: The predicate of a record's digest assertion: its SUBJECT is the record's graph id (records.py v1 encoding),
 #: accepted wherever a memory id is (resolved to the digest's assertion id, the one namespace of the index).
 DIGEST_PREDICATE = "dcterms:abstract"
+#: The causes whose revisions may adopt a store row written outside the graph (ADR 0003 consequences: existing
+#: stores are imported / projected once).
+ADOPTING_CAUSES = ("import", "migration")
 
 _EVENT_ASSERTED, _EVENT_CLOSED, _EVENT_NARROWED = "asserted", "closed", "narrowed"
 
@@ -81,18 +105,27 @@ def _check_limit(limit: int, name: str = "limit") -> int:
     return min(int(limit), MAX_READ_LIMIT)
 
 
+def _content(a: TripleAssertion) -> Tuple[Any, ...]:
+    """Everything a stored claim IS, except its provenance (what adoption may change) and its id."""
+    return (a.subject, a.predicate, a.object, a.scope, a.owner_id, a.observed_at, a.valid_from, a.valid_until,
+            a.confidence, _dump(a.attributes))
+
+
 def _closure_record(rev: Revision, payload: Mapping[str, Any]) -> ClosureRecord:
-    """The journal closure of one `close` op: kind, reason and successor from the op, the cause on provenance."""
+    """The journal closure of one `close` op: kind, reason and successor from the op; the cause, the revision and
+    the ripple fields on its provenance. `observed_at` is the revision's observation time (ADR 0003 decision 5),
+    the record time rides the provenance and the journal seq."""
     return ClosureRecord(
         assertion_id=payload["assertion_id"],
         kind=payload["kind"],
         reason=payload["reason"],
         replacement_ids=tuple(payload.get("replacement_ids") or ()),
-        observed_at=rev.recorded_at,
+        observed_at=rev.occurred_at,
         actor=rev.provenance.actor,
         provenance={
             "revision_id": rev.revision_id,
             "cause": rev.cause,
+            "recorded_at": rev.recorded_at,
             "ripple_source": payload.get("ripple_source"),
             "ripple_hops": payload.get("ripple_hops"),
             "valid_until": payload["valid_until"],
@@ -110,8 +143,9 @@ class _Prepared:
 
 
 def _prepare(rev: Revision) -> _Prepared:
-    """Pure: normalize the revision so its logged form replays byte-identically, and resolve each asserted memory's
-    provenance (its own when the payload carries one, else the revision's)."""
+    """Pure: normalize the revision so its logged form replays byte-identically, resolve each asserted memory's
+    provenance (its own when the payload carries one, else the revision's), and refuse an ungrounded shape (a memory
+    or a revision naming neither sources nor derived_from) before anything is read or embedded."""
     ops: List[RevisionOp] = []
     assertions: List[TripleAssertion] = []
     effective: Dict[str, Provenance] = {}
@@ -135,11 +169,21 @@ def _prepare(rev: Revision) -> _Prepared:
         aid = str(assertion.assertion_id)
         if aid in effective:
             raise ValueError(f"revision {rev.revision_id!r} asserts {aid!r} twice")
+        if not prov.is_grounded():
+            raise ProvenanceRequired(
+                f"revision {rev.revision_id!r}: memory {aid!r} names neither ledger sources nor derived_from "
+                "(every memory is sourced or derived; never neither)"
+            )
         effective[aid] = prov
         assertions.append(assertion)
         if assertion.predicate == DIGEST_PREDICATE:
             aliases.setdefault(assertion.subject, aid)
         ops.append(RevisionOp("assert", payload))
+    if not rev.provenance.is_grounded():
+        raise ProvenanceRequired(
+            f"revision {rev.revision_id!r}: its provenance names neither ledger sources nor derived_from "
+            "(the cause of every change must be traceable)"
+        )
     return _Prepared(replace(rev, ops=tuple(ops)), assertions, effective, aliases)
 
 
@@ -177,6 +221,21 @@ class _SQLiteTx:
             found.update(r[0] for r in self.cur.execute(
                 f"SELECT assertion_id FROM {self.b.table} WHERE assertion_id IN ({marks})", chunk).fetchall())
         return found
+
+    def stored(self, aid: str) -> TripleAssertion:
+        row = self.cur.execute(
+            "SELECT assertion_id, subject, predicate, object, scope, owner_id, observed_at, valid_from, valid_until, "
+            f"confidence, provenance_json, attributes_json FROM {self.b.table} WHERE assertion_id = ?", (aid,)
+        ).fetchone()
+        return SQLiteTripleStore._row_to_assertion(row)
+
+    def set_provenance(self, aid: str, provenance: Dict[str, Any]) -> None:
+        self.cur.execute(f"UPDATE {self.b.table} SET provenance_json = ? WHERE assertion_id = ?",
+                         (json.dumps(provenance, ensure_ascii=False, separators=(",", ":")), aid))
+
+    def write_pin(self, pin: Optional[Dict[str, Any]]) -> None:
+        if pin is not None:
+            self.b.store._write_pin(pin, cursor=self.cur)
 
     def insert_assertions(self, rows: List[tuple]) -> None:
         if not rows:
@@ -288,7 +347,7 @@ class _SQLiteBackend:
                 cur.execute("ROLLBACK")
                 raise
 
-    def prepare_rows(self, assertions: List[TripleAssertion]) -> List[tuple]:
+    def prepare_rows(self, assertions: List[TripleAssertion]) -> Tuple[List[tuple], Optional[Dict[str, Any]], bool]:
         return _sqlite_rows(self.store, assertions)
 
     @contextmanager
@@ -308,6 +367,10 @@ class _SQLiteBackend:
             return self.store._conn.cursor().execute(sql, tuple(params)).fetchall()
 
     # reads
+    def applied_seq(self, rid: str) -> Optional[int]:
+        with self.store._lock:
+            return _SQLiteTx(self, self.store._conn.cursor()).revision_seq(rid)
+
     def resolve(self, mid: str) -> Optional[str]:
         with self.store._lock:
             tx = _SQLiteTx(self, self.store._conn.cursor())
@@ -324,35 +387,57 @@ class _SQLiteBackend:
         return [{"event": r["event"], "at": r["at"], "revision_id": r["revision_id"], "cause": r["cause"],
                  "detail": json.loads(r["detail_json"])} for r in rows]
 
-    def sources(self, mid: str) -> List[SourceRef]:
-        rows = self._read(f"SELECT ref_json FROM {self.t_prov} WHERE memory_id = ? ORDER BY rowid", (mid,))
+    def sources(self, mid: str, limit: int) -> List[SourceRef]:
+        rows = self._read(
+            f"SELECT ref_json FROM {self.t_prov} WHERE memory_id = ? ORDER BY rowid LIMIT ?", (mid, limit))
         return [SourceRef.from_dict(json.loads(r[0])) for r in rows]
 
-    def parents(self, mid: str) -> List[str]:
+    def parents(self, mid: str, limit: int) -> List[str]:
         return [r[0] for r in self._read(
-            f"SELECT from_id FROM {self.t_der} WHERE memory_id = ? ORDER BY rowid", (mid,))]
+            f"SELECT from_id FROM {self.t_der} WHERE memory_id = ? ORDER BY rowid LIMIT ?", (mid, limit))]
 
     def children(self, fid: str, limit: int) -> List[str]:
         return [r[0] for r in self._read(
             f"SELECT memory_id FROM {self.t_der} WHERE from_id = ? ORDER BY rowid LIMIT ?", (fid, limit))]
 
     def with_ref(self, ref: SourceRef, limit: int) -> List[str]:
-        if ref.kind == "run":  # everything stamped with this run: the run ref and its steps/artifacts/messages
-            sql = f"SELECT DISTINCT memory_id FROM {self.t_prov} WHERE run_id = ? ORDER BY rowid LIMIT ?"
-            return [r[0] for r in self._read(sql, (ref.run_id, limit))]
-        return [r[0] for r in self._read(
-            f"SELECT memory_id FROM {self.t_prov} WHERE ref_key = ? ORDER BY rowid LIMIT ?", (ref.key(), limit))]
+        if ref.kind != "run":  # one row per (memory, key): the key index answers in insertion (rowid) order
+            return [r[0] for r in self._read(
+                f"SELECT memory_id FROM {self.t_prov} WHERE ref_key = ? ORDER BY rowid LIMIT ?", (ref.key(), limit))]
+        # A run ref matches everything stamped with the run (its run ref and its steps/artifacts/messages/diary
+        # entries): one memory may hold several such refs, so the run_id index is stepped lazily (rowid order, no
+        # sort) and deduplicated until `limit` distinct memories, never reading past what it returns.
+        out: List[str] = []
+        seen: set = set()
+        with self.store._lock:
+            cur = self.store._conn.cursor().execute(
+                f"SELECT memory_id FROM {self.t_prov} WHERE run_id = ? ORDER BY rowid", (ref.run_id,))
+            try:
+                while len(out) < limit:
+                    batch = cur.fetchmany(limit)
+                    if not batch:
+                        break
+                    for (mid,) in batch:
+                        if mid not in seen:
+                            seen.add(mid)
+                            out.append(mid)
+                            if len(out) >= limit:
+                                break
+            finally:
+                cur.close()
+        return out
 
     def revisions_page(self, after: int, limit: int) -> List[Tuple[int, Revision]]:
         rows = self._read(
             f"SELECT * FROM {self.t_rev} WHERE seq > ? ORDER BY seq LIMIT ?", (after, limit))
         return [(int(r["seq"]), _row_revision(r)) for r in rows]
 
-    def pending_journal(self) -> List[Revision]:
-        rows = self._read(f"SELECT * FROM {self.t_rev} WHERE journal_applied = 0 ORDER BY seq", ())
+    def pending_journal(self, limit: int) -> List[Revision]:
+        rows = self._read(f"SELECT * FROM {self.t_rev} WHERE journal_applied = 0 ORDER BY seq LIMIT ?", (limit,))
         return [_row_revision(r) for r in rows]
 
     def closed_payloads(self, rid: str) -> List[Dict[str, Any]]:
+        # Bounded by the revision's own ops (one closed row per close op).
         rows = self._read(
             f"SELECT detail_json FROM {self.t_hist} WHERE revision_id = ? AND event = ? ORDER BY seq",
             (rid, _EVENT_CLOSED))
@@ -372,11 +457,16 @@ def _row_revision(r: sqlite3.Row) -> Revision:
     })
 
 
-def _sqlite_rows(store: SQLiteTripleStore, assertions: List[TripleAssertion]) -> List[tuple]:
+def _sqlite_rows(store: SQLiteTripleStore,
+                 assertions: List[TripleAssertion]) -> Tuple[List[tuple], Optional[Dict[str, Any]], bool]:
     """Row tuples for `_STORE_COLUMNS`, embedded BEFORE the transaction exactly as `SQLiteTripleStore.add` does
     (edges never embedded; a dead embedder degrades to vectorless rows with its #FALLBACK; a wrong-dimension vector
-    aborts; a pinless store pins at first write, loudly)."""
+    aborts). Returns the rows, the pin the transaction must write (a pinless store pins at its first embedded
+    write; a dimensionless pin gains its dimension) or None, and whether that is a first-write pin (warned, loudly,
+    once the transaction commits)."""
     vectors: Optional[Dict[int, List[float]]] = None
+    pin_update: Optional[Dict[str, Any]] = None
+    first_write = False
     embedder = store._embedder
     if embedder is not None and assertions:
         embeddable = [(i, _canonical_text(a)) for i, a in enumerate(assertions) if not _is_record_edge(a)]
@@ -388,12 +478,11 @@ def _sqlite_rows(store: SQLiteTripleStore, assertions: List[TripleAssertion]) ->
             dim = check_add_dimension(pin, vectors.values())
             if dim is not None:
                 if pin is None:
-                    pin = build_pin(embedder_model_id(embedder), dim, source="first-write",
-                                    claimed_by="embedder-attribute")
-                    warn_first_write_pin(pin)
-                    store._write_pin(pin)
+                    pin_update = build_pin(embedder_model_id(embedder), dim, source="first-write",
+                                           claimed_by="embedder-attribute")
+                    first_write = True
                 elif pin.get("dimension") is None:
-                    store._write_pin(dict(pin, dimension=dim))
+                    pin_update = dict(pin, dimension=dim)
     rows: List[tuple] = []
     for i, a in enumerate(assertions):
         vector = vectors.get(i) if vectors is not None else None
@@ -405,7 +494,7 @@ def _sqlite_rows(store: SQLiteTripleStore, assertions: List[TripleAssertion]) ->
             _canonical_text(a),
             json.dumps([float(x) for x in vector], separators=(",", ":")) if vector is not None else None,
         ))
-    return rows
+    return rows, pin_update, first_write
 
 
 class _MemoryTx:
@@ -445,16 +534,31 @@ class _MemoryTx:
     def existing_ids(self, ids: Sequence[str]) -> set:
         return {i for i in ids if i in self.b.store._ids}
 
+    def stored(self, aid: str) -> TripleAssertion:
+        row = self._row(aid)
+        return row["assertion"] if row is not None else None  # type: ignore[return-value]
+
+    def set_provenance(self, aid: str, provenance: Dict[str, Any]) -> None:
+        row = self._row(aid)
+        before = row["assertion"]
+        row["assertion"] = replace(before, provenance=dict(provenance))
+        self.undo.append(lambda: row.__setitem__("assertion", before))
+
+    def write_pin(self, pin: Optional[Dict[str, Any]]) -> None:
+        return None  # InMemoryTripleStore.add pins inside the apply; insert_assertions' undo restores it
+
     def insert_assertions(self, assertions: List[TripleAssertion]) -> None:
         store = self.b.store
         new = [a for a in assertions if a.assertion_id not in store._ids]
         if not new:
             return
         ids = {str(a.assertion_id) for a in new}
+        pin_before = store._embedding_pin
 
         def _undo() -> None:
             store._rows[:] = [r for r in store._rows if r.get("assertion_id") not in ids]
             store._ids.difference_update(ids)
+            store._embedding_pin = pin_before
 
         self.undo.append(_undo)
         store.add(new)
@@ -484,7 +588,7 @@ class _MemoryTx:
     def add_history(self, mid: str, event: str, at: str, rid: str, detail: Dict[str, Any]) -> None:
         b = self.b
         b.hist.append({"memory_id": mid, "event": event, "at": at, "revision_id": rid,
-                          "detail": json.loads(_dump(detail))})
+                       "detail": json.loads(_dump(detail))})
         newly_known = event == _EVENT_ASSERTED and mid not in b.known
         if newly_known:
             b.known.add(mid)
@@ -498,17 +602,29 @@ class _MemoryTx:
 
     def add_source(self, mid: str, ref: SourceRef, rid: str) -> None:
         b, key = self.b, ref.key()
-        if any(m == mid and k == key for m, k, *_ in b.provenance):
+        if (mid, key) in b.prov_keys:
             return
         b.provenance.append((mid, key, ref, rid))
-        self.undo.append(b.provenance.pop)
+        b.prov_keys.add((mid, key))
+
+        def _undo() -> None:
+            b.provenance.pop()
+            b.prov_keys.discard((mid, key))
+
+        self.undo.append(_undo)
 
     def add_derivation(self, mid: str, from_id: str, rid: str) -> None:
         b = self.b
-        if (mid, from_id) in {(m, f) for m, f, _ in b.derivations}:
+        if (mid, from_id) in b.der_keys:
             return
         b.derivations.append((mid, from_id, rid))
-        self.undo.append(b.derivations.pop)
+        b.der_keys.add((mid, from_id))
+
+        def _undo() -> None:
+            b.derivations.pop()
+            b.der_keys.discard((mid, from_id))
+
+        self.undo.append(_undo)
 
     def insert_revision(self, rev: Revision, journal_applied: bool) -> int:
         b = self.b
@@ -525,18 +641,23 @@ class _MemoryTx:
 
 
 class _MemoryBackend:
-    def __init__(self, store: InMemoryTripleStore, journal: Any) -> None:
-        self.store, self.journal = store, journal
+    """The graph tables of one InMemoryTripleStore. Shared by every MemoryGraph over the same store object (the
+    SQLite tables are shared through the file; this is the in-process equivalent)."""
+
+    def __init__(self, store: InMemoryTripleStore) -> None:
+        self.store = store
         self._lock = threading.RLock()
         self.revisions: List[Dict[str, Any]] = []
         self.rev_by_id: Dict[str, Dict[str, Any]] = {}
         self.hist: List[Dict[str, Any]] = []
         self.provenance: List[Tuple[str, str, SourceRef, str]] = []
+        self.prov_keys: set = set()
         self.derivations: List[Tuple[str, str, str]] = []
+        self.der_keys: set = set()
         self.known: set = set()
 
-    def prepare_rows(self, assertions: List[TripleAssertion]) -> List[TripleAssertion]:
-        return list(assertions)  # the store embeds inside add()
+    def prepare_rows(self, assertions: List[TripleAssertion]) -> Tuple[List[TripleAssertion], None, bool]:
+        return list(assertions), None, False  # the store embeds (and pins) inside add()
 
     @contextmanager
     def transaction(self) -> Iterator[_MemoryTx]:
@@ -547,6 +668,10 @@ class _MemoryBackend:
             except BaseException:
                 tx.rollback()
                 raise
+
+    def applied_seq(self, rid: str) -> Optional[int]:
+        with self._lock:
+            return _MemoryTx(self).revision_seq(rid)
 
     def resolve(self, mid: str) -> Optional[str]:
         with self.store._lock, self._lock:
@@ -568,13 +693,13 @@ class _MemoryBackend:
                     break
             return out
 
-    def sources(self, mid: str) -> List[SourceRef]:
+    def sources(self, mid: str, limit: int) -> List[SourceRef]:
         with self._lock:
-            return [ref for m, _, ref, _ in self.provenance if m == mid]
+            return [ref for m, _, ref, _ in self.provenance if m == mid][:limit]
 
-    def parents(self, mid: str) -> List[str]:
+    def parents(self, mid: str, limit: int) -> List[str]:
         with self._lock:
-            return [f for m, f, _ in self.derivations if m == mid]
+            return [f for m, f, _ in self.derivations if m == mid][:limit]
 
     def children(self, fid: str, limit: int) -> List[str]:
         with self._lock:
@@ -595,9 +720,9 @@ class _MemoryBackend:
         with self._lock:
             return [(e["seq"], e["revision"]) for e in self.revisions if e["seq"] > after][:limit]
 
-    def pending_journal(self) -> List[Revision]:
+    def pending_journal(self, limit: int) -> List[Revision]:
         with self._lock:
-            return [e["revision"] for e in self.revisions if not e["journal_applied"]]
+            return [e["revision"] for e in self.revisions if not e["journal_applied"]][:limit]
 
     def closed_payloads(self, rid: str) -> List[Dict[str, Any]]:
         with self._lock:
@@ -607,6 +732,19 @@ class _MemoryBackend:
     def mark_journal_applied(self, rid: str) -> None:
         with self._lock:
             self.rev_by_id[rid]["journal_applied"] = True
+
+
+_MEMORY_BACKENDS: "weakref.WeakKeyDictionary[InMemoryTripleStore, _MemoryBackend]" = weakref.WeakKeyDictionary()
+_MEMORY_BACKENDS_LOCK = threading.Lock()
+
+
+def _memory_backend(store: InMemoryTripleStore) -> _MemoryBackend:
+    with _MEMORY_BACKENDS_LOCK:
+        backend = _MEMORY_BACKENDS.get(store)
+        if backend is None:
+            backend = _MemoryBackend(store)
+            _MEMORY_BACKENDS[store] = backend
+        return backend
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -626,7 +764,7 @@ class MemoryGraph:
         if isinstance(store, SQLiteTripleStore):
             self._b: Any = _SQLiteBackend(store, journal)
         elif isinstance(store, InMemoryTripleStore):
-            self._b = _MemoryBackend(store, journal)
+            self._b = _memory_backend(store)
         else:
             raise NotImplementedError(
                 f"MemoryGraph: {type(store).__name__} is not a graph home; use SQLiteTripleStore (InMemoryTripleStore "
@@ -645,50 +783,71 @@ class MemoryGraph:
 
     def apply_revision(self, revision: Revision) -> RevisionResult:
         """Validate and apply one revision atomically; idempotent on `revision_id` (a second apply returns
-        `applied=False` and changes nothing). Raises `ProvenanceRequired` for an ungrounded write and ValueError
-        for an op that names an unknown assertion or tries to narrow an open window; either leaves nothing behind."""
+        `applied=False` and changes nothing). Raises `ProvenanceRequired` for an ungrounded write (or one that
+        touches a store row the graph never adopted) and ValueError for an op that names an unknown assertion,
+        names one before the op that asserts it, or tries to narrow an open window; either leaves nothing behind."""
         if not isinstance(revision, Revision):
             raise TypeError(f"apply_revision expects a Revision (got {type(revision).__name__})")
-        prep = _prepare(revision)
+        prep = _prepare(revision)  # pure checks first: an ungrounded write is refused before any read or embed
         rev = prep.revision
-        rows = self._b.prepare_rows(prep.assertions)  # embedding happens here, before any transaction
+        seq = self._b.applied_seq(rev.revision_id)
+        if seq is not None:  # a replay: nothing to embed, nothing to write
+            return RevisionResult(revision_id=rev.revision_id, applied=False, seq=seq)
+        rows, pin_update, first_write_pin = self._b.prepare_rows(prep.assertions)  # embedding, outside the tx
         pending: List[ClosureRecord] = []
         result = RevisionResult(revision_id=rev.revision_id, applied=True)
         with self._b.transaction() as tx:
-            if tx.revision_seq(rev.revision_id) is not None:
-                return RevisionResult(revision_id=rev.revision_id, applied=False)
+            seq = tx.revision_seq(rev.revision_id)
+            if seq is not None:  # a concurrent apply of the same id won the race
+                return RevisionResult(revision_id=rev.revision_id, applied=False, seq=seq)
             derived = self._validate(tx, prep)
-            ids = [str(a.assertion_id) for a in prep.assertions]
-            in_store = tx.existing_ids(ids)
-            known = {aid for aid in in_store if tx.memory_known(aid)}
-            tx.insert_assertions(rows)
             by_id = {str(a.assertion_id): a for a in prep.assertions}
+            in_store = tx.existing_ids(list(by_id))
+            known = {aid for aid in in_store if tx.memory_known(aid)}
+            previous = self._adopt(tx, rev, by_id, in_store - known)
+            tx.write_pin(pin_update)
+            tx.insert_assertions(rows)
+            for aid in previous:
+                tx.set_provenance(aid, by_id[aid].provenance)
             at, rid = rev.recorded_at, rev.revision_id
+            asserted: set = set()
             for index, op in enumerate(rev.ops):
                 payload = op.payload
                 if op.op == "assert":
                     aid = str(payload["assertion_id"])
+                    asserted.add(aid)
                     if aid in known:
                         result.skipped.append({"op": "assert", "index": index, "assertion_id": aid,
                                                "why": "already asserted in this graph"})
                         continue
                     a, prov = by_id[aid], prep.effective[aid]
                     result.assertion_ids.append(aid)
-                    tx.add_history(aid, _EVENT_ASSERTED, at, rid, {
+                    detail: Dict[str, Any] = {
                         "subject": a.subject, "predicate": a.predicate, "object": a.object,
                         "valid_from": a.valid_from, "valid_until": a.valid_until, "observed_at": a.observed_at,
                         "sources": [s.key() for s in prov.sources], "derived_from": derived[aid],
-                        "adopted": aid in in_store,  # a store row written before the graph knew it: indexed now
-                    })
+                        "adopted": aid in previous,  # a store row written before the graph knew it: indexed now
+                    }
+                    if aid in previous:
+                        detail["previous_provenance"] = previous[aid]
+                    tx.add_history(aid, _EVENT_ASSERTED, at, rid, detail)
                     for ref in prov.sources:
                         tx.add_source(aid, ref, rid)
                     for parent in derived[aid]:
                         tx.add_derivation(aid, parent, rid)
                     continue
                 aid = payload["assertion_id"]
+                if aid in by_id and aid not in asserted:
+                    raise ValueError(f"revision {rid!r}: op {index} ({op.op!r}) names {aid!r} before the op that "
+                                     "asserts it (ops apply in order)")
                 window = tx.window(aid)
                 if window is None:
                     raise ValueError(f"revision {rid!r}: a {op.op!r} op names an unknown assertion {aid!r}")
+                if not tx.memory_known(aid):
+                    raise ProvenanceRequired(
+                        f"revision {rid!r}: a {op.op!r} op names {aid!r}, a store row written outside the graph; "
+                        "adopt it with an 'import' or 'migration' revision first (its window then changes through "
+                        "the graph, with a cause)")
                 if op.op == "close":
                     if not tx.close_row(aid, payload["valid_until"]):
                         result.skipped.append({"op": "close", "index": index, "assertion_id": aid,
@@ -698,7 +857,8 @@ class MemoryGraph:
                     if self._journal is not None and not tx.write_closure(closure):
                         pending.append(closure)
                     result.closed.append(aid)
-                    tx.add_history(aid, _EVENT_CLOSED, at, rid, {**payload, "closure_id": closure.closure_id})
+                    tx.add_history(aid, _EVENT_CLOSED, at, rid, {
+                        **payload, "closure_id": closure.closure_id if self._journal is not None else None})
                 else:  # narrow (raises ValueError on an open window: the whole revision rolls back)
                     if not tx.narrow_row(aid, payload["valid_until"]):
                         result.skipped.append({"op": "narrow", "index": index, "assertion_id": aid,
@@ -709,18 +869,47 @@ class MemoryGraph:
                         "valid_until": payload["valid_until"], "previous_valid_until": window[1],
                         "reason": payload["reason"]})
             seq = tx.insert_revision(rev, journal_applied=not pending)
+        if first_write_pin and pin_update is not None:
+            warn_first_write_pin(pin_update)  # loud, and only once the pin is actually written
         if pending:  # the journal lives outside the store's transaction (see the module docstring)
             for closure in pending:
                 self._journal.append_closure(closure)
             self._b.mark_journal_applied(rev.revision_id)
         return replace(result, seq=seq)
 
+    @staticmethod
+    def _adopt(tx: Any, rev: Revision, by_id: Mapping[str, TripleAssertion],
+               unknown_rows: set) -> Dict[str, Dict[str, Any]]:
+        """Asserted ids already in the store but never asserted through the graph: only an import/migration
+        revision may adopt them, and only as stored (everything but provenance equal). Returns {id: the stored
+        provenance it replaces}."""
+        if not unknown_rows:
+            return {}
+        if rev.cause not in ADOPTING_CAUSES:
+            raise ProvenanceRequired(
+                f"revision {rev.revision_id!r} ({rev.cause!r}) asserts {sorted(unknown_rows)[:5]}, store rows "
+                f"written outside the graph; only a revision whose cause is one of {list(ADOPTING_CAUSES)} adopts "
+                "them (a store row written outside the graph must be adopted by an import or migration revision first)"
+            )
+        previous: Dict[str, Dict[str, Any]] = {}
+        for aid in sorted(unknown_rows):
+            stored = tx.stored(aid)
+            if _content(stored) != _content(by_id[aid]):
+                raise ValueError(
+                    f"revision {rev.revision_id!r} adopts {aid!r} with content that differs from the stored row; "
+                    "an adoption carries the row as stored (TripleQuery(...).to_dict()), only its provenance in the "
+                    "graph shape"
+                )
+            previous[aid] = dict(stored.provenance)
+        return previous
+
     def _validate(self, tx: Any, prep: _Prepared) -> Dict[str, List[str]]:
-        """Provenance check (ADR 0003 decision 8). Returns each asserted memory's derived_from ids resolved to the
-        index namespace (assertion ids). A memory is grounded when it names sources, or when at least one memory
-        it is derived from is grounded: a memory already in the graph is grounded by induction (the graph only
-        ever accepted grounded writes); a memory of this revision is grounded by the same rule, to a fixpoint (so
-        a cycle or a chain to nothing is refused)."""
+        """Provenance check (ADR 0003 decision 8), inside the transaction. Returns each asserted memory's
+        derived_from ids resolved to the index namespace (assertion ids). A memory is grounded when it names
+        sources, or when at least one memory it is derived from is grounded: a memory already in the graph is
+        grounded by induction (the graph only ever accepted grounded writes); a memory of this revision is grounded
+        by the same rule, to a fixpoint (so a cycle or a chain to nothing is refused). Every memory and the revision
+        already passed the shape check (`_prepare`)."""
         rev = prep.revision
 
         def _resolve(mid: str, owner: str) -> str:
@@ -739,14 +928,9 @@ class MemoryGraph:
                 "graph must be adopted by an 'import' or 'migration' revision first)"
             )
 
-        derived: Dict[str, List[str]] = {}
-        for aid, prov in prep.effective.items():
-            if not prov.is_grounded():
-                raise ProvenanceRequired(
-                    f"revision {rev.revision_id!r}: memory {aid!r} names neither ledger sources nor derived_from "
-                    "(every memory is sourced or derived; never neither)"
-                )
-            derived[aid] = [_resolve(d, f"memory {aid!r}") for d in prov.derived_from]
+        derived: Dict[str, List[str]] = {
+            aid: [_resolve(d, f"memory {aid!r}") for d in prov.derived_from] for aid, prov in prep.effective.items()
+        }
         grounded = {aid for aid, prov in prep.effective.items() if prov.sources}
         changed = True
         while changed:
@@ -762,21 +946,17 @@ class MemoryGraph:
                 "source (a cycle, or a chain of derived memories with no sources)"
             )
         prov = rev.provenance
-        if not prov.is_grounded():
-            raise ProvenanceRequired(
-                f"revision {rev.revision_id!r}: its provenance names neither ledger sources nor derived_from "
-                "(the cause of every change must be traceable)"
-            )
         parents = [_resolve(d, "the revision") for d in prov.derived_from]
         if not prov.sources and not any(p in grounded or p not in prep.effective for p in parents):
             raise ProvenanceRequired(f"revision {rev.revision_id!r}: its derived_from never reaches a ledger source")
         return derived
 
-    def repair(self) -> int:
+    def repair(self, *, limit: int = MAX_READ_LIMIT) -> int:
         """Append the journal closures of revisions a crash left with `journal_applied = 0` (only possible when the
-        journal is not in the store's file). Idempotent (deterministic closure ids). Returns how many revisions
-        were repaired."""
-        pending = self._b.pending_journal()
+        journal is not in the store's file), oldest first, at most `limit` revisions per call. Idempotent
+        (deterministic closure ids). Returns how many revisions were repaired (call again while it returns
+        `limit`)."""
+        pending = self._b.pending_journal(_check_limit(limit))
         if pending and self._journal is None:
             raise RuntimeError("MemoryGraph.repair: revisions await their journal closures but no journal is attached")
         for rev in pending:
@@ -806,22 +986,23 @@ class MemoryGraph:
     def sources_of(self, memory_id: str, *, transitive: bool = True,
                    limit: int = DEFAULT_READ_LIMIT) -> List[SourceRef]:
         """The ledger sources of a memory; with `transitive`, also those of the memories it was derived from
-        (breadth-first, deduplicated by key, bounded by `limit`). Unknown id: []."""
+        (breadth-first, deduplicated by key, at most `limit` refs and `MAX_LINEAGE_VISITS` memories visited).
+        Unknown id: []."""
         n = _check_limit(limit)
         start = self._resolve_read(memory_id)
         if start is None:
             return []
         out: Dict[str, SourceRef] = {}
-        seen, queue = {start}, [start]
+        seen, queue = {start}, deque([start])
         while queue and len(out) < n:
-            mid = queue.pop(0)
-            for ref in self._b.sources(mid):
+            mid = queue.popleft()
+            for ref in self._b.sources(mid, n):
                 out.setdefault(ref.key(), ref)
                 if len(out) >= n:
                     break
             if transitive:
-                for parent in self._b.parents(mid):
-                    if parent not in seen:
+                for parent in self._b.parents(mid, MAX_LINEAGE_VISITS):
+                    if parent not in seen and len(seen) < MAX_LINEAGE_VISITS:
                         seen.add(parent)
                         queue.append(parent)
         return list(out.values())
@@ -829,31 +1010,33 @@ class MemoryGraph:
     def derived_from_source(self, ref: Union[SourceRef, Mapping[str, Any]], *,
                             limit: int = DEFAULT_READ_LIMIT) -> List[str]:
         """Memory ids grounded in this ledger source: those that name it, then (breadth-first) every memory derived
-        from them. A `run` ref matches everything stamped with that run (its steps, artifacts, messages). Bounded."""
+        from them. A `run` ref matches everything stamped with that run (its steps, artifacts, messages). Bounded
+        by `limit` (and `MAX_LINEAGE_VISITS`)."""
         n = _check_limit(limit)
         source = SourceRef.from_dict(ref)
         out: List[str] = []
         seen: set = set()
-        queue: List[str] = []
+        queue: deque = deque()
         for mid in self._b.with_ref(source, n):
             if mid not in seen:
                 seen.add(mid)
                 out.append(mid)
                 queue.append(mid)
-        while queue and len(out) < n:
-            for child in self._b.children(queue.pop(0), n):
+        visits = 0
+        while queue and len(out) < n and visits < MAX_LINEAGE_VISITS:
+            visits += 1
+            for child in self._b.children(queue.popleft(), n - len(out)):
                 if child not in seen:
                     seen.add(child)
                     out.append(child)
                     queue.append(child)
-                    if len(out) >= n:
-                        break
         return out[:n]
 
     def revisions(self, after: Optional[str] = None, limit: int = DEFAULT_REVISION_PAGE) -> Tuple[List[Revision], str]:
         """The change feed: revisions in log order strictly after the cursor, and the next cursor (`str(seq)` of the
         last one returned; unchanged when nothing is new). Lossless: no revision is skipped or repeated across
-        calls, including while writers append."""
+        calls, including while writers append (a revision's seq is allocated inside its write transaction, and
+        write transactions are serialized, so commit order is seq order)."""
         n = _check_limit(limit)
         if after is None or after == "":
             position = 0
@@ -870,6 +1053,8 @@ class MemoryGraph:
         present revision ids are no-ops, so a replay is resumable)."""
         if not isinstance(target, MemoryGraph):
             raise TypeError("replay_into expects a MemoryGraph")
+        if target._b is self._b:
+            raise ValueError("replay_into: the target is this graph's own store")
         applied, cursor = 0, None
         while True:
             page, cursor = self.revisions(after=cursor, limit=DEFAULT_REVISION_PAGE)

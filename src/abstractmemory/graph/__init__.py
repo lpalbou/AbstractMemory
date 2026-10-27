@@ -5,7 +5,15 @@ and `MemoryGraph`: atomic, idempotent revision apply with mandatory grounded pro
 `sources_of`, `derived_from_source`, the lossless change feed `revisions(after=)` and `replay_into`.
 """
 
-from .graph import DEFAULT_READ_LIMIT, DEFAULT_REVISION_PAGE, DIGEST_PREDICATE, MAX_READ_LIMIT, MemoryGraph
+from .graph import (
+    ADOPTING_CAUSES,
+    DEFAULT_READ_LIMIT,
+    DEFAULT_REVISION_PAGE,
+    DIGEST_PREDICATE,
+    MAX_LINEAGE_VISITS,
+    MAX_READ_LIMIT,
+    MemoryGraph,
+)
 from .provenance import (
     LEGACY_KEYS,
     PROVENANCE_KEYS,
@@ -18,11 +26,13 @@ from .provenance import (
 from .revisions import CLOSE_KINDS, REVISION_CAUSES, REVISION_OPS, Revision, RevisionOp, RevisionResult
 
 __all__ = [
+    "ADOPTING_CAUSES",
     "CLOSE_KINDS",
     "DEFAULT_READ_LIMIT",
     "DEFAULT_REVISION_PAGE",
     "DIGEST_PREDICATE",
     "LEGACY_KEYS",
+    "MAX_LINEAGE_VISITS",
     "MAX_READ_LIMIT",
     "PROVENANCE_KEYS",
     "REVISION_CAUSES",
