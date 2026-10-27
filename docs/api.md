@@ -106,13 +106,13 @@ A typed pointer into the ledger: a frozen dataclass, a plain dict on the wire (`
 | `kind` | required | optional | `key()` |
 | --- | --- | --- | --- |
 | `run` | `run_id` | | `run:<run_id>` |
-| `step` | `run_id`, `seq` (int ≥ 0, the ledger row address) | `step_id` | `step:<run_id>#<seq>` |
+| `step` | `run_id`, `seq` (int ≥ 1: the ledger row address; AbstractRuntime numbers rows from 1) | `step_id` | `step:<run_id>#<seq>` |
 | `artifact` | `artifact_id` | `run_id` | `artifact:<artifact_id>` |
 | `message` | `message_id` | `run_id` | `message:<message_id>` |
 | `event` | `event_id` | `stream` | `event:<event_id>` |
 | `diary_entry` | `entry_id` | `run_id` (`diary:<entity_id>`) | `diary_entry:<entry_id>` |
 
-Every kind may carry `runtime_id` (which ledger: a plane's runtime or an entity home, since homes travel). An unknown kind, a missing required id, a blank id, a non-int or negative `seq`, an unknown key, or a field another kind owns (an `artifact` with a `seq`) raises `InvalidSourceRef` (a `ValueError`), and so does a `run` or `step` ref naming a run id no ledger can load: `SYNTHETIC_RUN_ID_PREFIXES` = `chat-`, `diary:`, `session_memory_`, `global_memory` (`is_synthetic_run_id(run_id)`; ADR 0003 decision 11: such an id is not a source, the artifact or diary entry it belongs to is). The key is the identity: two refs with the same key are the same source.
+Every kind may carry `runtime_id` (which ledger: a plane's runtime or an entity home, since homes travel). An unknown kind, a missing required id, a blank id, a `seq` that is not an int ≥ 1 (0 is never a ledger row), an unknown key, or a field another kind owns (an `artifact` with a `seq`) raises `InvalidSourceRef` (a `ValueError`), and so does a `run` or `step` ref naming a run id no ledger can load: `SYNTHETIC_RUN_ID_PREFIXES` = `chat-`, `diary:`, `session_memory_`, `global_memory` (`is_synthetic_run_id(run_id)`; ADR 0003 decision 11: such an id is not a source, the artifact or diary entry it belongs to is). The key is the identity: two refs with the same key are the same source.
 
 ### `Provenance`
 

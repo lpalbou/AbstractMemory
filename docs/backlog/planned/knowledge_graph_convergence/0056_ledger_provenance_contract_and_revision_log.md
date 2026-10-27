@@ -139,6 +139,15 @@ One commit per finding, each with tests and its mutants (listed in the test docs
   `test_close_before_valid_from_inverts_window`) now fail by design: those inputs raise.
 - After the fixes: graph tests + narrow + marker 133 passed; full suite 1324 passed, 4 skipped.
 
+Re-measured 2026-10-27 15:20 after the review fixes (`bench_graph.py --size 50000`, generator now writes strictly
+increasing timestamps so supersede closes never precede the claim's valid_from), on a contended machine (load
+average 10): `derived_from_source(step)` 0.078 ms, by run 1.13 ms, `sources_of` 0.061 / 0.138 ms (transitive),
+`history` 0.033 ms, a change-feed page of 100 revisions 8.1 ms, a replayed revision 0.22 ms, and the untouched 0.3
+baseline scan 24.5 ms (18.5 ms in the first run): the untouched baseline moved 1.3x, so most of the movement is load.
+The one real cost added by the fixes is timestamp normalization when a logged revision is decoded: measured A/B in
+one process, 50.9 us vs 43.6 us per 5-claim revision (+17%, about 0.7 ms per page of 100). The first table stays the
+reference figure; every read is still an index search (the bench asserts the plans).
+
 Open (next slices): `as_of` / `as_recorded` reads (0052); entity and alias ops (0050); the runtime facade that stamps
 step refs and reconstructs sources (AbstractRuntime ADR 0009); the gateway routes; AbstractNote and the runtime's
 writers moving onto `apply_revision`; the LanceDB plane store (0057).

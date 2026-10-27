@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import warnings
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -54,9 +55,13 @@ class FakeEmbedder:
         return out
 
 
+T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
 def ts(i: int) -> str:
-    return f"2026-{1 + (i // 100000) % 12:02d}-{1 + (i // 4000) % 28:02d}T{(i // 160) % 24:02d}:{(i // 3) % 60:02d}:" \
-           f"{i % 60:02d}+00:00"
+    """Strictly increasing with i (one minute per claim): a supersede close written at the current claim's time is
+    always at or after the superseded claim's valid_from, as apply_revision requires (a window never inverts)."""
+    return (T0 + timedelta(minutes=i)).isoformat()
 
 
 def build(graph: MemoryGraph, size: int, rnd: random.Random) -> dict:
@@ -67,7 +72,7 @@ def build(graph: MemoryGraph, size: int, rnd: random.Random) -> dict:
     revisions = 0
     i = 0
     while len(sourced_ids) < n_sourced:
-        run, seq = f"run-{revisions // STEPS_PER_RUN:05d}", revisions % STEPS_PER_RUN
+        run, seq = f"run-{revisions // STEPS_PER_RUN:05d}", revisions % STEPS_PER_RUN + 1
         ops = []
         for k in range(CLAIMS_PER_REVISION):
             aid = f"m-{i}"

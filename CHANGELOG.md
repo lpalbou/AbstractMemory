@@ -14,7 +14,7 @@ The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provena
 ### Added
 
 - **`abstractmemory.graph`**, the one write path of a mind:
-  - `SourceRef` (`run`, `step` with the ledger row address `(run_id, seq)`, `artifact`, `message`, `event`,
+  - `SourceRef` (`run`, `step` with the ledger row address `(run_id, seq)`, `seq` 1-based, `artifact`, `message`, `event`,
     `diary_entry`; optional `runtime_id`; one canonical `key()`), validated per kind (`InvalidSourceRef`); a
     `run` / `step` ref naming a synthetic run id (`SYNTHETIC_RUN_ID_PREFIXES`: `chat-`, `diary:`,
     `session_memory_`, `global_memory`) is refused.
