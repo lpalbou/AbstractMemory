@@ -164,6 +164,14 @@ def main() -> None:
                 lambda c: [graph.apply_revision(r) for r in graph.revisions(after=c, limit=1)[0]], cursors[:50]),
         }
 
+        if args.embed:  # graph-written rows are float32 BLOBs: the store's matrix cache serves them (0058)
+            from abstractmemory import TripleQuery
+
+            probes = [(FakeEmbedder().embed_texts([f"probe {k}"])[0],) for k in range(20)]
+            store.query(TripleQuery(query_vector=probes[0][0], scope="global", limit=20))  # builds the matrix
+            rows["vector query, limit 20 (" + store.vector_engine + ")"] = timeit(
+                lambda v: store.query(TripleQuery(query_vector=v, scope="global", limit=20)), probes)
+
         def before(run):  # the 0.3 way: scan every row's provenance JSON for the run id
             return store._conn.execute(f"SELECT assertion_id FROM triples WHERE provenance_json LIKE ?",
                                        (f'%"{run["run_id"]}"%',)).fetchall()

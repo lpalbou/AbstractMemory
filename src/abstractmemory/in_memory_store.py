@@ -48,6 +48,31 @@ def _result_copy(a: TripleAssertion, assertion_id: Any, *, attributes: dict[str,
     )
 
 
+def _matches(a: TripleAssertion, q: TripleQuery) -> bool:
+    """The structured filter of `InMemoryTripleStore.query` (ids aside)."""
+    if q.subject and normalize_term(a.subject) != normalize_term(q.subject):
+        return False
+    if q.predicate and normalize_term(a.predicate) != normalize_term(q.predicate):
+        return False
+    if q.object and normalize_term(a.object) != normalize_term(q.object):
+        return False
+    if q.scope and a.scope != q.scope:
+        return False
+    if q.owner_id and (a.owner_id or "") != q.owner_id:
+        return False
+    if q.since and (a.observed_at or "") < q.since:
+        return False
+    if q.until and (a.observed_at or "") > q.until:
+        return False
+    if q.active_at:
+        at = q.active_at
+        if a.valid_from and a.valid_from > at:
+            return False
+        if a.valid_until and a.valid_until <= at:
+            return False
+    return True
+
+
 class InMemoryTripleStore:
     """A dependency-free triple store (best-effort).
 
@@ -167,6 +192,33 @@ class InMemoryTripleStore:
     def close(self) -> None:
         return None
 
+    def assertions_after(
+        self, cursor: int, *, scope: Optional[str] = None, owner_id: Optional[str] = None,
+        limit: int = 1000,
+    ) -> tuple[List[tuple[int, TripleAssertion]], int]:
+        """CHANGE FEED (backlog 0058; SQLite parity): the assertions added
+        after `cursor`, in insertion order, at most `limit`, filtered like
+        `query(TripleQuery(scope=..., owner_id=...))`. Returns
+        `(rows, next_cursor)` where each row is `(position, assertion)`
+        (position = 1-based insertion index, the rowid analogue) and
+        `next_cursor` is the position to resume from: the feed is exhausted
+        when fewer than `limit` rows come back. Rows are append-only, so a
+        cursor never misses or repeats one."""
+        q = TripleQuery(scope=scope, owner_id=owner_id)
+        bound = max(1, int(limit))
+        start = max(0, int(cursor))
+        out: List[tuple[int, TripleAssertion]] = []
+        with self._lock:
+            top = len(self._rows)
+            position = start
+            while position < top and len(out) < bound:
+                row = self._rows[position]
+                position += 1
+                a = row.get("assertion")
+                if isinstance(a, TripleAssertion) and _matches(a, q):
+                    out.append((position, _result_copy(a, row.get("assertion_id"))))
+        return out, position
+
     def stored_vector(self, assertion_id: str) -> Optional[List[float]]:
         """The persisted embedding for one row, or None (vectorless /
         unknown). Read surface for consolidation's vector bridge signal —
@@ -237,27 +289,7 @@ class InMemoryTripleStore:
             limit = max(1, raw_limit)
 
         def _match(a: TripleAssertion) -> bool:
-            if q.subject and normalize_term(a.subject) != normalize_term(q.subject):
-                return False
-            if q.predicate and normalize_term(a.predicate) != normalize_term(q.predicate):
-                return False
-            if q.object and normalize_term(a.object) != normalize_term(q.object):
-                return False
-            if q.scope and a.scope != q.scope:
-                return False
-            if q.owner_id and (a.owner_id or "") != q.owner_id:
-                return False
-            if q.since and (a.observed_at or "") < q.since:
-                return False
-            if q.until and (a.observed_at or "") > q.until:
-                return False
-            if q.active_at:
-                at = q.active_at
-                if a.valid_from and a.valid_from > at:
-                    return False
-                if a.valid_until and a.valid_until <= at:
-                    return False
-            return True
+            return _matches(a, q)
 
         with self._lock:  # snapshot under the lock; scoring below is lock-free
             rows = [r for r in self._rows if isinstance(r, dict) and isinstance(r.get("assertion"), TripleAssertion)]

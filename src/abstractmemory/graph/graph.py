@@ -58,6 +58,7 @@ from ..journal import ClosureRecord
 from ..journal_sqlite import SQLiteJournal
 from ..models import TripleAssertion, canonicalize_term
 from ..sqlite_store import SQLiteTripleStore
+from ..vector_matrix import encode_vector
 from .provenance import Provenance, ProvenanceRequired, SourceRef
 from .revisions import Revision, RevisionOp, RevisionResult
 
@@ -477,7 +478,8 @@ def _sqlite_rows(store: SQLiteTripleStore,
                  assertions: List[TripleAssertion]) -> Tuple[List[tuple], Optional[Dict[str, Any]], bool]:
     """Row tuples for `_STORE_COLUMNS`, embedded BEFORE the transaction exactly as `SQLiteTripleStore.add` does
     (edges never embedded; a dead embedder degrades to vectorless rows with its #FALLBACK; a wrong-dimension vector
-    aborts). Returns the rows, the pin the transaction must write (a pinless store pins at its first embedded
+    aborts; vectors stored as float32 BLOBs via `vector_matrix.encode_vector`, so the store's matrix cache picks the
+    graph's rows up at its next sync by rowid, exactly as it does `add`'s). Returns the rows, the pin the transaction must write (a pinless store pins at its first embedded
     write; a dimensionless pin gains its dimension) or None, and whether that is a first-write pin (warned, loudly,
     once the transaction commits)."""
     vectors: Optional[Dict[int, List[float]]] = None
@@ -508,7 +510,7 @@ def _sqlite_rows(store: SQLiteTripleStore,
             json.dumps(a.provenance, ensure_ascii=False, separators=(",", ":")),
             json.dumps(a.attributes, ensure_ascii=False, separators=(",", ":")),
             _canonical_text(a),
-            json.dumps([float(x) for x in vector], separators=(",", ":")) if vector is not None else None,
+            encode_vector(vector) if vector is not None else None,  # float32 BLOB, as SQLiteTripleStore.add (0058)
         ))
     return rows, pin_update, first_write
 

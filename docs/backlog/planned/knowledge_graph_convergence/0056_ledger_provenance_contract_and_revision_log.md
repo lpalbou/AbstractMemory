@@ -81,9 +81,11 @@ What landed:
 Tests (mutants listed in each file's docstring, each applied by hand and seen red):
 - `tests/test_graph_provenance.py` (45), `tests/test_graph_revisions.py` (45, on three deployments: SQLite with the
   journal in the same file, SQLite with the journal in another file, in-memory), `tests/test_graph_e2e.py` (1: two
-  consumer-shaped clients on their own connections to one temporary home), `tests/test_graph_performance.py` (3:
-  every keyed read's `EXPLAIN QUERY PLAN`), with `tests/test_narrow_assertion.py`: 105 passed.
-- Full suite: 1249 passed, 4 skipped (main: 1148 passed).
+  consumer-shaped clients on their own connections to one temporary home), `tests/test_graph_performance.py` (4:
+  every keyed read's `EXPLAIN QUERY PLAN`, and graph-written rows served by the 0058 vector matrix), with
+  `tests/test_narrow_assertion.py`: 106 passed.
+- Full suite: 1249 passed, 4 skipped before merging `feat/memory-graph-performance` (0058); 1297 passed, 4 skipped
+  after (main: 1148 passed).
 
 Performance (`tests/bench/bench_graph.py --size 50000`: a temporary SQLite home, 50,000 assertions written only
 through `apply_revision` in 10,000 revisions, 999 supersede closes, a tenth derived memories; no embedder; 200
@@ -101,7 +103,10 @@ provenance JSON:
 | `apply_revision` of a revision already applied | 0.106 | 0.123 | 1 |
 | before: `provenance_json LIKE` scan by run | 18.467 | 20.009 | 100 |
 
-Build: 1016 revisions/s (5078 assertions/s). Every keyed read is an index search at that size (the bench asserts the
+Build: 1016 revisions/s (5078 assertions/s). With `--embed` (384-d fake embedder, after merging 0058's float32 BLOB
+vectors: the graph writes its rows with `encode_vector`): 950 revisions/s, the same lookups within 10%, and a vector
+query (limit 20) over the 50,000 graph-written rows served by the matrix cache in 1.18 ms median
+(`vector_engine == "numpy-matrix-cache"`). Every keyed read is an index search at that size (the bench asserts the
 plans of `tests/test_graph_performance.py`; the change-feed page is dominated by decoding and re-validating each
 logged revision).
 

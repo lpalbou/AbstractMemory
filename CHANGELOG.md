@@ -45,6 +45,26 @@ The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provena
   `derived_from_source` by step 0.05 ms and by run 0.8 ms, a change-feed page of 100 revisions 4 ms; the 0.3
   alternative (scanning provenance JSON) took 18 ms.
 
+### Changed
+
+- **SQLite store: owner-filtered reads use the indexes** (backlog 0058). The
+  owner filter is now `owner_id = ?` instead of `COALESCE(owner_id, '') = ?`
+  (same rows: the filter only applies to a non-empty owner, which a NULL or
+  empty stored owner never equals). A new index
+  `idx_<table>_scope_owner_observed (scope, owner_id, observed_at,
+  assertion_id)` serves "latest N in a (scope, owner)", as-of windows and
+  per-pair scans in query order without sorting the partition; reads anchored
+  on ids, a subject or an object use their own index and check scope/owner per
+  row. Existing homes gain the index when the store is opened; no row is
+  rewritten. `SQLiteTripleStore.query_plan(q)` returns SQLite's
+  `EXPLAIN QUERY PLAN` lines for a query (tests pin the plans).
+- **SQLite store: structured reads no longer fetch the vector column** (backlog
+  0058). `query` (without `query_text`/`query_vector`) and `query_keywords`
+  select the assertion columns only, instead of `SELECT *` dragging the stored
+  embedding (several KB per row) and the canonical text through every scan.
+  Semantic queries and `stored_vector` still read the vector; `TripleAssertion`
+  is unchanged.
+
 ## [0.3.2] - 2026-10-20
 
 ### Added
