@@ -110,6 +110,35 @@ query (limit 20) over the 50,000 graph-written rows served by the matrix cache i
 plans of `tests/test_graph_performance.py`; the change-feed page is dominated by decoding and re-validating each
 logged revision).
 
+### Adversarial review (2026-10-27): SHIP WITH FIXES, fixed on the branch
+
+One commit per finding, each with tests and its mutants (listed in the test docstrings):
+- M1 (blocker): a close ends the row at min(current end, the close), compared as instants, so a claim "valid until
+  December" retracted in March leaves `TripleQuery(active_at=June)` too; history records `previous_valid_until`.
+- M2: every time of a revision is parsed and normalized at op construction ("next tuesday" refused); a close or
+  narrow before `valid_from` is refused (whole revision rolls back).
+- M3: `narrow_assertion` (both stores) compares instants, not strings. Canonical form: the package's existing UTC
+  text form (`journal_common.normalize_iso_ts`: microseconds, `+00:00`), not `Z`: `Z` sorts after both `+` and `.`,
+  so a `Z` value would mis-order against every stored `utc_now_iso_seconds` value and every `+00:00` query.
+- M4: the JSON->BLOB vector rewrite is documented as a one-way migration (CHANGELOG); a 0.4.0 home declares
+  `vector_encoding = float32-blob` in its meta table.
+- M5: `SYNTHETIC_RUN_ID_PREFIXES` / `is_synthetic_run_id`: a `run`/`step` ref naming a synthetic run id is refused;
+  `from_legacy` never lifts one into a ref.
+- M6: a different claim under an id the graph holds is refused (identity: terms, scope, owner, `valid_from`); an
+  identical re-assert stays a reported skip.
+- M7: a close/narrow-only revision must name a source or a memory other than the ones it changes.
+- M8: an adoption is logged with its previous provenance (`adoption` on the assert op), so a replay reproduces it.
+- M9: `revisions(after=)` refuses a cursor beyond the log's head.
+- M11, M14: docs (passes write `derived_from` as the track lands; the 0.3 scan baseline is 18 ms vectorless / 38 ms
+  with vectors).
+- M13: opening a graph on a home whose tables exist runs no DDL transaction (a reader does not wait for a writer).
+- R8 (runtime review): `from_legacy` reads the mixed shape the runtime stamps (flat keys + `sources`).
+- M10, M12, M15: notes, left as they are by the lead's decision (see the review).
+- The reviewer's informational probes that pinned the old behaviour (`test_cursor_from_another_graph_is_silently_
+  accepted`, `test_revision_derived_from_grounded_only_by_close`, `test_diary_run_id_direct_ref_accepted`,
+  `test_close_before_valid_from_inverts_window`) now fail by design: those inputs raise.
+- After the fixes: graph tests + narrow + marker 133 passed; full suite 1324 passed, 4 skipped.
+
 Open (next slices): `as_of` / `as_recorded` reads (0052); entity and alias ops (0050); the runtime facade that stamps
 step refs and reconstructs sources (AbstractRuntime ADR 0009); the gateway routes; AbstractNote and the runtime's
 writers moving onto `apply_revision`; the LanceDB plane store (0057).
