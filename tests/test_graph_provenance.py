@@ -454,3 +454,30 @@ def test_a_graph_home_without_the_via_column_is_upgraded(tmp_path) -> None:
     assert [d["via"] for d in graph.sources_of("a", labelled=True)] == ["memory"]
     graph.apply_revision(rev("r-2", claim("b", o="ex:b", provenance=prov(derived=["a"])), provenance=prov(step("run-2", 1))))
     assert graph.derived_from_source(step("run-2", 1)) == ["b"]
+
+
+# Lineage never crosses owners (architect review B3; ADR 0003 decision 2, strict ownership). Mutant (turned the test
+# red): `_validate._same_owner` returning without a check.
+
+def test_derived_from_never_crosses_owners(home) -> None:
+    home.graph.apply_revision(rev("r-bob", claim("bob-secret", s="ex:bob", o="ex:x"), owner_id="session_memory_bob",
+                                  provenance=prov(step("run-b", 1))))
+    before = home_state(home)
+    for bad in (
+        rev("r-x", claim("alice-knows", s="ex:alice", provenance=prov(derived=["bob-secret"])),
+            owner_id="session_memory_alice"),
+        # inside one revision too, and an explicit payload owner counts
+        rev("r-x", claim("p1", provenance=prov(step("run-a", 1))),
+            claim("p2", o="ex:p2", owner_id="session_memory_alice", provenance=prov(derived=["p1"])),
+            owner_id="session_memory_bob"),
+        # a close-only revision citing another owner's memory as its cause
+        rev("r-x", close("base", T(3)), provenance=prov(derived=["bob-secret"])),
+    ):
+        with pytest.raises(ProvenanceRequired, match="lineage never crosses owners"):
+            home.graph.apply_revision(bad)
+        assert home_state(home) == before
+    # The same knowledge entering as a SOURCE is fine.
+    ok = home.graph.apply_revision(rev("r-ok", claim("alice-heard", s="ex:alice", o="ex:heard"),
+                                       owner_id="session_memory_alice",
+                                       provenance=prov({"kind": "message", "message_id": "m-from-bob"})))
+    assert ok.assertion_ids == ["alice-heard"]

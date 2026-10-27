@@ -125,9 +125,14 @@ def test_two_consumers_write_one_mind_and_read_it_back(tmp_path: Path) -> None:
                         run_id="run-cap-3", seq=2, note_id="n0", quote="last day at Acme, April 1st",
                         cause="reinterpret", occurred_at=T(4))
         assert r4.narrowed == ["c-acme"]
-        # 5. The entity reflects (no ledger source of its own): derived from its memory and the notebook's claim.
+        # 5. The entity reflects (no ledger source of its own), derived from ITS memory. Lineage never crosses
+        #    owners (architect review B3): deriving from the notebook's claim is refused; what the entity learned
+        #    from the notebook would enter as a source (the message or artifact it came through).
+        with pytest.raises(ProvenanceRequired, match="lineage never crosses owners"):
+            entity.reflect("en-x", "e-cross", "ex:person-dana", "ex:careerPattern", "ex:changes-jobs",
+                           derived_from=["e-met", "c-globex"])
         r5 = entity.reflect("en-2", "e-insight", "ex:person-dana", "ex:careerPattern", "ex:changes-jobs",
-                            derived_from=["e-met", "c-globex"])
+                            derived_from=["e-met"])
         assert r5.assertion_ids == ["e-insight"]
 
         # --- reads, from either client (one mind) -------------------------------------------------------------
@@ -139,11 +144,9 @@ def test_two_consumers_write_one_mind_and_read_it_back(tmp_path: Path) -> None:
             assert history[1]["detail"]["replacement_ids"] == ["c-globex"]
             assert history[2]["detail"] == {"valid_until": T(4), "previous_valid_until": T(6),
                                             "reason": "the April note says Dana left Acme"}
-            assert [s.key() for s in graph.sources_of("e-insight")] == [
-                "step:run-turn-7#12", "diary_entry:de-7", "step:run-cap-2#5", "artifact:art-n2"]
+            assert [s.key() for s in graph.sources_of("e-insight")] == ["step:run-turn-7#12", "diary_entry:de-7"]
             assert graph.sources_of("e-insight", transitive=False) == []
-            assert graph.derived_from_source({"kind": "step", "run_id": "run-cap-2", "seq": 5}) == [
-                "c-globex", "e-insight"]
+            assert graph.derived_from_source({"kind": "step", "run_id": "run-cap-2", "seq": 5}) == ["c-globex"]
             assert graph.derived_from_source({"kind": "run", "run_id": "run-cap-1"}) == ["c-acme"]
             assert graph.derived_from_source({"kind": "run", "run_id": "run-turn-7"}) == ["e-met", "e-insight"]
             assert graph.derived_from_source({"kind": "diary_entry", "entry_id": "de-7"}) == ["e-met", "e-insight"]

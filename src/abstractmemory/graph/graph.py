@@ -1053,6 +1053,23 @@ class MemoryGraph:
         derived: Dict[str, List[str]] = {
             aid: [_resolve(d, f"memory {aid!r}") for d in prov.derived_from] for aid, prov in prep.effective.items()
         }
+        # Lineage never crosses owners (ADR 0003 decision 2, amended: strict ownership): knowledge from another
+        # owner enters as a SOURCE (the message or artifact it reached this owner through), never as derived_from.
+        own = {str(a.assertion_id): (a.owner_id or "") for a in prep.assertions}
+
+        def _owner(mid: str) -> str:
+            return own[mid] if mid in own else (tx.stored(mid).owner_id or "")
+
+        def _same_owner(child_owner: str, parents: List[str], who: str) -> None:
+            foreign = sorted({p for p in parents if _owner(p) != child_owner})
+            if foreign:
+                raise ProvenanceRequired(
+                    f"revision {rev.revision_id!r}: {who} (owner {child_owner!r}) is derived_from {foreign} owned by "
+                    f"{sorted({_owner(p) for p in foreign})}; lineage never crosses owners: name the message or "
+                    "artifact the knowledge came through as a source instead")
+
+        for aid, parents in derived.items():
+            _same_owner(own[aid], parents, f"memory {aid!r}")
         grounded = {aid for aid, prov in prep.effective.items() if prov.sources}
         changed = True
         while changed:
@@ -1069,6 +1086,7 @@ class MemoryGraph:
             )
         prov = rev.provenance
         parents = [_resolve(d, "the revision") for d in prov.derived_from]
+        _same_owner(rev.owner_id or "", parents, "the revision")
         if not prov.sources and not any(p in grounded or p not in prep.effective for p in parents):
             raise ProvenanceRequired(f"revision {rev.revision_id!r}: its derived_from never reaches a ledger source")
         # A revision that only closes / narrows needs a cause OUTSIDE the memories it changes: citing the closed
