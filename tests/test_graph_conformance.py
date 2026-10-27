@@ -11,6 +11,10 @@ src/abstractmemory/graph/lancedb_backend.py; each turned the named case red):
 - `_commit`: the log row written AFTER the projections                    -> test_lancedb_repair_finishes_a_half_projected_revision
 - `_apply_plan`: plain `add` instead of the keyed merge-insert on repair -> test_lancedb_repair_finishes_a_half_projected_revision
 - `revisions_page`: the `status = 'applied'` filter removed               -> test_lancedb_repair_finishes_a_half_projected_revision
+- `_rows` / `_all`: `search().where(w).limit(n)` (LanceDB 0.30 applies the limit to scalar-index matches before a
+  compound filter's residual part): NOT reproducible on a small table; verified by hand on the 20k bench's history
+  table (10,848 rows): 233 (memory, event) lookups returned [] with the limit, 0 without. The read path after a
+  compaction is exercised by test_keyed_reads_are_exact_after_compaction.
 """
 from __future__ import annotations
 
@@ -337,3 +341,14 @@ def test_lancedb_a_crash_mid_projection_is_invisible_before_repair(tmp_path: Pat
     with pytest.raises(RuntimeError):
         home.graph.apply_revision(rev("r-2", claim("x", o="ex:x")))
     assert len(home.store.query(TripleQuery(limit=0))) == len(before)
+
+
+def test_keyed_reads_are_exact_after_compaction(home) -> None:
+    """A memory with two history events, read by (memory, event) after the connector compacted and indexed its tables
+    (found by the 20k bench: LanceDB 0.30 dropped the row when the first indexed match failed the residual filter)."""
+    home.graph.apply_revision(rev("r-1", claim("m", valid_from=T(1), valid_until=T(9))))
+    home.graph.apply_revision(rev("r-2", close("m", T(12), kind="retract")))
+    if home.kind == "lancedb":
+        home.graph._b.state.compact()
+    assert home.graph.apply_revision(rev("r-3", narrow("m", T(4)))).narrowed == ["m"]  # needs memory_known("m")
+    assert [e["event"] for e in home.graph.history("m")] == ["asserted", "closed", "narrowed"]

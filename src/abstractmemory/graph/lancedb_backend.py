@@ -190,21 +190,24 @@ def _state_for(store: LanceDBTripleStore) -> _State:
 
 
 def _rows(table: Any, where: str, columns: Optional[List[str]] = None, *, limit: int) -> List[dict]:
-    q = table.search().where(where).limit(int(limit))
-    if columns:
-        q = q.select(columns)
-    return q.to_list()
+    """At most `limit` matching rows: every match (`_all`, exact) sliced; never `search().where(w).limit(n)`."""
+    return _all(table, where, columns)[: int(limit)]
 
 
 def _all(table: Any, where: str, columns: Optional[List[str]] = None) -> List[dict]:
-    """Every matching row (LanceDB's default query limit is 10: lift it). The caller bounds the filter."""
-    count = table.count_rows(where)
-    if count == 0:
-        return []
-    q = table.search().where(where).limit(int(count))
+    """Every matching row, checked against `count_rows` (exact). No `limit()` on the query: LanceDB 0.30 applies a
+    query limit to the scalar-index matches BEFORE the residual part of a compound filter, so `memory_id = X AND
+    event = 'asserted'` with `limit(1)` (or `limit(count)`) can return [] while the row exists: 233 false negatives
+    in a 10,848-row history table of the 20k bench. The callers' filters are keyed, so the match set is small."""
+    q = table.search().where(where)
     if columns:
         q = q.select(columns)
-    return q.to_list()
+    rows = q.to_list()
+    expected = table.count_rows(where)
+    if len(rows) != expected:
+        raise RuntimeError(f"LanceDB returned {len(rows)} rows for {where!r} where count_rows says {expected}: "
+                           "the connector's reads would be wrong (lancedb version behaviour changed)")
+    return rows
 
 
 def _to_assertion(row: Dict[str, Any]) -> TripleAssertion:
