@@ -256,7 +256,7 @@ def test_change_feed_is_lossless_under_a_concurrent_writer(tmp_path: Path, kind:
         for i in range(total):
             rid = f"rev-{i:04d}"
             writer.apply_revision(rev(rid, claim(f"m-{i}", o=f"ex:o{i}"),
-                                      provenance=prov(step("run-w", i))))
+                                      provenance=prov(step("run-w", i + 1))))
             written.append(rid)
             if i % 10 == 0:
                 time.sleep(0.001)
@@ -304,7 +304,7 @@ def _rich_log(graph: MemoryGraph, n_bulk: int) -> None:
         cause="maintenance", provenance=prov(derived=["a2"], actor="abstractmemory:sleep")))
     for i in range(n_bulk):
         graph.apply_revision(rev(f"bulk-{i:04d}", claim(f"bulk-{i}", s=f"ex:s{i % 7}", o=f"ex:o{i}"),
-                                 provenance=prov(step("run-bulk", i)), occurred_at=T(2, 1 + i % 27)))
+                                 provenance=prov(step("run-bulk", i + 1)), occurred_at=T(2, 1 + i % 27)))
 
 
 def _graph_dump(graph: MemoryGraph, ids) -> dict:

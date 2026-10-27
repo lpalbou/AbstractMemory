@@ -47,7 +47,9 @@ def test_each_kind_refuses_its_missing_id(kind: str, field: str) -> None:
 def test_step_seq_is_a_non_negative_int(bad) -> None:
     with pytest.raises(InvalidSourceRef, match="seq"):
         SourceRef(kind="step", run_id="run-1", seq=bad)
-    assert SourceRef(kind="step", run_id="run-1", seq=0).key() == "step:run-1#0"
+    assert SourceRef(kind="step", run_id="run-1", seq=1).key() == "step:run-1#1"
+    with pytest.raises(InvalidSourceRef):  # ledger rows are 1-based (AbstractRuntime coerce_ledger_seq)
+        SourceRef(kind="step", run_id="run-1", seq=0)
 
 
 def test_unknown_kind_unknown_key_and_foreign_field_are_refused() -> None:

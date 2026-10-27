@@ -90,8 +90,9 @@ class SourceRef:
         seq = self.seq
         if seq is not None:
             # bool is an int subclass; a ledger row address is never True/False.
-            if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
-                raise InvalidSourceRef(f"SourceRef.seq is the ledger row address, a non-negative int (got {seq!r})")
+            # 1-based: AbstractRuntime numbers ledger rows from 1 (`coerce_ledger_seq`); 0 is never a row.
+            if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+                raise InvalidSourceRef(f"SourceRef.seq is the ledger row address, a positive int (got {seq!r})")
         required, optional = _KIND_FIELDS[kind]
         for name in required:
             if getattr(self, name) is None:

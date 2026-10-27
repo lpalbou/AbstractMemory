@@ -146,7 +146,7 @@ def main() -> None:
               f"file {sum(p.stat().st_size for p in root.iterdir()) / 1e6:.1f} MB")
         plans = assert_index_plans(graph)
         R = args.repeat
-        steps = [({"kind": "step", "run_id": f"run-{r // STEPS_PER_RUN:05d}", "seq": r % STEPS_PER_RUN},)
+        steps = [({"kind": "step", "run_id": f"run-{r // STEPS_PER_RUN:05d}", "seq": r % STEPS_PER_RUN + 1},)
                  for r in (rnd.randrange(n_sourced_revs) for _ in range(R))]
         runs = [({"kind": "run", "run_id": f"run-{rnd.randrange(n_sourced_revs // STEPS_PER_RUN):05d}"},)
                 for _ in range(R)]
