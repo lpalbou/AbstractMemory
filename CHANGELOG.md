@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-*No unreleased changes.*
+### Changed
+
+- **SQLite store: owner-filtered reads use the indexes** (backlog 0058). The
+  owner filter is now `owner_id = ?` instead of `COALESCE(owner_id, '') = ?`
+  (same rows: the filter only applies to a non-empty owner, which a NULL or
+  empty stored owner never equals). A new index
+  `idx_<table>_scope_owner_observed (scope, owner_id, observed_at,
+  assertion_id)` serves "latest N in a (scope, owner)", as-of windows and
+  per-pair scans in query order without sorting the partition; reads anchored
+  on ids, a subject or an object use their own index and check scope/owner per
+  row. Existing homes gain the index when the store is opened; no row is
+  rewritten. `SQLiteTripleStore.query_plan(q)` returns SQLite's
+  `EXPLAIN QUERY PLAN` lines for a query (tests pin the plans).
 
 ## [0.3.2] - 2026-10-20
 

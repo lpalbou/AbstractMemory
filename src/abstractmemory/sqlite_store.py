@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 from .embedding_pin import (
     annotate_embed_failure,
@@ -170,6 +170,17 @@ class SQLiteTripleStore:
         # a multi-year store pays seconds). One covering index; created
         # on open, so existing homes gain it at their next process start.
         cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self._table}_object ON {self._table}(object, predicate)")
+        # PARTITION READS IN ORDER (backlog 0058): "latest N in (scope,
+        # owner)", the as-of window and the per-pair full scans read one
+        # partition newest-first. (scope, owner_id) alone forced a temp
+        # B-tree sort of the WHOLE partition (588 ms for latest-100 at 50k
+        # rows); with observed_at + the assertion_id tie-breaker in the key
+        # the partition is walked in query order and LIMIT stops the walk.
+        # Created on open: existing homes gain it at their next process
+        # start (no row is rewritten).
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{self._table}_scope_owner_observed "
+            f"ON {self._table}(scope, owner_id, observed_at, assertion_id)")
         # IN-PLACE UPGRADE (a2a 0003: the one-file home stands): pre-vector
         # homes gain the embedding column on open; their existing rows stay
         # NULL (vectorless) — the vector channel labels that at recall.
@@ -452,42 +463,7 @@ class SQLiteTripleStore:
         else:
             limit = max(1, raw_limit)
 
-        parts: List[str] = []
-        params: List[Any] = []
-
-        if q.assertion_ids:
-            placeholders = ", ".join("?" for _ in q.assertion_ids)
-            parts.append(f"assertion_id IN ({placeholders})")
-            params.extend(q.assertion_ids)
-        if q.subject:
-            parts.append("subject = ?")
-            params.append(q.subject)
-        if q.predicate:
-            parts.append("predicate = ?")
-            params.append(q.predicate)
-        if q.object:
-            parts.append("object = ?")
-            params.append(q.object)
-        if q.scope:
-            parts.append("scope = ?")
-            params.append(q.scope)
-        if q.owner_id:
-            parts.append("COALESCE(owner_id, '') = ?")
-            params.append(q.owner_id)
-        if q.since:
-            parts.append("observed_at >= ?")
-            params.append(q.since)
-        if q.until:
-            parts.append("observed_at <= ?")
-            params.append(q.until)
-        if q.active_at:
-            # valid_until is exclusive: valid_until > active_at
-            parts.append("(valid_from IS NULL OR valid_from <= ?)")
-            params.append(q.active_at)
-            parts.append("(valid_until IS NULL OR valid_until > ?)")
-            params.append(q.active_at)
-
-        where = " AND ".join(parts)
+        where, params = self._where_clause(q)
         sql = f"SELECT * FROM {self._table}"
         if where:
             sql += f" WHERE {where}"
@@ -516,16 +492,87 @@ class SQLiteTripleStore:
                 out.append(a)
             return out
 
+        sql, params = self._structured_sql(q, limit)
+        with self._lock:
+            rows = self._conn.cursor().execute(sql, params).fetchall()
+        return [self._row_to_assertion(r) for r in rows]
+
+    def _where_clause(self, q: TripleQuery) -> Tuple[str, List[Any]]:
+        """The WHERE of a query (filters only; no ordering, no limit)."""
+        parts: List[str] = []
+        params: List[Any] = []
+        # INDEX CHOICE (backlog 0058). An id / subject / object filter is the
+        # selective anchor: its own index (pk, spo, object) finds a handful
+        # of rows and scope/owner are checked per row — the unary `+` keeps
+        # the planner from preferring the (scope, owner) index, which a
+        # one-partition home matches entirely (34 ms per subject read at
+        # 50k rows). Without an anchor, scope/owner ARE the index key.
+        anchored = bool(q.assertion_ids or q.subject or q.object)
+        col = "+" if anchored else ""
+
+        if q.assertion_ids:
+            placeholders = ", ".join("?" for _ in q.assertion_ids)
+            parts.append(f"assertion_id IN ({placeholders})")
+            params.extend(q.assertion_ids)
+        if q.subject:
+            parts.append("subject = ?")
+            params.append(q.subject)
+        if q.predicate:
+            parts.append("predicate = ?")
+            params.append(q.predicate)
+        if q.object:
+            parts.append("object = ?")
+            params.append(q.object)
+        if q.scope:
+            parts.append(f"{col}scope = ?")
+            params.append(q.scope)
+        if q.owner_id:
+            # Plain equality, never COALESCE(owner_id, '') = ?: a function of
+            # the column cannot use any index on owner_id. Same rows: the
+            # filter only applies to a NON-EMPTY owner (TripleQuery maps ''
+            # to None = no owner filter), and a NULL or '' stored owner never
+            # equals a non-empty one under either form.
+            parts.append(f"{col}owner_id = ?")
+            params.append(q.owner_id)
+        if q.since:
+            parts.append("observed_at >= ?")
+            params.append(q.since)
+        if q.until:
+            parts.append("observed_at <= ?")
+            params.append(q.until)
+        if q.active_at:
+            # valid_until is exclusive: valid_until > active_at
+            parts.append("(valid_from IS NULL OR valid_from <= ?)")
+            params.append(q.active_at)
+            parts.append("(valid_until IS NULL OR valid_until > ?)")
+            params.append(q.active_at)
+        return " AND ".join(parts), params
+
+    def _structured_sql(self, q: TripleQuery, limit: Optional[int]) -> Tuple[str, List[Any]]:
+        """The non-semantic read: filters, observed_at order with the
+        assertion_id tie-breaker, optional LIMIT."""
+        where, params = self._where_clause(q)
+        sql = f"SELECT * FROM {self._table}"
+        if where:
+            sql += f" WHERE {where}"
         order_sql = "ASC" if str(q.order or "").strip().lower() == "asc" else "DESC"
         # Deterministic tie-breaker on assertion_id.
         sql += f" ORDER BY observed_at {order_sql}, assertion_id {order_sql}"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
+        return sql, params
 
+    def query_plan(self, q: TripleQuery) -> List[str]:
+        """SQLite's `EXPLAIN QUERY PLAN` detail lines for the structured
+        read `query(q)` would run (filters, order, limit; a semantic query's
+        candidate filter is the same WHERE). A measurement surface: tests pin
+        that partition and anchored reads stay on their indexes (0058)."""
+        raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
+        sql, params = self._structured_sql(q, None if raw_limit <= 0 else max(1, raw_limit))
         with self._lock:
-            rows = self._conn.cursor().execute(sql, params).fetchall()
-        return [self._row_to_assertion(r) for r in rows]
+            rows = self._conn.cursor().execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+        return [str(r[3]) for r in rows]
 
     def close_assertion(self, assertion_id: str, valid_until: str) -> bool:
         """Close one assertion's validity window IN PLACE (additive, backlog:
