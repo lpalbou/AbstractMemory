@@ -500,3 +500,41 @@ def test_narrow_compares_instants_not_strings(tmp_path: Path, kind: str) -> None
     with pytest.raises(ValueError):
         store.narrow_assertion("n1", "later")
     store.close()
+
+
+def test_replay_reproduces_an_adoption(tmp_path: Path) -> None:
+    """Review M8: an import adopts a store row written outside the graph; replaying the log into an empty home
+    reproduces the adoption (history adopted + previous_provenance) and the whole file. The graph logs the op with
+    its `adoption` note. Mutants: the logged op without the note (insert_revision(rev, ...)) -> red; the replayed
+    history reading `adopted` from the live store only (`noted = None` unless live) -> red."""
+    from abstractmemory import TripleAssertion
+    from abstractmemory.graph import RevisionOp
+
+    src = open_home(tmp_path, "sqlite", "src")
+    src.store.add([TripleAssertion(subject="ex:dana", predicate="schema:knows", object="ex:eve", scope="global",
+                                   owner_id="abstractnote", observed_at=T(1), provenance={"source": "legacy"},
+                                   assertion_id="legacy-1")])
+    stored = _row(src.store, "legacy-1").to_dict()
+    stored.pop("provenance")
+    src.graph.apply_revision(rev("imp", RevisionOp("assert", stored), cause="import", provenance=prov(art("file-1"))))
+    src.graph.apply_revision(rev("r-close", close("legacy-1", T(4))))
+    [logged, _] = src.graph.revisions()[0]
+    assert logged.ops[0].payload["adoption"] == {"previous_provenance": {"source": "legacy"}}
+    dst = open_home(tmp_path, "sqlite", "dst")
+    assert src.graph.replay_into(dst.graph) == 2
+    assert dst.graph.history("legacy-1") == src.graph.history("legacy-1")
+    assert dst.graph.history("legacy-1")[0]["detail"]["previous_provenance"] == {"source": "legacy"}
+    assert file_state(dst.path) == file_state(src.path)
+    # The note is the graph's: an ingest may not carry one, and a live adoption may not contradict the stored row.
+    with pytest.raises(ValueError, match="adoption note"):
+        dst.graph.apply_revision(rev("r-x", RevisionOp("assert", {**stored, "assertion_id": "n2", "adoption": {
+            "previous_provenance": {}}})))
+    src.store.add([TripleAssertion(subject="ex:x", predicate="ex:p", object="ex:y", assertion_id="legacy-2",
+                                   provenance={"source": "legacy"})])
+    row2 = _row(src.store, "legacy-2").to_dict()
+    row2.pop("provenance")
+    with pytest.raises(ValueError, match="differs from the stored row"):
+        src.graph.apply_revision(rev("imp-2", RevisionOp("assert", {**row2, "adoption": {
+            "previous_provenance": {"source": "made-up"}}}), cause="import", provenance=prov(art("file-2"))))
+    for h in (src, dst):
+        h.close()

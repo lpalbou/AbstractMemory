@@ -182,6 +182,9 @@ def _prepare(rev: Revision) -> _Prepared:
         aid = str(assertion.assertion_id)
         if aid in effective:
             raise ValueError(f"revision {rev.revision_id!r} asserts {aid!r} twice")
+        if payload.get("adoption") is not None and rev.cause not in ADOPTING_CAUSES:
+            raise ValueError(f"revision {rev.revision_id!r} ({rev.cause!r}) carries an adoption note on {aid!r}; "
+                             f"only {list(ADOPTING_CAUSES)} revisions adopt store rows")
         if not prov.is_grounded():
             raise ProvenanceRequired(
                 f"revision {rev.revision_id!r}: memory {aid!r} names neither ledger sources nor derived_from "
@@ -858,8 +861,10 @@ class MemoryGraph:
                 tx.set_provenance(aid, by_id[aid].provenance)
             at, rid = rev.recorded_at, rev.revision_id
             asserted: set = set()
+            logged_ops: List[RevisionOp] = []  # the ops as logged: an adoption carries its previous provenance
             for index, op in enumerate(rev.ops):
                 payload = op.payload
+                logged_ops.append(op)
                 if op.op == "assert":
                     aid = str(payload["assertion_id"])
                     asserted.add(aid)
@@ -869,14 +874,24 @@ class MemoryGraph:
                         continue
                     a, prov = by_id[aid], prep.effective[aid]
                     result.assertion_ids.append(aid)
+                    noted = (payload.get("adoption") or {}).get("previous_provenance")
+                    if aid in previous:  # a live adoption: the stored provenance is the truth; log it with the op
+                        if noted is not None and dict(noted) != previous[aid]:
+                            raise ValueError(
+                                f"revision {rid!r}: the adoption note of {aid!r} names a previous provenance that "
+                                "differs from the stored row's")
+                        logged_ops[-1] = RevisionOp("assert", {**payload, "adoption": {
+                            "previous_provenance": previous[aid]}})
+                        noted = previous[aid]
+                    # (a replayed adoption inserts the row afresh and reads its previous provenance from the note)
                     detail: Dict[str, Any] = {
                         "subject": a.subject, "predicate": a.predicate, "object": a.object,
                         "valid_from": a.valid_from, "valid_until": a.valid_until, "observed_at": a.observed_at,
                         "sources": [s.key() for s in prov.sources], "derived_from": derived[aid],
-                        "adopted": aid in previous,  # a store row written before the graph knew it: indexed now
+                        "adopted": noted is not None,  # a store row written before the graph knew it: indexed now
                     }
-                    if aid in previous:
-                        detail["previous_provenance"] = previous[aid]
+                    if noted is not None:
+                        detail["previous_provenance"] = dict(noted)
                     tx.add_history(aid, _EVENT_ASSERTED, at, rid, detail)
                     for ref in prov.sources:
                         tx.add_source(aid, ref, rid)
@@ -934,7 +949,7 @@ class MemoryGraph:
                     tx.add_history(aid, _EVENT_NARROWED, at, rid, {
                         "valid_until": payload["valid_until"], "previous_valid_until": window[1],
                         "reason": payload["reason"]})
-            seq = tx.insert_revision(rev, journal_applied=not pending)
+            seq = tx.insert_revision(replace(rev, ops=tuple(logged_ops)), journal_applied=not pending)
         if first_write_pin and pin_update is not None:
             warn_first_write_pin(pin_update)  # loud, and only once the pin is actually written
         if pending:  # the journal lives outside the store's transaction (see the module docstring)

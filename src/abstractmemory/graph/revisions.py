@@ -5,7 +5,9 @@ provenance, summary}` whose ops apply together and atomically (`MemoryGraph.appl
 idempotent on its id, and replaying the log into an empty store yields the same graph. Ops in this slice:
 
 - ``assert``: payload = `TripleAssertion.to_dict()` (assertion_id may be given; the graph assigns a deterministic
-  one otherwise, so the logged revision replays byte-identically).
+  one otherwise, so the logged revision replays byte-identically). When an `import`/`migration` revision adopts a
+  store row written outside the graph, the graph logs the op with `adoption = {"previous_provenance": {...}}` (the
+  row's provenance before adoption), so a replay reproduces the adoption's history.
 - ``close``: payload = {assertion_id, valid_until, kind, replacement_ids, reason, ripple_source, ripple_hops}; sets
   the row's window (when it is still open; a bounded window is kept) AND writes the journal closure (cause fields on
   its provenance) in the same op. A memory is closed once; a second close is skipped.
@@ -121,6 +123,11 @@ class RevisionOp:
             for key in _ASSERT_TIMES:  # absent/None stays absent (the graph fills observed_at from the revision)
                 if payload.get(key) is not None:
                     payload[key] = normalize_timestamp(payload[key], f"an 'assert' op's {key}")
+            adoption = payload.get("adoption")
+            if adoption is not None and (not isinstance(adoption, Mapping) or set(adoption) != {"previous_provenance"}
+                                         or not isinstance(adoption.get("previous_provenance"), Mapping)):
+                raise ValueError("an 'assert' op's 'adoption' is {'previous_provenance': {...}} (written by the "
+                                 f"graph when an import/migration adopts a store row; got {adoption!r})")
             TripleAssertion.from_dict(payload)  # validates terms; raises on a malformed claim
         elif op == "close":
             payload = _normalize_close(self.payload)
