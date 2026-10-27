@@ -18,6 +18,8 @@ __all__ = [
     "ROW_NORM_RANGE",
     "SUBSET_SHARE",
     "SYNC_FETCH_ROWS",
+    "VECTOR_MATRIX_GROWTH",
+    "VECTOR_MATRIX_MIN_ROWS",
     "VECTOR_UPGRADE_BATCH",
 ]
 
@@ -43,6 +45,16 @@ SUBSET_SHARE = 0.25
 EXACT_CHUNK_ROWS = 4096
 # Rows per fetch while (re)building or appending the matrix from SQLite.
 SYNC_FETCH_ROWS = 4096
+# PER-PROCESS FOOTPRINT of the matrix cache (one per store handle that ran a semantic query), held for the
+# handle's life: rows x dims x 4 B (float32) + rows x 17 B (inverse norm 8, scope code 4, owner code 4, forced flag
+# 1) + the id list and position dict (~150 B per row in CPython). 200k rows x 1024 dims = 819 MB + 3 MB + ~30 MB;
+# 50k x 384 = 77 MB. Every process (gateway worker, entity loop) that queries the same home pays it once more.
+# A (re)build reserves exactly the vector rows the table holds (one COUNT); later appends grow the arrays by at
+# most this share (no doubling: at 200k x 1024 doubling held 1074 MB for 819 MB of vectors, and a growth step
+# briefly holds old + new), never less than what the append needs.
+VECTOR_MATRIX_GROWTH = 0.10
+# Smallest allocation (rows): a tiny home does not regrow on every append.
+VECTOR_MATRIX_MIN_ROWS = 1024
 # Ids per `assertion_id IN (...)` read of the ranked rows (old SQLite builds
 # cap bound variables at 999).
 ID_FETCH_CHUNK = 500

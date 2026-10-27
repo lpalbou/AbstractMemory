@@ -82,7 +82,10 @@ change of understanding, can be reconstructed from the ledger.
    scope: 7.0 s at 50k rows, against 0.6 s on SQLite before backlog 0058); its batch adds are faster (65 vs 381 us
    per row at 50k). The SQLite home work (0056, 0058) stands either way: entity homes use it, and options (a) and
    (b) both keep it as the graph's store. The one-way vector re-encoding of 0.4.0 (CHANGELOG) applies to SQLite
-   homes and is unaffected.
+   homes and is unaffected. Memory cost of the SQLite vector path, per process that queries a home (a gateway
+   worker, an entity loop): rows x dims x 4 B for the float32 matrix plus about 170 B per row of bookkeeping
+   (`store_tuning.py`); 200k rows x 1024 dims = about 850 MB held per process, measured 424 MB at 100k x 1024
+   (architect review C2). This figure is an input to the decision.
 
 ### B. The units of the graph
 

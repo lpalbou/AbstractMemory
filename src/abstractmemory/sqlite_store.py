@@ -763,11 +763,18 @@ class SQLiteTripleStore:
             return None
         cur = self._conn.cursor()
         token = self._vector_token(cur)
+        top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
         matrix = self._vectors
         if matrix is None or matrix.token != token:
+            # Drop the old matrix BEFORE building the new one (a rebuild never holds two), and reserve exactly
+            # the vector rows the table holds (no growth copies during the build; store_tuning.py footprint).
+            self._vectors = matrix = None
             matrix = VectorMatrix(token)
+            if top is not None:
+                matrix.size_hint = int(cur.execute(
+                    f"SELECT COUNT(*) FROM {self._table} WHERE rowid <= ? AND embedding IS NOT NULL",
+                    (int(top),)).fetchone()[0])
             self._vectors = matrix
-        top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
         if top is not None and int(top) > matrix.high_water:
             rows = cur.execute(
                 f"SELECT rowid, assertion_id, scope, owner_id, embedding FROM {self._table} "

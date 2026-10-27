@@ -59,6 +59,8 @@ from .store_tuning import (  # re-exported; the constants live in one place
     ROW_NORM_RANGE,
     SUBSET_SHARE,
     SYNC_FETCH_ROWS,
+    VECTOR_MATRIX_GROWTH,
+    VECTOR_MATRIX_MIN_ROWS,
     VECTOR_UPGRADE_BATCH,
 )
 
@@ -187,7 +189,11 @@ class VectorMatrix:
         # Rows handed to `append` so far, i.e. read from the table (a
         # test/diagnostic counter: appends are O(new rows), never a rescan).
         self.rows_read = 0
+        # Array allocations so far (diagnostic: a build that reserved its rows allocates once).
+        self.allocations = 0
         self._capacity = 0
+        # Rows the first allocation reserves (the store sets it to the table's vector row count before a build).
+        self.size_hint = 0
         self._matrix = np.zeros((0, 0), dtype=np.float32)
         self._inv_norm = np.zeros(0, dtype=np.float64)
         self._forced = np.zeros(0, dtype=bool)
@@ -301,7 +307,11 @@ class VectorMatrix:
         if needed <= self._capacity:
             return
         np = _np
-        capacity = max(needed, self._capacity * 2, 1024)
+        if self._capacity == 0:  # the first allocation: what the build will hold (no regrowth during it)
+            capacity = max(needed, int(self.size_hint), VECTOR_MATRIX_MIN_ROWS)
+        else:  # later appends: at most +VECTOR_MATRIX_GROWTH, never less than needed (store_tuning.py)
+            capacity = max(needed, self._capacity + int(self._capacity * VECTOR_MATRIX_GROWTH))
+        self.allocations += 1
         matrix = np.zeros((capacity, int(self.dim or 0)), dtype=np.float32)
         if self.size:
             matrix[: self.size] = self._matrix[: self.size]
