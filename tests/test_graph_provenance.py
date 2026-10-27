@@ -149,6 +149,7 @@ def test_from_legacy_reads_a_graph_shaped_dict() -> None:
 # Graph-level mutants (applied by hand to src/abstractmemory/graph/graph.py; each turned the named test red):
 # - `_prepare`: the per-memory `is_grounded()` refusal removed                -> test_a_write_with_neither_sources_nor_lineage_is_refused[*]
 # - `_prepare`: the revision-level `is_grounded()` refusal removed            -> test_a_revision_must_itself_be_grounded[*]
+# - `_validate`: the close/narrow-only "cause outside its targets" rule removed -> test_a_revision_must_itself_be_grounded[*]
 # - `_validate`: the fixpoint seeds every in-revision memory as grounded      -> test_a_derived_chain_that_never_reaches_a_source_is_refused[*]
 # - `_validate._resolve`: an unknown id resolves to itself                    -> test_a_derived_chain_that_never_reaches_a_source_is_refused[*]
 # - `_adopt`: the cause gate removed                                         -> test_a_store_row_written_outside_the_graph_must_be_adopted_first[*]
@@ -209,8 +210,12 @@ def test_a_revision_must_itself_be_grounded(home) -> None:
         home.graph.apply_revision(rev("r-x", close("base", T(3)), provenance=prov(actor="abstractnote")))
     with pytest.raises(ProvenanceRequired, match="not a memory of this graph"):
         home.graph.apply_revision(rev("r-x", close("base", T(3)), provenance=prov(derived=["ghost"])))
+    # Review M7: a close/narrow-only revision derived ONLY from the memory it closes names no cause at all.
+    with pytest.raises(ProvenanceRequired, match="other than the ones it changes"):
+        home.graph.apply_revision(rev("r-x", close("base", T(3)), provenance=prov(derived=["base"], actor="person")))
     assert home_state(home) == before
-    ok = home.graph.apply_revision(rev("r-ok", close("base", T(3)), provenance=prov(derived=["base"], actor="person")))
+    home.graph.apply_revision(rev("r-why", claim("why", o="ex:why"), provenance=prov(step("run-1", 5))))
+    ok = home.graph.apply_revision(rev("r-ok", close("base", T(3)), provenance=prov(derived=["why"], actor="person")))
     assert ok.closed == ["base"]
 
 

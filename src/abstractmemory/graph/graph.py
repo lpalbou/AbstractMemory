@@ -1015,6 +1015,14 @@ class MemoryGraph:
         parents = [_resolve(d, "the revision") for d in prov.derived_from]
         if not prov.sources and not any(p in grounded or p not in prep.effective for p in parents):
             raise ProvenanceRequired(f"revision {rev.revision_id!r}: its derived_from never reaches a ledger source")
+        # A revision that only closes / narrows needs a cause OUTSIDE the memories it changes: citing the closed
+        # memory as the reason for closing it names no ledger cause at all.
+        if not prov.sources and all(op.op in ("close", "narrow") for op in rev.ops):
+            targets = {op.payload["assertion_id"] for op in rev.ops}
+            if not [p for p in parents if p not in targets]:
+                raise ProvenanceRequired(
+                    f"revision {rev.revision_id!r} only closes/narrows {sorted(targets)} and is derived only from "
+                    "them: name a ledger source, or a memory other than the ones it changes, as its cause")
         return derived
 
     def repair(self, *, limit: int = MAX_READ_LIMIT) -> int:
