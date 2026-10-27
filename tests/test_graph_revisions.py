@@ -134,7 +134,10 @@ def test_a_revision_is_idempotent_on_its_id(home) -> None:
     before = home_state(home)
     again = home.graph.apply_revision(rev("r-2", close("a-open", T(5)), claim("e-1", o="ex:e")))
     assert (again.applied, again.seq) == (False, first.seq)
-    assert again.assertion_ids == [] and again.closed == []
+    # Architect A5: a retried step learns what its revision did (read back from the log's history rows).
+    # Mutant: _already_applied returning empty lists -> red.
+    assert (again.assertion_ids, again.closed, again.recorded_at) == (first.assertion_ids, first.closed,
+                                                                     first.recorded_at) == (['e-1'], ['a-open'], first.recorded_at)
     # Same id, different content: the first write wins (the id is the identity), nothing changes.
     other = home.graph.apply_revision(rev("r-2", claim("e-2", o="ex:other")))
     assert other.applied is False

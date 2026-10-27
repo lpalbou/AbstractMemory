@@ -46,16 +46,19 @@ def expected_plans(graph: MemoryGraph) -> Dict[str, List[str]]:
         "with_run": [f"idx_{b.t_prov}_run_id (run_id=?)"],
         "revisions_page": ["INTEGER PRIMARY KEY (rowid>?)"],
         "log_head": [f"SEARCH {b.t_rev}"],
+        "revision_events": [f"idx_{b.t_hist}_revision (revision_id=?)"],
+        "revision_row": [f"{rev_uq} (revision_id=?)"],
         # the owner gate (architect B6): one probe of a covering (key, owner) index, whatever the fan-out
         "names_ref_key": [f"COVERING INDEX idx_{b.t_prov}_ref_owner (ref_key=? AND owner_id=?)"],
         "names_ref_run": [f"COVERING INDEX idx_{b.t_prov}_run_owner (run_id=? AND owner_id=?)"],  # MAX(seq) on the integer primary key: one b-tree descent
         "pending_journal": [f"USING INDEX idx_{b.t_rev}_pending"],
-        "closed_payload": [hist_ix],
+        "closed_payload": [f"USING INDEX idx_{b.t_hist}_"],  # (memory_id) or (revision_id): both bound the rows
     }
 
 
 #: Reads that walk many rows in order: the index must deliver that order (no sort of the matches).
-ORDERED_WALKS = ("history", "children", "with_ref_key", "with_run", "revisions_page", "pending_journal")
+ORDERED_WALKS = ("history", "children", "with_ref_key", "with_run", "revisions_page", "pending_journal",
+                 "revision_events")
 
 
 def plan_of(graph: MemoryGraph, name: str) -> str:

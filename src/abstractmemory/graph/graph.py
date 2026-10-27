@@ -369,6 +369,8 @@ class _SQLiteBackend:
             "names_ref_run": f"SELECT 1 FROM {p} WHERE run_id = ? AND owner_id IN ({{marks}}) LIMIT 1",
             "revisions_page": f"SELECT * FROM {r} WHERE seq > ? ORDER BY seq LIMIT ?",
             "log_head": f"SELECT MAX(seq) FROM {r}",
+            "revision_events": f"SELECT memory_id, event FROM {h} WHERE revision_id = ? ORDER BY seq",
+            "revision_row": f"SELECT seq, recorded_at FROM {r} WHERE revision_id = ?",
             "pending_journal": f"SELECT * FROM {r} WHERE journal_applied = 0 ORDER BY seq LIMIT ?",
             "closed_payload": (f"SELECT detail_json FROM {h} WHERE memory_id = ? AND revision_id = ? AND event = ? "
                                "LIMIT 1"),
@@ -388,7 +390,8 @@ class _SQLiteBackend:
             # transaction runs (a reader needs no write lock and never waits behind a writer).
             expected = (self.t_rev, self.t_prov, self.t_der, self.t_hist, f"idx_{self.t_prov}_ref_key",
                         f"idx_{self.t_prov}_run_id", f"idx_{self.t_der}_from", f"idx_{self.t_hist}_memory",
-                        f"idx_{self.t_rev}_pending", f"idx_{self.t_prov}_ref_owner", f"idx_{self.t_prov}_run_owner")
+                        f"idx_{self.t_rev}_pending", f"idx_{self.t_prov}_ref_owner", f"idx_{self.t_prov}_run_owner",
+                        f"idx_{self.t_hist}_revision")
             marks = ", ".join("?" for _ in expected)
             present = cur.execute(f"SELECT COUNT(*) FROM sqlite_master WHERE name IN ({marks})", expected).fetchone()
             prov_cols = {r[1] for r in cur.execute(f"PRAGMA table_info({self.t_prov})").fetchall()}
@@ -431,6 +434,8 @@ class _SQLiteBackend:
                     "seq INTEGER PRIMARY KEY AUTOINCREMENT, memory_id TEXT NOT NULL, event TEXT NOT NULL, "
                     "at TEXT NOT NULL, revision_id TEXT NOT NULL, detail_json TEXT NOT NULL)")
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_hist}_memory ON {self.t_hist}(memory_id, seq)")
+                # what one revision did, in order (a replayed apply reports it; bounded by the revision's ops)
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_hist}_revision ON {self.t_hist}(revision_id, seq)")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -520,6 +525,11 @@ class _SQLiteBackend:
     def log_head(self) -> int:
         row = self._read(self.sql["log_head"], ())[0]
         return int(row[0] or 0)
+
+    def logged_outcome(self, rid: str) -> Tuple[Optional[str], List[Tuple[str, str]]]:
+        rows = self._read(self.sql["revision_row"], (rid,))
+        events = self._read(self.sql["revision_events"], (rid,))
+        return (rows[0]["recorded_at"] if rows else None), [(e[0], e[1]) for e in events]
 
     def pending_journal(self, limit: int) -> List[Revision]:
         rows = self._read(self.sql["pending_journal"], (limit,))
@@ -840,6 +850,12 @@ class _MemoryBackend:
         with self._lock:
             return len(self.revisions)
 
+    def logged_outcome(self, rid: str) -> Tuple[Optional[str], List[Tuple[str, str]]]:
+        with self._lock:
+            entry = self.rev_by_id.get(rid)
+            return ((entry["revision"].recorded_at if entry else None),
+                    [(h["memory_id"], h["event"]) for h in self.hist if h["revision_id"] == rid])
+
     def pending_journal(self, limit: int) -> List[Revision]:
         with self._lock:
             return [e["revision"] for e in self.revisions if not e["journal_applied"]][:limit]
@@ -920,14 +936,14 @@ class MemoryGraph:
         rev = prep.revision
         seq = self._b.applied_seq(rev.revision_id)
         if seq is not None:  # a replay: nothing to embed, nothing to write
-            return RevisionResult(revision_id=rev.revision_id, applied=False, seq=seq)
+            return self._already_applied(rev.revision_id, seq)
         rows, pin_update, first_write_pin = self._b.prepare_rows(prep.assertions)  # embedding, outside the tx
         pending: List[ClosureRecord] = []
         result = RevisionResult(revision_id=rev.revision_id, applied=True)
         with self._b.transaction() as tx:
             seq = tx.revision_seq(rev.revision_id)
             if seq is not None:  # a concurrent apply of the same id won the race
-                return RevisionResult(revision_id=rev.revision_id, applied=False, seq=seq)
+                return self._already_applied(rev.revision_id, seq)
             if not replay:  # the store's clock, read under the write lock: record time follows the log order
                 rev = replace(rev, recorded_at=utc_now_iso_seconds())
             derived = self._validate(tx, prep)
@@ -1083,6 +1099,19 @@ class MemoryGraph:
                 self._journal.append_closure(closure)
             self._b.mark_journal_applied(rev.revision_id)
         return replace(result, seq=seq)
+
+    def _already_applied(self, rid: str, seq: int) -> RevisionResult:
+        """The outcome of a revision already in the log, read back from its history rows (architect A5): a retried
+        step learns the memories its revision asserted, re-observed, closed and narrowed."""
+        recorded_at, events = self._b.logged_outcome(rid)
+        lists: Dict[str, List[str]] = {_EVENT_ASSERTED: [], _EVENT_REOBSERVED: [], _EVENT_CLOSED: [],
+                                       _EVENT_NARROWED: []}
+        for mid, event in events:
+            if event in lists and mid not in lists[event]:
+                lists[event].append(mid)
+        return RevisionResult(revision_id=rid, applied=False, seq=seq, recorded_at=recorded_at,
+                              assertion_ids=lists[_EVENT_ASSERTED], re_observed=lists[_EVENT_REOBSERVED],
+                              closed=lists[_EVENT_CLOSED], narrowed=lists[_EVENT_NARROWED])
 
     @staticmethod
     def _adopt(tx: Any, rev: Revision, by_id: Mapping[str, TripleAssertion],
