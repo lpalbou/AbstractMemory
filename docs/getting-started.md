@@ -155,6 +155,34 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 The loop above is the whole contract: **form → reconstruct → commit**. Reconstruction is a pure read; `commit_selection` is the only path that strengthens memories (usage trails and co-use associations). Records rendered from short-term standing or from the identity core are present but do not deposit — presence is not use.
 
+## 7) The memory graph: revisions with ledger provenance
+
+A mind written by several applications goes through `MemoryGraph`: every change is a `Revision` (applied atomically and once per id), and every memory names where it came from in the runtime's ledger.
+
+```python
+from abstractmemory import SQLiteJournal, SQLiteTripleStore
+from abstractmemory.graph import MemoryGraph, Revision, RevisionOp
+
+store = SQLiteTripleStore("mind.sqlite3")
+graph = MemoryGraph(store, SQLiteJournal("mind.sqlite3"))   # journal in the same file: one transaction
+
+graph.apply_revision(Revision(
+    revision_id="note-1-extract", scope="global", owner_id="person:ada", cause="ingest",
+    occurred_at="2026-01-05T09:00:00Z",
+    ops=[RevisionOp("assert", {"assertion_id": "c1", "subject": "ex:dana",
+                               "predicate": "schema:worksFor", "object": "ex:acme",
+                               "valid_from": "2026-01-01T00:00:00Z"})],
+    provenance={"sources": [{"kind": "step", "run_id": "run-42", "seq": 3},
+                            {"kind": "artifact", "artifact_id": "note-1-body"}],
+                "actor": "abstractnote"},
+))
+graph.history("c1")                                         # asserted, by which revision, with its cause
+graph.sources_of("c1")                                      # the step and the artifact
+graph.derived_from_source({"kind": "run", "run_id": "run-42"})   # ["c1"]
+```
+
+A write that names neither a source nor a memory it was derived from raises `ProvenanceRequired`. The full surface (close, narrow, re-observation, the change feed, replay, connectors): [`api.md`](api.md#the-memory-graph-revisions-and-provenance).
+
 From here:
 
 - The cognitive model (how working memory emerges, attention, valence, dreams): [`memory-system.md`](memory-system.md)
