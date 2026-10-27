@@ -257,9 +257,9 @@ class _SQLiteTx:
             f"SELECT valid_from, valid_until FROM {self.b.table} WHERE assertion_id = ?", (aid,)).fetchone()
         return (row[0], row[1]) if row else None
 
-    def close_row(self, aid: str, until: str) -> bool:
-        self.cur.execute(
-            f"UPDATE {self.b.table} SET valid_until = ? WHERE assertion_id = ? AND valid_until IS NULL", (until, aid))
+    def end_row(self, aid: str, until: str) -> bool:
+        """Set the row's end (the caller decided it moves: open, or later than `until`)."""
+        self.cur.execute(f"UPDATE {self.b.table} SET valid_until = ? WHERE assertion_id = ?", (until, aid))
         return int(self.cur.rowcount or 0) > 0
 
     def narrow_row(self, aid: str, until: str) -> bool:
@@ -601,8 +601,14 @@ class _MemoryTx:
             self.undo.append(lambda: row.__setitem__("assertion", before))
         return changed
 
-    def close_row(self, aid: str, until: str) -> bool:
-        return self._mutate(aid, lambda: self.b.store.close_assertion(aid, until))
+    def end_row(self, aid: str, until: str) -> bool:
+        row = self._row(aid)
+        if row is None or not isinstance(row.get("assertion"), TripleAssertion):
+            return False
+        before = row["assertion"]
+        row["assertion"] = replace(before, valid_until=until)
+        self.undo.append(lambda: row.__setitem__("assertion", before))
+        return True
 
     def narrow_row(self, aid: str, until: str) -> bool:
         return self._mutate(aid, lambda: self.b.store.narrow_assertion(aid, until))
@@ -881,24 +887,30 @@ class MemoryGraph:
                         f"revision {rid!r}: a {op.op!r} op ends {aid!r} at {payload['valid_until']}, before its "
                         f"valid_from {window[0]} (the window would invert)")
                 if op.op == "close":
-                    # A memory is closed ONCE through the graph. An open window is closed at the op's valid_until;
-                    # a window the claim was asserted with (or narrowed to) stays as it is, but the close still
-                    # records its cause and writes the closure (a retracted "until June" claim must leave ranked
-                    # retrieval too); the history detail says which (`window_closed`, `row_valid_until`).
+                    # A memory is closed ONCE through the graph. The row's end becomes min(current end, the op's
+                    # valid_until), compared as instants: an open window closes at valid_until; a window that would
+                    # still run past the close ("valid until December", retracted in March) ends at the close, so
+                    # TripleQuery(active_at=) and ranked recall (the closure) agree after it (ADR 0003 decision 7);
+                    # an end already at or before the close is kept. The closure is written in every case. The
+                    # history detail records the previous end, the end now on the row and whether it moved.
                     earlier = tx.closing_revision(aid)
                     if earlier is not None:
                         result.skipped.append({"op": "close", "index": index, "assertion_id": aid,
                                                "why": f"already closed by revision {earlier!r}"})
                         continue
-                    window_closed = tx.close_row(aid, payload["valid_until"])
+                    current_end = window[1]
+                    window_closed = (current_end is None
+                                     or _instant(current_end) > _instant(payload["valid_until"]))
+                    if window_closed:
+                        tx.end_row(aid, payload["valid_until"])
                     closure = _closure_record(rev, payload)
                     if self._journal is not None and not tx.write_closure(closure):
                         pending.append(closure)
                     result.closed.append(aid)
                     tx.add_history(aid, _EVENT_CLOSED, at, rid, {
                         **payload, "closure_id": closure.closure_id if self._journal is not None else None,
-                        "window_closed": window_closed,
-                        "row_valid_until": payload["valid_until"] if window_closed else window[1]})
+                        "window_closed": window_closed, "previous_valid_until": current_end,
+                        "row_valid_until": payload["valid_until"] if window_closed else current_end})
                 else:  # narrow (raises ValueError on an open window: the whole revision rolls back)
                     if not tx.narrow_row(aid, payload["valid_until"]):
                         result.skipped.append({"op": "narrow", "index": index, "assertion_id": aid,

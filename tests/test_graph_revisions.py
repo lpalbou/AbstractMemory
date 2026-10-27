@@ -11,7 +11,8 @@ Mutants (each applied by hand to src/abstractmemory/graph/graph.py, the named te
 - `apply_revision`: the in-transaction `revision_seq` idempotency check AND the pre-check removed
                                                                                -> test_a_revision_is_idempotent_on_its_id[*]
 - `apply_revision`: the `close` branch's `tx.write_closure`/pending append removed -> test_close_writes_the_window_and_the_closure_together[*]
-- `_SQLiteTx.close_row`: UPDATE removed (returns True)                         -> test_close_writes_the_window_and_the_closure_together[sqlite*]
+- `_SQLiteTx.end_row`: UPDATE removed (returns True)                           -> test_close_writes_the_window_and_the_closure_together[sqlite*]
+- `apply_revision` close: only an OPEN window is ended (the pre-review rule)    -> test_a_close_ends_a_window_that_runs_past_it[*]
 - `apply_revision`: `closing_revision` skip removed (a second close writes a second closure)
                                                                                -> test_a_memory_is_closed_once_and_a_bounded_window_is_kept[*]
 - `_SQLiteBackend.revisions_page`: `seq > ?` -> `seq >= ?`                     -> test_change_feed_is_lossless_under_a_concurrent_writer[sqlite]
@@ -190,6 +191,22 @@ def test_close_writes_the_window_and_the_closure_together(home) -> None:
     assert result.closed == ["a-open"]
     if home.kind == "sqlite":  # one file, one transaction: nothing awaits repair
         assert home.graph.repair() == 0
+
+
+def test_a_close_ends_a_window_that_runs_past_it(home) -> None:
+    """A claim asserted "valid until December" and retracted in March: ranked recall drops it (the closure), so
+    TripleQuery(active_at=June) must not return it either (ADR 0003 decision 7; review M1)."""
+    home.graph.apply_revision(rev("r-1", claim("dec", valid_from=T(1), valid_until=T(12))))
+    result = home.graph.apply_revision(rev("r-2", close("dec", T(3), kind="retract", reason="never true"),
+                                           occurred_at=T(3)))
+    assert result.closed == ["dec"]
+    assert _row(home.store, "dec").valid_until == T(3)
+    assert "dec" not in {a.assertion_id for a in home.store.query(TripleQuery(active_at=T(6), limit=0))}
+    assert "dec" in {a.assertion_id for a in home.store.query(TripleQuery(active_at=T(2), limit=0))}
+    assert "dec" in closure_exclusions(home.journal, max(c.seq for c in home.journal.closures(limit=0)))
+    [_, closed] = home.graph.history("dec")
+    assert closed["detail"]["window_closed"] is True
+    assert (closed["detail"]["previous_valid_until"], closed["detail"]["row_valid_until"]) == (T(12), T(3))
 
 
 def test_a_memory_is_closed_once_and_a_bounded_window_is_kept(home) -> None:
