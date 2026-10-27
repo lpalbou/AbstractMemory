@@ -560,6 +560,64 @@ class SQLiteTripleStore:
                 raise
         return changed
 
+    def narrow_assertion(self, assertion_id: str, valid_until: str) -> bool:
+        """Move an already-CLOSED validity window EARLIER, in place (ADR 0003
+        decision 7; the `narrow` op of a revision, `abstractmemory.graph`).
+
+        True when the row's `valid_until` was later than `valid_until` and is
+        now set to it. False for an unknown id, or a window already at or
+        before `valid_until` (idempotent replays: a retrospective note placed
+        after a later, narrower one changes nothing). Raises ValueError for an
+        OPEN row (valid_until NULL): narrowing an open window would be a
+        close (or, read the other way, a widening of a window the writer
+        never closed), and closing is `close_assertion`'s job. Like
+        `close_assertion`, only `valid_until` moves: terms, provenance,
+        attributes, the FTS row and the vector are untouched. The journal is
+        not written here: the revision that carries the op records it."""
+        rid, until = self._narrow_args(assertion_id, valid_until)
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                changed = self._narrow_on(cur, self._table, rid, until)
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+        return changed
+
+    @staticmethod
+    def _narrow_args(assertion_id: str, valid_until: str) -> tuple:
+        rid = str(assertion_id or "").strip()
+        until = str(valid_until or "").strip()
+        if not rid:
+            raise ValueError("narrow_assertion requires an assertion_id")
+        if not until:
+            raise ValueError("narrow_assertion requires a valid_until timestamp")
+        return rid, until
+
+    @staticmethod
+    def _narrow_on(cur: sqlite3.Cursor, table: str, rid: str, until: str) -> bool:
+        """narrow_assertion's statement on a caller-owned transaction (the
+        revision apply in `abstractmemory.graph` runs it inside its own)."""
+        row = cur.execute(
+            f"SELECT valid_until FROM {table} WHERE assertion_id = ?", (rid,)
+        ).fetchone()
+        if row is None:
+            return False
+        current = row[0]
+        if current is None or not str(current).strip():
+            raise ValueError(
+                f"narrow_assertion cannot widen or close an open window ({rid!r} has no valid_until); "
+                "close it with close_assertion (the `close` op of a revision)"
+            )
+        if str(current) <= until:
+            return False
+        cur.execute(
+            f"UPDATE {table} SET valid_until = ? WHERE assertion_id = ?", (until, rid)
+        )
+        return int(cur.rowcount or 0) > 0
+
     def replace_vectors(
         self, vectors: dict, pin: dict, *,
         expected_row_count: int, embedder: Optional[TextEmbedder] = None,

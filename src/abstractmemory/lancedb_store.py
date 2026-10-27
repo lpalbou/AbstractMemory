@@ -136,6 +136,11 @@ class LanceDBTripleStore:
         # LanceDB tables/connections are managed by the library; nothing required here.
         return None
 
+    def narrow_assertion(self, assertion_id: str, valid_until: str) -> bool:
+        """Not supported: this store has no in-place window update (nor
+        `close_assertion`); the one home store of ADR 0003 is SQLite."""
+        raise NotImplementedError("narrow_assertion: LanceDB store; see backlog 0057")
+
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
         rows: list[dict[str, Any]] = []
         ids: List[str] = []

@@ -135,6 +135,35 @@ class InMemoryTripleStore:
                 return True
         return False
 
+    def narrow_assertion(self, assertion_id: str, valid_until: str) -> bool:
+        """Move an already-CLOSED window EARLIER in place (SQLite parity, ADR
+        0003 decision 7): True when the row's valid_until was later and is now
+        `valid_until`; False for an unknown id or a window already at or
+        before it; ValueError for an OPEN row (that would be a close)."""
+        rid = str(assertion_id or "").strip()
+        until = str(valid_until or "").strip()
+        if not rid:
+            raise ValueError("narrow_assertion requires an assertion_id")
+        if not until:
+            raise ValueError("narrow_assertion requires a valid_until timestamp")
+        with self._lock:
+            for row in self._rows:
+                if row.get("assertion_id") != rid:
+                    continue
+                a = row.get("assertion")
+                if not isinstance(a, TripleAssertion):
+                    return False
+                if a.valid_until is None:
+                    raise ValueError(
+                        f"narrow_assertion cannot widen or close an open window ({rid!r} has no valid_until); "
+                        "close it with close_assertion (the `close` op of a revision)"
+                    )
+                if a.valid_until <= until:
+                    return False
+                row["assertion"] = replace(a, valid_until=until)
+                return True
+        return False
+
     def close(self) -> None:
         return None
 
