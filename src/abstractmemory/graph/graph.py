@@ -197,18 +197,14 @@ class _SQLiteTx:
         self.b, self.cur = backend, cur
 
     def revision_seq(self, rid: str) -> Optional[int]:
-        row = self.cur.execute(f"SELECT seq FROM {self.b.t_rev} WHERE revision_id = ?", (rid,)).fetchone()
+        row = self.cur.execute(self.b.sql["revision_seq"], (rid,)).fetchone()
         return int(row[0]) if row else None
 
     def memory_known(self, mid: str) -> bool:
-        return self.cur.execute(
-            f"SELECT 1 FROM {self.b.t_hist} WHERE memory_id = ? AND event = ? LIMIT 1", (mid, _EVENT_ASSERTED)
-        ).fetchone() is not None
+        return self.cur.execute(self.b.sql["memory_known"], (mid, _EVENT_ASSERTED)).fetchone() is not None
 
     def closing_revision(self, mid: str) -> Optional[str]:
-        row = self.cur.execute(
-            f"SELECT revision_id FROM {self.b.t_hist} WHERE memory_id = ? AND event = ? ORDER BY seq LIMIT 1",
-            (mid, _EVENT_CLOSED)).fetchone()
+        row = self.cur.execute(self.b.sql["closing_revision"], (mid, _EVENT_CLOSED)).fetchone()
         return str(row[0]) if row else None
 
     def digest_assertion_for(self, graph_id: str) -> Optional[str]:
@@ -313,6 +309,24 @@ class _SQLiteBackend:
         self.t_rev, self.t_prov = f"{prefix}revisions", f"{prefix}provenance"
         self.t_der, self.t_hist = f"{prefix}derivations", f"{prefix}history"
         self.same_file_journal = isinstance(journal, SQLiteJournal) and _same_file(store._path, journal._path)
+        h, p, d, r = self.t_hist, self.t_prov, self.t_der, self.t_rev
+        # Every keyed read of the graph, in one place, so tests/test_graph_performance.py EXPLAINs the exact SQL
+        # that runs (each must be an index search; a dropped index turns its plan into a SCAN).
+        self.sql: Dict[str, str] = {
+            "revision_seq": f"SELECT seq FROM {r} WHERE revision_id = ?",
+            "memory_known": f"SELECT 1 FROM {h} WHERE memory_id = ? AND event = ? LIMIT 1",
+            "closing_revision": f"SELECT revision_id FROM {h} WHERE memory_id = ? AND event = ? ORDER BY seq LIMIT 1",
+            "history": (f"SELECT h.event, h.at, h.revision_id, h.detail_json, r.cause FROM {h} h "
+                        f"JOIN {r} r ON r.revision_id = h.revision_id WHERE h.memory_id = ? ORDER BY h.seq LIMIT ?"),
+            "sources": f"SELECT ref_json FROM {p} WHERE memory_id = ? ORDER BY rowid LIMIT ?",
+            "parents": f"SELECT from_id FROM {d} WHERE memory_id = ? ORDER BY rowid LIMIT ?",
+            "children": f"SELECT memory_id FROM {d} WHERE from_id = ? ORDER BY rowid LIMIT ?",
+            "with_ref_key": f"SELECT memory_id FROM {p} WHERE ref_key = ? ORDER BY rowid LIMIT ?",
+            "with_run": f"SELECT memory_id FROM {p} WHERE run_id = ? ORDER BY rowid",
+            "revisions_page": f"SELECT * FROM {r} WHERE seq > ? ORDER BY seq LIMIT ?",
+            "closed_payload": (f"SELECT detail_json FROM {h} WHERE memory_id = ? AND revision_id = ? AND event = ? "
+                               "LIMIT 1"),
+        }
         self._ensure_graph_schema()
 
     def _ensure_graph_schema(self) -> None:
@@ -386,38 +400,30 @@ class _SQLiteBackend:
             return aid if aid and tx.memory_known(aid) else None
 
     def history(self, mid: str, limit: int) -> List[Dict[str, Any]]:
-        rows = self._read(
-            f"SELECT h.event, h.at, h.revision_id, h.detail_json, r.cause FROM {self.t_hist} h "
-            f"JOIN {self.t_rev} r ON r.revision_id = h.revision_id WHERE h.memory_id = ? ORDER BY h.seq LIMIT ?",
-            (mid, limit))
+        rows = self._read(self.sql["history"], (mid, limit))
         return [{"event": r["event"], "at": r["at"], "revision_id": r["revision_id"], "cause": r["cause"],
                  "detail": json.loads(r["detail_json"])} for r in rows]
 
     def sources(self, mid: str, limit: int) -> List[SourceRef]:
-        rows = self._read(
-            f"SELECT ref_json FROM {self.t_prov} WHERE memory_id = ? ORDER BY rowid LIMIT ?", (mid, limit))
+        rows = self._read(self.sql["sources"], (mid, limit))
         return [SourceRef.from_dict(json.loads(r[0])) for r in rows]
 
     def parents(self, mid: str, limit: int) -> List[str]:
-        return [r[0] for r in self._read(
-            f"SELECT from_id FROM {self.t_der} WHERE memory_id = ? ORDER BY rowid LIMIT ?", (mid, limit))]
+        return [r[0] for r in self._read(self.sql["parents"], (mid, limit))]
 
     def children(self, fid: str, limit: int) -> List[str]:
-        return [r[0] for r in self._read(
-            f"SELECT memory_id FROM {self.t_der} WHERE from_id = ? ORDER BY rowid LIMIT ?", (fid, limit))]
+        return [r[0] for r in self._read(self.sql["children"], (fid, limit))]
 
     def with_ref(self, ref: SourceRef, limit: int) -> List[str]:
         if ref.kind != "run":  # one row per (memory, key): the key index answers in insertion (rowid) order
-            return [r[0] for r in self._read(
-                f"SELECT memory_id FROM {self.t_prov} WHERE ref_key = ? ORDER BY rowid LIMIT ?", (ref.key(), limit))]
+            return [r[0] for r in self._read(self.sql["with_ref_key"], (ref.key(), limit))]
         # A run ref matches everything stamped with the run (its run ref and its steps/artifacts/messages/diary
         # entries): one memory may hold several such refs, so the run_id index is stepped lazily (rowid order, no
         # sort) and deduplicated until `limit` distinct memories, never reading past what it returns.
         out: List[str] = []
         seen: set = set()
         with self.store._lock:
-            cur = self.store._conn.cursor().execute(
-                f"SELECT memory_id FROM {self.t_prov} WHERE run_id = ? ORDER BY rowid", (ref.run_id,))
+            cur = self.store._conn.cursor().execute(self.sql["with_run"], (ref.run_id,))
             try:
                 while len(out) < limit:
                     batch = cur.fetchmany(limit)
@@ -434,20 +440,16 @@ class _SQLiteBackend:
         return out
 
     def revisions_page(self, after: int, limit: int) -> List[Tuple[int, Revision]]:
-        rows = self._read(
-            f"SELECT * FROM {self.t_rev} WHERE seq > ? ORDER BY seq LIMIT ?", (after, limit))
+        rows = self._read(self.sql["revisions_page"], (after, limit))
         return [(int(r["seq"]), _row_revision(r)) for r in rows]
 
     def pending_journal(self, limit: int) -> List[Revision]:
         rows = self._read(f"SELECT * FROM {self.t_rev} WHERE journal_applied = 0 ORDER BY seq LIMIT ?", (limit,))
         return [_row_revision(r) for r in rows]
 
-    def closed_payloads(self, rid: str) -> List[Dict[str, Any]]:
-        # Bounded by the revision's own ops (one closed row per close op).
-        rows = self._read(
-            f"SELECT detail_json FROM {self.t_hist} WHERE revision_id = ? AND event = ? ORDER BY seq",
-            (rid, _EVENT_CLOSED))
-        return [json.loads(r[0]) for r in rows]
+    def closed_payload(self, aid: str, rid: str) -> Optional[Dict[str, Any]]:
+        rows = self._read(self.sql["closed_payload"], (aid, rid, _EVENT_CLOSED))
+        return json.loads(rows[0][0]) if rows else None
 
     def mark_journal_applied(self, rid: str) -> None:
         with self.store._lock:
@@ -736,10 +738,12 @@ class _MemoryBackend:
         with self._lock:
             return [e["revision"] for e in self.revisions if not e["journal_applied"]][:limit]
 
-    def closed_payloads(self, rid: str) -> List[Dict[str, Any]]:
+    def closed_payload(self, aid: str, rid: str) -> Optional[Dict[str, Any]]:
         with self._lock:
-            return [json.loads(_dump(h["detail"])) for h in self.hist
-                    if h["revision_id"] == rid and h["event"] == _EVENT_CLOSED]
+            for h in self.hist:
+                if h["memory_id"] == aid and h["revision_id"] == rid and h["event"] == _EVENT_CLOSED:
+                    return json.loads(_dump(h["detail"]))
+            return None
 
     def mark_journal_applied(self, rid: str) -> None:
         with self._lock:
@@ -980,9 +984,12 @@ class MemoryGraph:
         if pending and self._journal is None:
             raise RuntimeError("MemoryGraph.repair: revisions await their journal closures but no journal is attached")
         for rev in pending:
-            for payload in self._b.closed_payloads(rev.revision_id):
-                payload = {k: v for k, v in payload.items() if k != "closure_id"}
-                self._journal.append_closure(_closure_record(rev, payload))
+            # The closures to append are the revision's close ops that closed something (a skipped close wrote no
+            # history row and owes no closure), read back by (memory id, revision id) on the history index.
+            for op in rev.ops:
+                if op.op != "close" or self._b.closed_payload(op.payload["assertion_id"], rev.revision_id) is None:
+                    continue
+                self._journal.append_closure(_closure_record(rev, op.payload))
             self._b.mark_journal_applied(rev.revision_id)
         return len(pending)
 
