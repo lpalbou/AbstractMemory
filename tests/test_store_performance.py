@@ -9,6 +9,7 @@ rewritten predicate returns exactly the rows the old COALESCE form did.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -109,3 +110,47 @@ def test_existing_home_gains_the_partition_index_on_open(tmp_path: Path) -> None
     reopened.close()
     with sqlite3.connect(str(path)) as raw:
         assert raw.execute("SELECT rowid, * FROM triples ORDER BY rowid").fetchall() == before
+
+
+_AXIS_PIN = {"model_id": "axis-3", "dimension": 3}
+
+
+class _AxisEmbedder:
+    model = "axis-3"
+
+    def embed_texts(self, texts):
+        return [[1.0, 0.0, 0.0] if "museum" in str(t) else [0.0, 1.0, 0.0] for t in texts]
+
+
+def _statements(store: SQLiteTripleStore, fn) -> list:
+    seen: list = []
+    store._conn.set_trace_callback(seen.append)  # noqa: SLF001 - observing the reads
+    try:
+        fn()
+    finally:
+        store._conn.set_trace_callback(None)  # noqa: SLF001
+    return [s for s in seen if s.lstrip().upper().startswith("SELECT")
+            and re.search(r"FROM triples(_fts)?\b", s) and "triples_meta" not in s]
+
+
+def test_structured_reads_never_fetch_the_vector_column(tmp_path: Path) -> None:
+    """Column projection: subject / partition / as-of / keyword reads select
+    the assertion columns only. A mutant restoring `SELECT *` goes red."""
+    store = SQLiteTripleStore(tmp_path / "kg.sqlite3", embedder=_AxisEmbedder(), embedding_pin=_AXIS_PIN)
+    store.add([_row(1, owner="entity:a"), _row(2, owner="entity:a", subject="ex:museum")])
+    reads = _statements(store, lambda: (
+        store.query(TripleQuery(scope="life", owner_id="entity:a", limit=0)),
+        store.query(TripleQuery(subject="ex:s", limit=10)),
+        store.query(TripleQuery(scope="life", active_at="2026-01-01T00:00:01+00:00")),
+        store.query_keywords(["value"], scope="life", owner_id="entity:a"),
+    ))
+    assert len(reads) == 4, reads
+    for sql in reads:
+        assert "*" not in sql.split(" FROM ")[0], sql
+        assert "embedding" not in sql, sql
+    rows = store.query(TripleQuery(scope="life", owner_id="entity:a", limit=0))
+    assert {a.assertion_id for a in rows} == {"a-1", "a-2"}
+    assert all(a.owner_id == "entity:a" and a.attributes == {} for a in rows)
+    # The explicit vector read still returns the stored vector.
+    assert store.stored_vector("a-1") == [0.0, 1.0, 0.0]
+    store.close()

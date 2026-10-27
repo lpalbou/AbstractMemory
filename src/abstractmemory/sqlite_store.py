@@ -46,6 +46,19 @@ def _checked_table(table_name: Optional[str]) -> str:
     return table
 
 
+# COLUMN PROJECTION (backlog 0058): the columns `_row_to_assertion` reads.
+# Structured reads never fetch `embedding` (the stored vector: several KB per
+# row, the bulk of every scan when it rode along with `SELECT *`) nor `text`
+# (the canonical text, which only the FTS index and the embedder consume).
+# Vectors are read only by semantic queries and the explicit vector reads
+# (`stored_vector`, the vector matrix cache).
+_ASSERTION_COLUMNS = (
+    "assertion_id", "subject", "predicate", "object", "scope", "owner_id",
+    "observed_at", "valid_from", "valid_until", "confidence",
+    "provenance_json", "attributes_json",
+)
+
+
 class SQLiteTripleStore:
     """SQLite-backed append-only triple store with native vector support.
 
@@ -278,7 +291,7 @@ class SQLiteTripleStore:
         params.append(int(limit))
         with self._lock:
             rows = self._conn.cursor().execute(
-                f"SELECT t.* FROM {self._table}_fts f "
+                f"SELECT {', '.join('t.' + c for c in _ASSERTION_COLUMNS)} FROM {self._table}_fts f "
                 f"JOIN {self._table} t ON t.rowid = f.rowid "
                 f"WHERE {self._table}_fts MATCH ? AND t.scope = ? {owner_clause} "
                 f"ORDER BY bm25({self._table}_fts), t.rowid DESC LIMIT ?",
@@ -463,12 +476,11 @@ class SQLiteTripleStore:
         else:
             limit = max(1, raw_limit)
 
-        where, params = self._where_clause(q)
-        sql = f"SELECT * FROM {self._table}"
-        if where:
-            sql += f" WHERE {where}"
-
         if query_vector is not None:
+            where, params = self._where_clause(q)
+            sql = f"SELECT {', '.join(_ASSERTION_COLUMNS)}, embedding FROM {self._table}"
+            if where:
+                sql += f" WHERE {where}"
             # Cosine ranking in Python over ALL SQL-filtered candidates
             # (InMemory parity: score first, THEN limit — honest v1 linear
             # scan; ANN lifts are backlog 0019).
@@ -552,7 +564,7 @@ class SQLiteTripleStore:
         """The non-semantic read: filters, observed_at order with the
         assertion_id tie-breaker, optional LIMIT."""
         where, params = self._where_clause(q)
-        sql = f"SELECT * FROM {self._table}"
+        sql = f"SELECT {', '.join(_ASSERTION_COLUMNS)} FROM {self._table}"
         if where:
             sql += f" WHERE {where}"
         order_sql = "ASC" if str(q.order or "").strip().lower() == "asc" else "DESC"

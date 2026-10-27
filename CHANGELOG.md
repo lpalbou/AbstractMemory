@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row. Existing homes gain the index when the store is opened; no row is
   rewritten. `SQLiteTripleStore.query_plan(q)` returns SQLite's
   `EXPLAIN QUERY PLAN` lines for a query (tests pin the plans).
+- **SQLite store: structured reads no longer fetch the vector column** (backlog
+  0058). `query` (without `query_text`/`query_vector`) and `query_keywords`
+  select the assertion columns only, instead of `SELECT *` dragging the stored
+  embedding (several KB per row) and the canonical text through every scan.
+  Semantic queries and `stored_vector` still read the vector; `TripleAssertion`
+  is unchanged.
 
 ## [0.3.2] - 2026-10-20
 
