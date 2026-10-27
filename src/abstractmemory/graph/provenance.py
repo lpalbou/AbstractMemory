@@ -249,7 +249,12 @@ class Provenance:
           `artifact:` prefix on payload_ref is stripped), carrying `run_id` when known.
         - `entry_id` -> a `diary_entry` ref.
         - `actor`, `reader`, `reason` are kept; every other key (`turn_id`, `writer_run_id`, `note_id`, ...) goes to
-          `extra`. A dict already in the graph shape (it has `sources` or `derived_from`) is read by `from_dict`.
+          `extra`.
+        - A dict that already carries `sources` or `derived_from` (the graph shape, or the MIXED shape the runtime
+          stamps: the legacy flat keys kept for older readers PLUS the `sources` it vouches for) takes its graph
+          keys as they are (`sources` validated) and lifts every other key into `extra`; no ref is lifted from a
+          flat key then (the stamped `sources` are what is real; a synthetic run id never becomes a ref). An
+          explicit `extra` wins over a flat key of the same name.
         - `actor` defaults to the flat dict's own `actor`, else "runtime" (this is the runtime's conversion).
         Nothing is fabricated: no ref is produced for a key that is absent or empty.
         """
@@ -257,7 +262,13 @@ class Provenance:
             raise ProvenanceRequired(f"from_legacy expects a dict (got {type(flat).__name__})")
         chosen_actor = actor or (flat.get("actor") if isinstance(flat.get("actor"), str) else None) or "runtime"
         if "sources" in flat or "derived_from" in flat:
-            return cls.from_dict({**dict(flat), "actor": chosen_actor})
+            given_extra = flat.get("extra")
+            if given_extra is not None and not isinstance(given_extra, Mapping):
+                raise ProvenanceRequired("Provenance.extra is a dict")
+            others = {k: v for k, v in flat.items() if k not in PROVENANCE_KEYS}
+            graph_keys = {k: v for k, v in flat.items() if k in PROVENANCE_KEYS and k != "extra"}
+            return cls.from_dict({**graph_keys, "actor": chosen_actor,
+                                  "extra": {**others, **dict(given_extra or {})}})
 
         def _s(key: str) -> Optional[str]:
             value = flat.get(key)

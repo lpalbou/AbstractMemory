@@ -364,3 +364,29 @@ def test_a_synthetic_run_id_is_never_a_source(run_id: str) -> None:
     # A real run id is untouched, and the diary pseudo-run still rides its diary_entry ref.
     assert not is_synthetic_run_id("run-7f3a") and Provenance.from_legacy({"run_id": "run-7f3a"}).is_grounded()
     assert SourceRef.from_dict({"kind": "diary_entry", "entry_id": "de-1", "run_id": "diary:ent-1"}).run_id
+
+
+def test_from_legacy_reads_the_runtime_stamped_mixed_shape() -> None:
+    """Runtime review R8: `MemoryFacade.stamp` (abstractruntime seam_handlers._handle_form) keeps the legacy flat keys
+    for older readers and ADDS the `sources` it vouches for. from_legacy reads that shape: graph keys as they are,
+    every flat key into extra, no ref lifted from a flat key (not even the payload_ref or a synthetic run id).
+    from_dict stays strict. Mutant: the mixed branch handing the whole dict to from_dict (pre-review) -> red."""
+    stamped = {
+        "source": "turn", "run_id": "chat-sess-1", "turn_id": "t-3", "writer_run_id": "run-0",
+        "payload_ref": "art-9", "span_id": "art-span",
+        "sources": [{"kind": "step", "run_id": "run-abc", "seq": 4, "step_id": "st-4", "runtime_id": "rt-1"},
+                    {"kind": "artifact", "artifact_id": "art-9", "run_id": "run-abc", "runtime_id": "rt-1"}],
+    }
+    prov = Provenance.from_legacy(stamped)
+    assert [s.key() for s in prov.sources] == ["step:run-abc#4", "artifact:art-9"]
+    assert prov.actor == "runtime"
+    assert prov.extra == {"source": "turn", "run_id": "chat-sess-1", "turn_id": "t-3", "writer_run_id": "run-0",
+                          "payload_ref": "art-9", "span_id": "art-span"}
+    with_extra = Provenance.from_legacy({**stamped, "actor": "entity:e1", "reason": "formed",
+                                         "extra": {"turn_id": "t-explicit", "note": 1}})
+    assert with_extra.actor == "entity:e1" and with_extra.reason == "formed"
+    assert with_extra.extra["turn_id"] == "t-explicit" and with_extra.extra["note"] == 1
+    with pytest.raises(ProvenanceRequired, match="from_legacy"):
+        Provenance.from_dict(stamped)  # strict: the flat keys are not the graph shape
+    with pytest.raises(InvalidSourceRef):  # the stamped sources are validated
+        Provenance.from_legacy({**stamped, "sources": [{"kind": "step", "run_id": "run-abc"}]})
