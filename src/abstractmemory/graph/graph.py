@@ -324,6 +324,7 @@ class _SQLiteBackend:
             "with_ref_key": f"SELECT memory_id FROM {p} WHERE ref_key = ? ORDER BY rowid LIMIT ?",
             "with_run": f"SELECT memory_id FROM {p} WHERE run_id = ? ORDER BY rowid",
             "revisions_page": f"SELECT * FROM {r} WHERE seq > ? ORDER BY seq LIMIT ?",
+            "pending_journal": f"SELECT * FROM {r} WHERE journal_applied = 0 ORDER BY seq LIMIT ?",
             "closed_payload": (f"SELECT detail_json FROM {h} WHERE memory_id = ? AND revision_id = ? AND event = ? "
                                "LIMIT 1"),
         }
@@ -346,6 +347,10 @@ class _SQLiteBackend:
                     "owner_id TEXT NOT NULL, cause TEXT NOT NULL, occurred_at TEXT NOT NULL, "
                     "recorded_at TEXT NOT NULL, ops_json TEXT NOT NULL, provenance_json TEXT NOT NULL, "
                     "summary TEXT, journal_applied INTEGER NOT NULL DEFAULT 1)")
+                # Partial: holds only the revisions awaiting their off-file journal closures (normally none), so
+                # repair() is an index read however long the log is.
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_rev}_pending ON {self.t_rev}(seq) "
+                            "WHERE journal_applied = 0")
                 cur.execute(
                     f"CREATE TABLE IF NOT EXISTS {self.t_prov} ("
                     "memory_id TEXT NOT NULL, ref_key TEXT NOT NULL, ref_kind TEXT NOT NULL, run_id TEXT, "
@@ -444,7 +449,7 @@ class _SQLiteBackend:
         return [(int(r["seq"]), _row_revision(r)) for r in rows]
 
     def pending_journal(self, limit: int) -> List[Revision]:
-        rows = self._read(f"SELECT * FROM {self.t_rev} WHERE journal_applied = 0 ORDER BY seq LIMIT ?", (limit,))
+        rows = self._read(self.sql["pending_journal"], (limit,))
         return [_row_revision(r) for r in rows]
 
     def closed_payload(self, aid: str, rid: str) -> Optional[Dict[str, Any]]:
