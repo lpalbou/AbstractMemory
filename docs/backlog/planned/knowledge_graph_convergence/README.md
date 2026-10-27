@@ -37,7 +37,7 @@ notes for itself) can drop their own copies.
   (`SourceRef`, `Provenance`), the revision log with atomic ops and closure causes, `narrow_assertion`, `history`,
   `sources_of`, `derived_from_source`, the change feed, replay. First slice (2026-10-27).
 - `0057_one_mind_per_plane_sqlite_home.md` (ADR 0003): one SQLite home per plane, LanceDB optional, the plane store
-  imported once.
+  imported once. PENDING the operator's decision (report decision 2; options in ADR 0003 decision 3).
 - `0058_home_store_performance_indexes_vectors.md` (ADR 0003): owner predicate, column projection, binary vectors,
   matrix cache, bounded maintenance; measured before/after.
 

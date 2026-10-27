@@ -1,8 +1,11 @@
 # One mind per plane: the SQLite home store, LanceDB optional, the plane store imported once
 
 Created: 2026-10-27 ([ADR 0003](../../../adr/0003-one-graph-ledger-provenance-and-revisions.md) decisions 2-3).
-Track: `knowledge_graph_convergence` · Priority: High · Status: Planned (operator decision pending on the gateway
-default; see `abstractframework/untracked/memory-transition/report.md` "Decisions needed")
+Track: `knowledge_graph_convergence` · Priority: High · Status: Pending decision; comparison in
+`abstractframework/untracked/memory-transition/report.md` decision 2 (operator, 2026-10-27: not taken, "we never
+migrate to migrate"; options named in [ADR 0003](../../../adr/0003-one-graph-ledger-provenance-and-revisions.md)
+decision 3: SQLite as written, a SQLite graph/provenance/revision store with LanceDB kept for vectors and multimodal
+embeddings, or LanceDB behind the same `MemoryGraph` interface). Do not start before the decision.
 
 ## Summary
 Make the SQLite home store the record of truth of a plane's mind (`<plane>/abstractmemory/memory.sqlite3`: triples,

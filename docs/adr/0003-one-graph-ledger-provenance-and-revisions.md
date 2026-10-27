@@ -3,6 +3,9 @@
 Status: Accepted (operator goal stated 2026-10-27; this ADR gives it its shape). Aspirational for existing
 consumers: AbstractNote's parallel graph and the gateway's separate plane store converge here through the
 convergence track (backlog 0050-0058).
+Amended 2026-10-27 (operator rulings on `abstractframework/untracked/memory-transition/report.md`): decisions 2 and
+13, visibility is strict ownership (report decision 5, taken); decision 3, the home store, is PENDING (report
+decision 2, not taken).
 
 ## Context
 
@@ -46,17 +49,40 @@ change of understanding, can be reconstructed from the ledger.
    (identity, claims and revisions, retrieval, self-organisation, ripple). No consumer keeps a graph of its own
    (ADR 0002). The gateway's plane knowledge-graph store, the notebook's note index and projection, and the
    entity's home graph are instances of this one implementation.
-2. **A mind is a store.** A *mind* is one graph home: a person's plane (`<plane>/abstractmemory/`) or an entity's
-   home (`entities/<slug>/`). Inside a mind, `scope` and `owner_id` partition what belongs to whom (the person's
-   notebook, a session, a run, an entity's self/diary/life ladder). Minds stay separate files on purpose: an entity's
-   home is portable ("copying the directory moves the entity") and nobody edits a mind from outside; what one mind
-   knows reaches another through the gateway, never by sharing a file. Within one plane, the three stores of the
-   audit become one.
-3. **SQLite is the home store.** The record of truth of a mind is one SQLite file holding the triples, the journal,
-   the revision log and the provenance index, so one logical change commits in one transaction. Vector search uses a
-   binary float32 column and an in-process matrix cache appended incrementally; LanceDB, when installed, is an
-   optional accelerator for vector search over the same ids, never a second truth. The gateway's plane default
-   moves from LanceDB to this home store (backlog 0057; existing plane stores are imported once).
+2. **A mind is a store; what is in it belongs to its owner.** A *mind* is one graph home: a person's plane
+   (`<plane>/abstractmemory/`) or an entity's home (`entities/<slug>/`). Inside a mind, `owner_id` is the OWNERSHIP
+   partition (`scope` says what kind of memory it is: the notebook, a session, a run, an entity's
+   self/diary/life ladder). Minds stay separate files on purpose: an entity's home is portable ("copying the
+   directory moves the entity") and nobody edits a mind from outside; what one mind knows reaches another through
+   the gateway, never by sharing a file. Within one plane, the three stores of the audit become one.
+
+   *Amendment 2026-10-27 (operator ruling, report decision 5): visibility is strict ownership, not plane-wide.* A
+   person owns their notes and their memory graph; an entity owns its graph; a person CAN read the graphs of the
+   entities they own (delegation entity → owner); a person cannot read another person's graph by default (sharing,
+   and topic-scoped requests, are future work, not part of this ADR); an administrator stays an administrator. The
+   plane is NOT a sharing scope: several owners' memories living in one plane file are not visible to each other
+   because of it. Every read surface enforces this (decision 13).
+3. **The home store: PENDING the operator's decision** (report decision 2, not taken: "why migrate from lancedb
+   to sqlite? lancedb scales more and seems more adequate for multimodal embeddings; we never migrate to migrate").
+   As first written: the record of truth of a mind is one SQLite file holding the triples, the journal, the revision
+   log and the provenance index, so one logical change commits in one transaction; vector search uses a binary
+   float32 column and an in-process matrix cache; LanceDB is an optional vector accelerator; the gateway's plane
+   default moves from LanceDB to this home store (backlog 0057). Entity homes are SQLite today and stay so; the open
+   question is the PLANE store. Options on the table:
+   - (a) as written: SQLite is the plane's home store; the existing LanceDB plane store is imported once.
+   - (b) hybrid: SQLite holds the graph, the provenance index and the revision log (the transactional truth); LanceDB
+     is kept for vectors and multimodal embeddings over the same ids.
+   - (c) LanceDB behind the same `MemoryGraph` interface.
+   Facts that bound the choice (audit `untracked/memory-transition/audit/abstractmemory.md` §2.3, §9.1 and finding 8,
+   2026-10-27; not opinion): the graph tables (`memg_*`) exist only on SQLite today, because one revision must
+   commit triples, closures, history and the provenance index together and only the SQLite store and journal share a
+   transaction; `LanceDBTripleStore` has no transactions, no `close_assertion`, no id idempotency (duplicate ids are
+   accepted), no embedding pin, no FTS, and a schema inferred from its first batch (an `active_at` query errors when
+   that batch had no `valid_until`); its non-vector reads materialise every match and sort in Python (latest-100 of a
+   scope: 7.0 s at 50k rows, against 0.6 s on SQLite before backlog 0058); its batch adds are faster (65 vs 381 us
+   per row at 50k). The SQLite home work (0056, 0058) stands either way: entity homes use it, and options (a) and
+   (b) both keep it as the graph's store. The one-way vector re-encoding of 0.4.0 (CHANGELOG) applies to SQLite
+   homes and is unaffected.
 
 ### B. The units of the graph
 
@@ -116,7 +142,7 @@ change of understanding, can be reconstructed from the ledger.
 ### D. Access and layering
 
 12. **Semantic and structural access over one index set.** Full-text (FTS5 over names, aliases, summaries, digests),
-    vector (binary column + cached matrix; LanceDB optional) and structural reads (by subject, object, predicate,
+    vector (binary column + cached matrix on SQLite; the plane's vector store is decision 3, pending) and structural reads (by subject, object, predicate,
     window, owner, provenance key, revision cursor) share the same ids. Reads are bounded: a read without a limit
     is a defect; a bounded preview says what it left out (root ADR 0026). The change feed `revisions(after=cursor)`
     is lossless across calls.
@@ -126,6 +152,16 @@ change of understanding, can be reconstructed from the ledger.
     AbstractGateway serves `/api/gateway/memory/*` over that facade and binds the memory tools per account.
     AbstractNote's server side and AbstractEntity's app call the gateway; neither imports this package. A gateway
     import of `abstractmemory` is a boundary violation its test catches (burned down, never added to).
+
+    *Amendment 2026-10-27 (ownership, decision 2):* every read surface enforces ownership: the runtime facade, the
+    gateway routes and the memory tools bound per account answer a principal with its own owners' memories and those
+    of the entities it owns, nothing else, unless it is an administrator. This package has no principal: its reads
+    are keyed by id, reference or cursor, and several cross owners by construction (`derived_from_source(ref)`
+    returns every memory grounded in a source, whoever owns it; `sources_of` follows `derived_from` lineage into
+    other owners' memories; `history(id)` answers for any id; the change feed `revisions()` carries every owner's
+    revisions, each with its `owner_id`). The surface above it filters by `owner_id` before anything reaches a caller.
+    The gateway's `/api/gateway/kg/query`, which lets any principal read any owner within its plane, is the defect
+    this amendment names and its routes item fixes.
 14. **What stays with the consumer.** Capture, importers, prompt wording for one kind of input, the choice of model
     (injected as a reader), dates and their basis for notes, and every view (ADR 0002 decision 6). What moves here:
     the entity registry and reversible merges (0050), the claim lifecycle and revision log (0051, this ADR), the
@@ -144,7 +180,8 @@ change of understanding, can be reconstructed from the ledger.
 - Writers must carry provenance; existing writers (AbstractNote's tools, the runtime's memory handlers, this
   package's passes) change before they can write to a mind of this shape. Writes without a grounded provenance fail
   loudly by design.
-- The gateway changes its plane default store (LanceDB → SQLite home) and imports the existing plane store once.
+- If decision 3 is taken as first written: the gateway changes its plane default store (LanceDB → SQLite home) and
+  imports the existing plane store once (pending).
 - Existing notebooks are projected once from their revision log (schema 4 on the live planes; `main` is schema 2):
   a migration the operator schedules.
 
@@ -164,6 +201,9 @@ change of understanding, can be reconstructed from the ledger.
 - This package's own passes write `derived_from` on every record they form; a pass that forms a record with neither
   sources nor lineage is a defect, test-covered per pass as the track lands.
 - Every read returning rows takes a `limit`; a preview that truncates reports what it left out.
+- Every read surface above this package (runtime facade, gateway routes, memory tools) filters by `owner_id` for
+  the calling principal (decision 2, amended): a route or tool that answers across owners, or across a plane, is a
+  defect.
 - Threshold and constant values (vector cache sizes, cursor page sizes) live in one named module with their
   measurement quoted (same rule as ADR 0001 for the ripple).
 - Docs: `api.md` documents `SourceRef`, `Provenance`, `Revision`, `MemoryGraph`, `history`, `sources_of`,

@@ -161,6 +161,8 @@ MemoryGraph(store, journal=None)
 
 On SQLite with a `SQLiteJournal` on the **same file**, the closures commit in that same transaction, so `TripleQuery(active_at=...)` and ranked recall never disagree. With a journal elsewhere (another file, `InMemoryJournal`) the closures are appended after the commit and the revision is marked `journal_applied = 0` until they are.
 
+Ownership: the graph has no principal. Its reads are keyed by id, reference or cursor, and `derived_from_source`, transitive `sources_of` and `revisions` cross owners by construction (a revision carries its `owner_id`). Visibility is strict ownership ([ADR 0003](adr/0003-one-graph-ledger-provenance-and-revisions.md) decision 2): the host above this package filters by `owner_id` before a result reaches a caller.
+
 Reads (every read is bounded: `limit` must be a positive int and is clamped to `MAX_READ_LIMIT` = 1000; `0`, a negative, a bool or a float raises `ValueError`):
 
 - `history(memory_id, *, limit=200) -> list[dict]` — the memory's lifecycle in record order: `{event: "asserted" | "closed" | "narrowed", at (record time), revision_id, cause, detail}`. `detail` holds the terms, window and sources of an assertion (`adopted` and `previous_provenance` for an adoption), the close payload with `closure_id`, `window_closed` (the op moved the row's end), `previous_valid_until` and `row_valid_until`, or `valid_until`, `previous_valid_until` and `reason` of a narrow. Accepts an assertion id or a record's graph id (resolved to its digest assertion). Unknown id: `[]`.
