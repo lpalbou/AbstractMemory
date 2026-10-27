@@ -4,8 +4,8 @@ Status: Accepted (operator goal stated 2026-10-27; this ADR gives it its shape).
 consumers: AbstractNote's parallel graph and the gateway's separate plane store converge here through the
 convergence track (backlog 0050-0058).
 Amended 2026-10-27 (operator rulings on `abstractframework/untracked/memory-transition/report.md`): decisions 2 and
-13, visibility is strict ownership (report decision 5, taken); decision 3, the home store, is PENDING (report
-decision 2, not taken).
+13, visibility is strict ownership (report decision 5); decision 3, one graph surface with stores as connectors
+behind it, SQLite the default connector (report decision 2).
 
 ## Context
 
@@ -62,30 +62,34 @@ change of understanding, can be reconstructed from the ledger.
    and topic-scoped requests, are future work, not part of this ADR); an administrator stays an administrator. The
    plane is NOT a sharing scope: several owners' memories living in one plane file are not visible to each other
    because of it. Every read surface enforces this (decision 13).
-3. **The home store: PENDING the operator's decision** (report decision 2, not taken: "why migrate from lancedb
-   to sqlite? lancedb scales more and seems more adequate for multimodal embeddings; we never migrate to migrate").
-   As first written: the record of truth of a mind is one SQLite file holding the triples, the journal, the revision
-   log and the provenance index, so one logical change commits in one transaction; vector search uses a binary
-   float32 column and an in-process matrix cache; LanceDB is an optional vector accelerator; the gateway's plane
-   default moves from LanceDB to this home store (backlog 0057). Entity homes are SQLite today and stay so; the open
-   question is the PLANE store. Options on the table:
-   - (a) as written: SQLite is the plane's home store; the existing LanceDB plane store is imported once.
-   - (b) hybrid: SQLite holds the graph, the provenance index and the revision log (the transactional truth); LanceDB
-     is kept for vectors and multimodal embeddings over the same ids.
-   - (c) LanceDB behind the same `MemoryGraph` interface.
-   Facts that bound the choice (audit `untracked/memory-transition/audit/abstractmemory.md` §2.3, §9.1 and finding 8,
-   2026-10-27; not opinion): the graph tables (`memg_*`) exist only on SQLite today, because one revision must
-   commit triples, closures, history and the provenance index together and only the SQLite store and journal share a
-   transaction; `LanceDBTripleStore` has no transactions, no `close_assertion`, no id idempotency (duplicate ids are
-   accepted), no embedding pin, no FTS, and a schema inferred from its first batch (an `active_at` query errors when
-   that batch had no `valid_until`); its non-vector reads materialise every match and sort in Python (latest-100 of a
-   scope: 7.0 s at 50k rows, against 0.6 s on SQLite before backlog 0058); its batch adds are faster (65 vs 381 us
-   per row at 50k). The SQLite home work (0056, 0058) stands either way: entity homes use it, and options (a) and
-   (b) both keep it as the graph's store. The one-way vector re-encoding of 0.4.0 (CHANGELOG) applies to SQLite
-   homes and is unaffected. Memory cost of the SQLite vector path, per process that queries a home (a gateway
-   worker, an entity loop): rows x dims x 4 B for the float32 matrix plus about 170 B per row of bookkeeping
-   (`store_tuning.py`); 200k rows x 1024 dims = about 850 MB held per process, measured 424 MB at 100k x 1024
-   (architect review C2). This figure is an input to the decision.
+3. **One graph surface; stores are connectors behind it** (decision record, operator 2026-10-27: "we should have a
+   graph, we should define the key operations we want on it, and then we only manipulate the graph through those
+   abstractions. THEN those abstractions can be linked to different databases [...] if we need to change db, we only
+   have to rewrite the connectors"; `untracked/memory-transition/report.md` decision 2).
+   - `MemoryGraph` is the ONLY manipulation surface of a mind. Every store is a CONNECTOR behind it that implements
+     one named set of operations and keeps their invariants: `abstractmemory.graph.backend` (`GraphBackend`: the
+     transaction and the bounded reads; `GraphTx`: one revision's reads and writes; invariants: atomicity, seq order,
+     id identity, bounded reads, opening is a read). A connector is registered for a store class
+     (`register_backend`); changing a mind's database means writing a connector, never touching `MemoryGraph` or its
+     callers.
+   - One conformance suite (`tests/test_graph_conformance.py`) runs every connector through the public surface. A
+     connector that cannot keep an invariant marks that case `xfail(strict=True)` there, with the reason: never a
+     silent degradation.
+   - SQLite is the DEFAULT connector for a plane and for an entity home (report decision 2's measured table and
+     §6(d), 200k rows: one revision 1.07 ms in ONE transaction vs 88 ms over four LanceDB tables with no atomicity;
+     latest-100 in a scope 0.73 ms vs 16.7 s; close/narrow 0.015 ms vs 76 ms; idempotent ids vs duplicates). The
+     record of truth of a mind is then one SQLite file (triples, journal, revision log, provenance index). Vector
+     search uses a float32 BLOB column and an in-process matrix cache (per process: rows x dims x 4 B plus about
+     170 B per row, `store_tuning.py`; 424 MB measured at 100k x 1024).
+   - The LanceDB connector (`abstractmemory.graph.lancedb_backend`) stays implemented and tested against the SAME
+     suite. What it cannot promise (strict xfails): (a) writers of one mind in TWO PROCESSES are not serialized (no
+     cross-table transaction, no shared lock): they can allocate the same seq; (b) a crash in the middle of a commit
+     leaves the rows of an unapplied revision visible to readers until `repair()` re-derives them from the log
+     (LanceDB writes the log first; the next transaction of the process, or `MemoryGraph.repair()`, finishes it).
+     Within one process it keeps every other invariant (staged transaction, log-first commit, serialized writers).
+   - Existing plane data enters a mind through the abstraction: `import` revisions (backlog 0057), never a file copy.
+   - The 0.4.0 vector re-encoding of SQLite homes is a one-way migration (CHANGELOG): every process sharing a home or
+     plane moves to 0.4.0 together.
 
 ### B. The units of the graph
 
@@ -145,7 +149,7 @@ change of understanding, can be reconstructed from the ledger.
 ### D. Access and layering
 
 12. **Semantic and structural access over one index set.** Full-text (FTS5 over names, aliases, summaries, digests),
-    vector (binary column + cached matrix on SQLite; the plane's vector store is decision 3, pending) and structural reads (by subject, object, predicate,
+    vector (binary column + cached matrix on the SQLite connector; decision 3) and structural reads (by subject, object, predicate,
     window, owner, provenance key, revision cursor) share the same ids. Reads are bounded: a read without a limit
     is a defect; a bounded preview says what it left out (root ADR 0026). The change feed `revisions(after=cursor)`
     is lossless across calls.
@@ -183,8 +187,8 @@ change of understanding, can be reconstructed from the ledger.
 - Writers must carry provenance; existing writers (AbstractNote's tools, the runtime's memory handlers, this
   package's passes) change before they can write to a mind of this shape. Writes without a grounded provenance fail
   loudly by design.
-- If decision 3 is taken as first written: the gateway changes its plane default store (LanceDB → SQLite home) and
-  imports the existing plane store once (pending).
+- The gateway's plane store moves to the SQLite connector, and the existing LanceDB plane triples enter it once
+  through `import` revisions (backlog 0057).
 - Existing notebooks are projected once from their revision log (schema 4 on the live planes; `main` is schema 2):
   a migration the operator schedules.
 

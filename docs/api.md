@@ -150,7 +150,7 @@ RevisionOp(op, payload)
 MemoryGraph(store, journal=None)
 ```
 
-`store` is a `SQLiteTripleStore` (the home store: the graph's tables live in its file) or an `InMemoryTripleStore` (tests, dev; graph state is shared by every `MemoryGraph` over the same store object). Any other store raises `NotImplementedError` (LanceDB: backlog 0057). `journal` receives the `close` ops' closure records; `None` writes none (the history and the revision still record the close).
+`store` selects the CONNECTOR (see "Connectors" below): a `SQLiteTripleStore` (the default home: the graph's tables live in its file), a `LanceDBTripleStore` (the LanceDB connector; its journal lives in another file), or an `InMemoryTripleStore` (tests, dev; graph state is shared by every `MemoryGraph` over the same store object). A store with no registered connector raises `NotImplementedError`. `journal` receives the `close` ops' closure records; `None` writes none (the history and the revision still record the close).
 
 **`apply_revision(revision, *, replay=False) -> RevisionResult`** — the one write path. In order:
 
@@ -176,6 +176,19 @@ Reads (every read is bounded: `limit` must be a positive int and is clamped to `
 Constants: `DEFAULT_READ_LIMIT` (200), `DEFAULT_REVISION_PAGE` (100), `MAX_READ_LIMIT` (1000), `MAX_LINEAGE_VISITS` (1000), `ADOPTING_CAUSES` (`import`, `migration`), `DIGEST_PREDICATE` (`dcterms:abstract`, how a record's graph id resolves to its digest assertion), `PROVENANCE_KEYS`, `LEGACY_KEYS`, `SYNTHETIC_RUN_ID_PREFIXES`.
 
 Opening a `MemoryGraph` on a home whose graph tables and indexes exist is a read (no DDL transaction): a reader needs no write lock and does not wait behind a writer.
+
+### Connectors (`abstractmemory.graph.backend`)
+
+`MemoryGraph` is the only manipulation surface of a mind ([ADR 0003](adr/0003-one-graph-ledger-provenance-and-revisions.md) decision 3); a database is a connector behind it. A connector implements two Protocols:
+
+- `GraphBackend` — `prepare_rows(assertions)` (embed and shape rows before the transaction), `transaction()` (a context manager yielding a `GraphTx`), the reads `applied_seq`, `resolve`, `history`, `sources`, `parents`, `children`, `with_ref`, `names_ref`, `revisions_page`, `log_head`, `logged_outcome`, and `pending_journal` / `closed_payload` / `mark_journal_applied` / `repair_projections` (crash repair).
+- `GraphTx` — one revision's reads (`revision_seq`, `memory_known`, `closing_revision`, `open_same_claim`, `digest_assertion_for`, `existing_ids`, `stored`, `window`; they see the transaction's own writes) and writes (`write_pin`, `insert_assertions`, `set_provenance`, `end_row`, `narrow_row`, `write_closure`, `add_history`, `add_source`, `add_derivation`, `insert_revision`).
+
+Invariants (the module docstring states them): the writes of one transaction become visible together or not at all; `insert_revision` allocates `seq` = head + 1 and transactions are serialized (the change feed is lossless); an assertion id, a (memory, ref key) provenance row and a (memory, parent) derivation row are written once, the first winning; every read is bounded; opening a mind writes nothing.
+
+Connectors shipped: SQLite (`_SQLiteBackend`, one transaction per revision), in-memory (`_MemoryBackend`, an undo log), LanceDB (`abstractmemory.graph.lancedb_backend.LanceDBBackend`: a staged transaction whose reads overlay its writes, a log-first commit, `repair_projections()` re-deriving a half-projected revision from the log; one lock, table handles and counters per mind per process). What the LanceDB connector cannot promise: writers of one mind in two processes are not serialized, and a crash in the middle of a commit leaves the rows of an unapplied revision visible until `repair()`.
+
+To add a connector: implement both Protocols for a store class, call `register_backend(StoreClass, factory)` (`factory(store, journal) -> GraphBackend`; the most recently registered matching class wins), add the backend to `BACKENDS` in `tests/graph_support.py` (an `open_home` branch), and run `tests/test_graph_conformance.py`: every case passes, or is marked `xfail(strict=True)` with the reason and listed in ADR 0003 decision 3. `backend_for(store, journal)` and `registered_backends()` inspect the registry.
 
 ### The graph tables (SQLite)
 

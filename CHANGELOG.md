@@ -13,6 +13,14 @@ The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provena
 
 ### Added
 
+- **Connectors** (ADR 0003 decision 3, operator decision 2026-10-27): `MemoryGraph` is the only manipulation
+  surface of a mind and every store is a connector behind it: `abstractmemory.graph.backend` (`GraphBackend`,
+  `GraphTx` Protocols with their invariants; `register_backend`, `backend_for`, `registered_backends`). SQLite (the
+  default for planes and entity homes) and in-memory are declared implementations; a new LanceDB connector
+  (`abstractmemory.graph.lancedb_backend`, over `LanceDBTripleStore`: explicit Arrow schemas, a staged transaction,
+  a log-first commit, `repair()` re-derives a half-projected revision from the log). One conformance suite,
+  `tests/test_graph_conformance.py`, runs every connector; the LanceDB connector cannot promise serialized writers
+  across processes nor invisibility of a half-projected revision before `repair()` (strict xfails).
 - **`abstractmemory.graph`**, the one write path of a mind:
   - `SourceRef` (`run`, `step` with the ledger row address `(run_id, seq)`, `seq` 1-based, `artifact`, `message`, `event`,
     `diary_entry`; optional `runtime_id`; one canonical `key()`), validated per kind (`InvalidSourceRef`); a
