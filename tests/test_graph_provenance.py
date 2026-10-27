@@ -318,3 +318,20 @@ def test_sources_of_and_derived_from_source(home) -> None:
     assert home.graph.derived_from_source({"kind": "message", "message_id": "m-1"}) == ["c1", "c2", "sum"]
     assert home.graph.derived_from_source({"kind": "run", "run_id": "run-unknown"}) == []
     assert home.graph.sources_of("unknown") == [] and home.graph.history("unknown") == []
+
+
+def test_from_dict_refuses_a_string_where_a_list_is_expected():
+    """Mutant: `tuple(data.get("derived_from") or ())` in Provenance.from_dict -> "m1" becomes ('m', '1') and is
+    accepted as two memory ids (found by the runtime worker, 2026-10-27)."""
+    import pytest
+    from abstractmemory.graph import InvalidSourceRef, Provenance, ProvenanceRequired
+
+    base = {"sources": [], "derived_from": [], "actor": "runtime", "reader": None, "reason": None, "extra": {}}
+    with pytest.raises(ProvenanceRequired):
+        Provenance.from_dict({**base, "derived_from": "m1"})
+    with pytest.raises(InvalidSourceRef):
+        Provenance.from_dict({**base, "sources": {"kind": "run", "run_id": "r1"}})
+    with pytest.raises(InvalidSourceRef):
+        Provenance.from_dict({**base, "sources": "run:r1"})
+    ok = Provenance.from_dict({**base, "derived_from": ["m1"]})
+    assert ok.derived_from == ("m1",)

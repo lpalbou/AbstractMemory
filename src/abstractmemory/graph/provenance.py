@@ -209,9 +209,10 @@ class Provenance:
                 f"provenance carries keys outside the graph shape {unknown}{hint}; "
                 f"known keys: {sorted(PROVENANCE_KEYS)}; anything else belongs in 'extra'"
             )
+        # Raw values go to the coercers: `tuple("m1")` would split a string into characters and pass validation.
         return cls(
-            sources=tuple(data.get("sources") or ()),
-            derived_from=tuple(data.get("derived_from") or ()),
+            sources=data.get("sources") or (),
+            derived_from=data.get("derived_from") or (),
             actor=data.get("actor") if isinstance(data.get("actor"), str) else "",
             reader=data.get("reader"),
             reason=data.get("reason"),
