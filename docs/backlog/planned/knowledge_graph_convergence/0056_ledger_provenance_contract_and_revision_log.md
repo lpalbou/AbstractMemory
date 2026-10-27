@@ -165,7 +165,10 @@ reference figure; every read is still an index search (the bench asserts the pla
   The old matrix was already freed before a rebuild allocated (proved with a weak reference); the 2.35 GB RSS was
   the high-water mark of doubling growth copies.
 - E1: re-observation, not duplication (an open assert of a held open claim adds sources, no second row).
-- After the batch: full suite 1347 passed, 4 skipped.
+- After the batch: full suite 1347 passed, 4 skipped. `bench_graph.py --size 50000` (load average 8): build 1146
+  revisions/s; `derived_from_source` step 0.050 / run 0.733 ms, `sources_of` 0.044 / 0.097 ms (transitive),
+  `history` 0.022 ms, a feed page of 100 5.2 ms, a replayed revision 0.140 ms (now returns its logged outcome),
+  the 0.3 baseline scan 16.8 ms: the first table holds.
 
 Open (next slices): `as_of` / `as_recorded` reads (0052); entity and alias ops (0050); the runtime facade that stamps
 step refs and reconstructs sources (AbstractRuntime ADR 0009); the gateway routes; AbstractNote and the runtime's
