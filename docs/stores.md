@@ -128,7 +128,7 @@ Canonicalization:
 
 Append-only:
 - There is no update/delete API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
-- The one in-place change: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer it.
+- The in-place window changes: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window), and `narrow_assertion(assertion_id, valid_until)`, which moves an already-closed window earlier and never widens it (`ValueError` for an open window; `False` for an unknown id or a date at or after the current end). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer `close_assertion`, and its `narrow_assertion` raises `NotImplementedError` (backlog 0057). In a mind written through `abstractmemory.graph`, both happen as a revision's `close` / `narrow` op, which also records the cause (see [`api.md`](api.md#the-memory-graph-revisions-and-provenance)); a `SQLiteTripleStore` used as a graph home also holds the `memg_*` tables listed there.
 
 Timestamps are strings:
 - All stores compare `observed_at` / `valid_*` as strings.

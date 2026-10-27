@@ -5,9 +5,45 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
-## Unreleased
+## [0.4.0] - Unreleased
 
-*No unreleased changes.*
+The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md), backlog
+0056): every change is a revision, every memory points back to the ledger. Additive: every 0.3.x call keeps working
+(`close_assertion` stays; `ClosureRecord` gains only the `merged` kind).
+
+### Added
+
+- **`abstractmemory.graph`**, the one write path of a mind:
+  - `SourceRef` (`run`, `step` with the ledger row address `(run_id, seq)`, `artifact`, `message`, `event`,
+    `diary_entry`; optional `runtime_id`; one canonical `key()`), validated per kind (`InvalidSourceRef`).
+  - `Provenance(sources, derived_from, actor, reader, reason, extra)`, strict about its shape;
+    `Provenance.from_legacy(...)` lifts the old flat keys (`run_id`, `span_id`, `payload_ref`, `entry_id`, ...)
+    in one place and never fabricates a reference.
+  - `Revision` (`revision_id`, `scope`, `owner_id`, `cause`, `occurred_at`, `recorded_at`, `ops`, `provenance`,
+    `summary`) with the ops `assert`, `close` (`retract` / `supersede` / `reinterpreted` / `merged`, replacement
+    ids, ripple source and hops) and `narrow`.
+  - `MemoryGraph(store, journal).apply_revision(rev)`: refuses a memory that is neither sourced nor derived from a
+    grounded memory (`ProvenanceRequired`; chains that never reach a source and cycles included); applies all ops
+    in ONE SQLite transaction (triples and their keyword rows, window changes, the journal closure when the
+    journal shares the file, the revision, provenance, derivation and history rows), or not at all; idempotent on
+    the revision id; deterministic ids so the logged revision replays identically. A store row written outside
+    the graph is adopted only by an `import` / `migration` revision that carries it as stored.
+  - Reads, all bounded index reads: `history(memory_id)` (asserted / closed / narrowed, by which revision, with
+    its cause), `sources_of(memory_id, transitive=True)`, `derived_from_source(ref)` (a `run` ref matches
+    everything stamped with that run), the lossless change feed `revisions(after=cursor)`, `replay_into(target)`
+    (an empty home replays to the same file), and `repair()` for closures a crash left unwritten when the journal
+    lives in another file.
+  - Four tables in the home file: `memg_revisions`, `memg_provenance`, `memg_derivations`, `memg_history`.
+- **`narrow_assertion(assertion_id, valid_until)`** on `SQLiteTripleStore` and `InMemoryTripleStore`: moves an
+  already-closed validity window earlier and never widens it (`ValueError` for an open window; `False` for an
+  unknown id or a date at or after the current end). `LanceDBTripleStore.narrow_assertion` raises
+  `NotImplementedError` (backlog 0057). AbstractNote no longer needs to write the store's private table.
+- **Closure kind `merged`** (`abstractmemory.journal.CLOSURE_KINDS`): the memory was merged into another, named in
+  `replacement_ids`. `close_assertions` and `close_record` accept it.
+- Docs: `api.md` (the graph section and its tables), `memory-system.md` ("Time axes", "Provenance").
+- Measured at 50,000 assertions (`tests/bench/bench_graph.py`): `history` 0.02 ms, `sources_of` 0.04 ms,
+  `derived_from_source` by step 0.05 ms and by run 0.8 ms, a change-feed page of 100 revisions 4 ms; the 0.3
+  alternative (scanning provenance JSON) took 18 ms.
 
 ## [0.3.2] - 2026-10-20
 

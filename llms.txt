@@ -6,7 +6,8 @@ Key facts for agents:
 
 - The authoritative export list is [src/abstractmemory/__init__.py](src/abstractmemory/__init__.py); [docs/api.md](docs/api.md) documents every export with verified signatures.
 - Reads are pure: `reconstruct`, inspection, replay, and `entity_card` deposit nothing; `commit_selection` is the only strengthening path.
-- Append-only, no deletion: updates are new assertions; belief revision is closure records; forgetting is decay + closures + silencing. The one in-place change is `close_assertion` (in-memory and SQLite stores), which only closes an open validity window.
+- Append-only, no deletion: updates are new assertions; belief revision is closure records; forgetting is decay + closures + silencing. The in-place changes are `close_assertion` (closes an open validity window) and `narrow_assertion` (moves a closed one earlier, never wider), on the in-memory and SQLite stores.
+- `abstractmemory.graph.MemoryGraph` is the write path of a mind: every change is an atomic, idempotent `Revision`; every memory names ledger sources (`SourceRef`) or the memories it was derived from, else `ProvenanceRequired`; reads `history`, `sources_of`, `derived_from_source`, `revisions(after=)` are bounded index reads.
 - The journal's monotonic `seq` is the time axis: anchor reads with `as_of`/`at_seq`/`since_seq` for deterministic replay.
 - All three stores are vector-capable when constructed with an embedder; `query_text` without one raises (no keyword fallback).
 - Terms are canonicalized (trim + lowercase); timestamps compare as RFC-3339/UTC strings.

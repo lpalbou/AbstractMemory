@@ -105,6 +105,10 @@ result = system.reconstruct(Stimulus(cue_text="pool outage"), scopes=[("session"
 system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2]])
 ```
 
+## The memory graph: revisions and provenance
+
+`abstractmemory.graph` is the write path of a mind (0.4.0): every change to the graph is one `Revision` (a cause such as `ingest`, `reinterpret` or `maintenance`, plus `assert` / `close` / `narrow` operations applied together and atomically, once per revision id), and every memory must name where it came from in AbstractRuntime's ledger (a `SourceRef` to a run, a step `(run_id, seq)`, an artifact, a message, an event or a diary entry) or the memories it was derived from; a write with neither is refused with `ProvenanceRequired`. `MemoryGraph(store, journal)` then answers `history(memory_id)` (asserted, closed, narrowed: by which revision and why), `sources_of(memory_id)`, `derived_from_source(ref)`, a lossless change feed `revisions(after=cursor)`, and `replay_into(...)`. See [`docs/api.md`](docs/api.md#the-memory-graph-revisions-and-provenance) and the "Time axes" and "Provenance" sections of [`docs/memory-system.md`](docs/memory-system.md).
+
 ## Documentation
 
 - Getting started: [`docs/getting-started.md`](docs/getting-started.md)
@@ -128,7 +132,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 ## Design principles
 
-- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
+- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted/merged); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
 - **Reads are pure**: reconstruction, inspection, replay, and the entity card deposit nothing. `commit_selection` is the only strengthening path.
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.
