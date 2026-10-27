@@ -798,6 +798,50 @@ class SQLiteTripleStore:
             return _STALE
         return [(score, rows[aid]) for score, aid in scored]
 
+    def assertions_after(
+        self, cursor: int, *, scope: Optional[str] = None, owner_id: Optional[str] = None,
+        limit: int = 1000,
+    ) -> Tuple[List[Tuple[int, TripleAssertion]], int]:
+        """CHANGE FEED (backlog 0058): the assertions written after rowid
+        `cursor`, in rowid order, at most `limit`, filtered exactly like
+        `query(TripleQuery(scope=..., owner_id=...))` (assertion columns
+        only, no vector). Returns `(rows, next_cursor)`: rows are
+        `(rowid, assertion)`; `next_cursor` is where to resume (the last
+        rowid examined, so rows of other partitions are not re-read); the
+        feed is exhausted when fewer than `limit` rows come back. The table
+        is append-only (rowids are never reused), so a cursor never misses
+        or repeats a row, whichever handle or process wrote it."""
+        # The rowid range is the access path (O(rows written since the
+        # cursor)); the unary `+` keeps the planner off the partition index,
+        # which would walk the whole partition. Same normalisation and
+        # predicate as `query` (TripleQuery: scope lowercased, '' = no filter).
+        filters = TripleQuery(scope=scope, owner_id=owner_id)
+        where, params = "", []
+        if filters.scope:
+            where, params = "+scope = ?", [filters.scope]
+        if filters.owner_id:
+            where = f"{where} AND +owner_id = ?" if where else "+owner_id = ?"
+            params.append(filters.owner_id)
+        bound = max(1, int(limit))
+        after = max(0, int(cursor))
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
+                top = int(top) if top is not None else 0
+                sql = (f"SELECT rowid AS _rowid, {', '.join(_ASSERTION_COLUMNS)} FROM {self._table} "
+                       "WHERE rowid > ? AND rowid <= ?")
+                if where:
+                    sql += f" AND {where}"
+                sql += " ORDER BY rowid LIMIT ?"
+                rows = cur.execute(sql, [after, top, *params, bound]).fetchall()
+            finally:
+                cur.execute("COMMIT")
+        out = [(int(r["_rowid"]), self._row_to_assertion(r)) for r in rows]
+        next_cursor = out[-1][0] if len(out) == bound else max(after, top)
+        return out, next_cursor
+
     def query_plan(self, q: TripleQuery) -> List[str]:
         """SQLite's `EXPLAIN QUERY PLAN` detail lines for the structured
         read `query(q)` would run (filters, order, limit; a semantic query's

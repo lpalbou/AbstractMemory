@@ -52,6 +52,16 @@ import sys
 from array import array
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .store_tuning import (  # re-exported; the constants live in one place
+    COARSE_MARGIN_FLOOR,
+    EXACT_CHUNK_ROWS,
+    ID_FETCH_CHUNK,
+    ROW_NORM_RANGE,
+    SUBSET_SHARE,
+    SYNC_FETCH_ROWS,
+    VECTOR_UPGRADE_BATCH,
+)
+
 try:  # optional accelerator; the Python scan is the labelled fallback
     import numpy as _np
 except Exception:  # pragma: no cover - exercised by monkeypatching _np
@@ -77,42 +87,8 @@ __all__ = [
 VECTOR_ENGINE_NUMPY = "numpy-matrix-cache"
 VECTOR_ENGINE_PYTHON = "python-linear-scan"
 
-# ---------------------------------------------------------------------------
-# Tuning constants: ONE place (ADR 0003 enforcement), each with the
-# measurement or the bound it rests on. Numbers measured 2026-10-27 on the
-# operator's Mac (Darwin 27, Python 3.12, numpy 2.4), `tests/bench/bench_store.py`.
-# ---------------------------------------------------------------------------
-
 # float32 unit roundoff.
 _U32 = 2.0 ** -24
-# Floor of the coarse-pass candidate margin, in cosine units. The rigorous
-# bound (`coarse_margin`) is 2 * 388 * 2**-24 = 4.6e-5 at 384 dimensions; the
-# floor only widens the exact re-scoring set (at 50k random 384-d rows and
-# limit 20 it adds no candidate in practice), it never decides a result.
-COARSE_MARGIN_FLOOR = 1e-4
-# Rows whose non-zero norm lies outside this range skip the float32 pass:
-# below it float32 products with the unit-scaled query underflow, above it
-# their sums can overflow, so the error bound above no longer holds. Such a
-# row is FORCED: always a candidate, scored by the exact pass. Embedding
-# models emit norms near 1 (at most a few hundred unnormalised).
-ROW_NORM_RANGE = (1e-12, 1e12)
-# Below this share of the matrix, the coarse pass multiplies only the
-# partition's rows; above it one full matrix-vector product is cheaper than
-# gathering the rows (gather copies, the product streams).
-SUBSET_SHARE = 0.25
-# Rows per exact float64 re-scoring chunk: 4096 x 384 x 8 B = 12.6 MB of
-# temporaries, whatever the candidate count (a limit=0 query re-scores all).
-EXACT_CHUNK_ROWS = 4096
-# Rows per fetch while (re)building or appending the matrix from SQLite.
-SYNC_FETCH_ROWS = 4096
-# Ids per `assertion_id IN (...)` read of the ranked rows (old SQLite builds
-# cap bound variables at 999).
-ID_FETCH_CHUNK = 500
-# Rows per transaction of the in-place JSON -> BLOB upgrade: bounds the WAL
-# growth and the write-lock hold; the `vector_blob_high_water` cursor makes
-# an interrupted upgrade resume. Measured: see `upgrade_open_s` in the 0058
-# report (50k rows of 384-d JSON vectors).
-VECTOR_UPGRADE_BATCH = 2000
 
 
 def coarse_margin(dim: int) -> float:
