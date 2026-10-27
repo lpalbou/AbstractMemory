@@ -18,10 +18,12 @@ from .provenance import (
     LEGACY_KEYS,
     PROVENANCE_KEYS,
     SOURCE_KINDS,
+    SYNTHETIC_RUN_ID_PREFIXES,
     InvalidSourceRef,
     Provenance,
     ProvenanceRequired,
     SourceRef,
+    is_synthetic_run_id,
 )
 from .revisions import CLOSE_KINDS, REVISION_CAUSES, REVISION_OPS, Revision, RevisionOp, RevisionResult
 
@@ -38,6 +40,7 @@ __all__ = [
     "REVISION_CAUSES",
     "REVISION_OPS",
     "SOURCE_KINDS",
+    "SYNTHETIC_RUN_ID_PREFIXES",
     "InvalidSourceRef",
     "MemoryGraph",
     "Provenance",
@@ -46,4 +49,5 @@ __all__ = [
     "RevisionOp",
     "RevisionResult",
     "SourceRef",
+    "is_synthetic_run_id",
 ]

@@ -335,3 +335,27 @@ def test_from_dict_refuses_a_string_where_a_list_is_expected():
         Provenance.from_dict({**base, "sources": "run:r1"})
     ok = Provenance.from_dict({**base, "derived_from": ["m1"]})
     assert ok.derived_from == ("m1",)
+
+
+# Synthetic run ids (review M5; ADR 0003 decision 11). Mutants (each turned the named test red):
+# - `SourceRef.__post_init__`: the synthetic run/step refusal removed        -> test_a_synthetic_run_id_is_never_a_source
+# - `Provenance.from_legacy`: `ledger_run` = any non-diary run id (pre-review) -> test_a_synthetic_run_id_is_never_a_source
+
+from abstractmemory.graph import SYNTHETIC_RUN_ID_PREFIXES, is_synthetic_run_id  # noqa: E402
+
+
+@pytest.mark.parametrize("run_id", ["chat-session-123", "global_memory", "session_memory_abc", "diary:ent-1"])
+def test_a_synthetic_run_id_is_never_a_source(run_id: str) -> None:
+    assert is_synthetic_run_id(run_id) and run_id.startswith(SYNTHETIC_RUN_ID_PREFIXES)
+    for kind in ("run", "step"):
+        with pytest.raises(InvalidSourceRef, match="synthetic"):
+            SourceRef.from_dict({"kind": kind, "run_id": run_id, "seq": 1} if kind == "step"
+                                else {"kind": kind, "run_id": run_id})
+    lifted = Provenance.from_legacy({"run_id": run_id, "turn_id": "t1"})
+    assert not lifted.is_grounded() and lifted.extra["run_id"] == run_id  # kept, never a ref
+    # The artifact it carries is still the ground (with no run_id stamped on it).
+    with_art = Provenance.from_legacy({"run_id": run_id, "span_id": "art-1"})
+    assert [s.to_dict() for s in with_art.sources] == [{"kind": "artifact", "artifact_id": "art-1"}]
+    # A real run id is untouched, and the diary pseudo-run still rides its diary_entry ref.
+    assert not is_synthetic_run_id("run-7f3a") and Provenance.from_legacy({"run_id": "run-7f3a"}).is_grounded()
+    assert SourceRef.from_dict({"kind": "diary_entry", "entry_id": "de-1", "run_id": "diary:ent-1"}).run_id

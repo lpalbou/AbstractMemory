@@ -27,6 +27,19 @@ _KIND_FIELDS: Mapping[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
 _STR_FIELDS = ("run_id", "step_id", "artifact_id", "message_id", "event_id", "stream", "entry_id", "runtime_id")
 _ALL_FIELDS = frozenset(_STR_FIELDS) | {"seq", "kind"}
 
+#: Run ids that NO ledger can load (ADR 0003 decision 11: "a synthetic run id that no store can load is not a
+#: source"): a chat session's id (`chat-<sid>`), the memory-scope owner ids hosts used as run ids
+#: (`session_memory_<...>`, `global_memory`), and an entity's diary pseudo-run (`diary:<entity_id>`, which rides a
+#: `diary_entry` ref as its optional run_id). Matched as prefixes. A `run` or `step` ref naming one is refused;
+#: `Provenance.from_legacy` never lifts one into a ref. The runtime's run check reuses this constant.
+SYNTHETIC_RUN_ID_PREFIXES: Tuple[str, ...] = ("chat-", "diary:", "session_memory_", "global_memory")
+
+
+def is_synthetic_run_id(run_id: Any) -> bool:
+    """True for a run id no ledger can load (`SYNTHETIC_RUN_ID_PREFIXES`)."""
+    return isinstance(run_id, str) and run_id.strip().startswith(SYNTHETIC_RUN_ID_PREFIXES)
+
+
 #: The keys of a provenance dict in the graph shape (contract §2).
 PROVENANCE_KEYS = frozenset({"sources", "derived_from", "actor", "reader", "reason", "extra"})
 
@@ -83,6 +96,12 @@ class SourceRef:
         for name in required:
             if getattr(self, name) is None:
                 raise InvalidSourceRef(f"a {kind!r} SourceRef requires {name!r} (required: {list(required)})")
+        if kind in ("run", "step") and is_synthetic_run_id(self.run_id):
+            raise InvalidSourceRef(
+                f"a {kind!r} SourceRef names the synthetic run id {self.run_id!r}, which no ledger can load "
+                f"(SYNTHETIC_RUN_ID_PREFIXES = {list(SYNTHETIC_RUN_ID_PREFIXES)}); name the artifact or diary entry "
+                "it belongs to instead"
+            )
         allowed = set(required) | set(optional) | {"runtime_id"}
         foreign = [n for n in (*_STR_FIELDS, "seq") if n not in allowed and getattr(self, n) is not None]
         if foreign:
@@ -223,8 +242,9 @@ class Provenance:
     def from_legacy(cls, flat: Mapping[str, Any], *, actor: Optional[str] = None) -> "Provenance":
         """Lift a flat legacy provenance dict into the graph shape (contract §2), in ONE place for the runtime.
 
-        - `run_id` -> a `run` ref. Exception: a diary pseudo-run id (`diary:<entity_id>`) is not a run any ledger
-          can load; it rides the `diary_entry` ref as its optional `run_id` when `entry_id` is present, else extra.
+        - `run_id` -> a `run` ref, unless it is synthetic (`SYNTHETIC_RUN_ID_PREFIXES`: no ledger can load it).
+          A diary pseudo-run id (`diary:<entity_id>`) rides the `diary_entry` ref as its optional `run_id` when
+          `entry_id` is present; any other synthetic run id stays in `extra` (never a ref).
         - `span_id` and `payload_ref` -> `artifact` refs (span_id = artifact_id, root ADR 0009; a leading
           `artifact:` prefix on payload_ref is stripped), carrying `run_id` when known.
         - `entry_id` -> a `diary_entry` ref.
@@ -246,7 +266,7 @@ class Provenance:
         run_id = _s("run_id")
         entry_id = _s("entry_id")
         diary_run = run_id if run_id and run_id.startswith("diary:") else None
-        ledger_run = run_id if run_id and not diary_run else None
+        ledger_run = run_id if run_id and not is_synthetic_run_id(run_id) else None
         sources: List[Dict[str, Any]] = []
         if ledger_run:
             sources.append({"kind": "run", "run_id": ledger_run})
