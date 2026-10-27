@@ -19,7 +19,7 @@ AbstractMemory is a Python library for durable, append-only agent memory: tempor
 - FAQ: [`faq.md`](faq.md) — common questions and current limits.
 - Troubleshooting: [`troubleshooting.md`](troubleshooting.md) — symptom-oriented fixes for setup, retrieval, embedding-space, durability, and maintenance problems.
 - Development: [`development.md`](development.md) — local setup, tests, and the design backlog.
-- Architecture decisions: [`adr/README.md`](adr/README.md) — durable rules, starting with ADR 0001 (an altered memory ripples through the memories connected to it).
+- Architecture decisions: [`adr/README.md`](adr/README.md) — durable rules, including ADR 0001 (an altered memory ripples through the memories connected to it) and ADR 0002 (AbstractMemory owns the semantic temporal memory graph and all of its processing; applications build on it).
 
 ## Related
 

@@ -1,7 +1,9 @@
 # ADR 0001: An altered memory ripples through the memories connected to it
 
-Status: Accepted (operator ruling, 2026-10-21; activation model confirmed with the operator the same day). Aspirational for AbstractMemory's own maintenance passes;
-already implemented by a consumer (AbstractNote, see Related).
+Status: Accepted (operator ruling, 2026-10-21; activation model confirmed with the operator the same day).
+Amended 2026-10-27 (operator ruling): the ripple is AbstractMemory's process end to end, not a consumer's
+(ADR 0002). Aspirational: AbstractMemory does not implement it yet; AbstractNote holds a prototype
+(its ADR 0008 propagation lane) that is to be absorbed here, not kept as the implementation.
 
 ## Context
 
@@ -91,9 +93,11 @@ asks "given that A changed this much, what must be reconsidered about B and E?".
 - The journal grows: one record per reconsideration and per change event.
 
 ### Neutral
-- AbstractMemory provides the primitives (change records, closure causes, additive windows, journal history);
-  the reconsideration itself lives where the reader lives (a consumer such as AbstractNote, or a future
-  AbstractMemory pass that owns a reader).
+- AbstractMemory owns the whole ripple: the primitives (change records, closure causes, additive windows,
+  journal history), the propagation and activation, the budget and the reconsideration step. The reader that
+  decides what a reconsidered memory now means (decision 4) is a model the host supplies to AbstractMemory
+  (an injected reader), so the process lives here while the model choice stays with the host. Consumers
+  (AbstractNote, AbstractEntity, gateway apps) trigger and display ripples; they do not implement them.
 
 ## Enforcement
 
@@ -107,7 +111,9 @@ asks "given that A changed this much, what must be reconsidered about B and E?".
 - Threshold constants live in one module with their calibration quoted; a second copy of a threshold is a
   review failure.
 - Docs: `memory-system.md` "Sleep and dreams" MUST describe the ripple when the pass gains one; until then it
-  states that the ripple is the consumer's job and points here.
+  states that the ripple is planned in AbstractMemory (backlog 0054) and points here.
+- A consumer package MUST NOT add its own ripple, propagation or activation logic over memories; a gap in
+  AbstractMemory is raised as an AbstractMemory backlog item (ADR 0002).
 
 ## Validation
 
@@ -126,12 +132,16 @@ asks "given that A changed this much, what must be reconsidered about B and E?".
 - Proposed: [ripple_wave/0001_change_records_and_ripple_primitives.md](../backlog/proposed/ripple_wave/0001_change_records_and_ripple_primitives.md)
   (the AbstractMemory primitives: change records with magnitude, closure causes, `maintenance_due` counting pending
   ripples, `narrow_assertion`).
-- First implementation by a consumer: AbstractNote ADR 0008 and its propagation lane (R6, 2026-10-20/21: calibrated
+- Planned: [knowledge_graph_convergence/0054_ripple_propagation_and_activation.md](../backlog/planned/knowledge_graph_convergence/0054_ripple_propagation_and_activation.md)
+  (the propagation, activation and reconsideration process in AbstractMemory).
+- Prototype to absorb, not to keep: AbstractNote ADR 0008 and its propagation lane (R6, 2026-10-20/21: calibrated
   thresholds, decay 0.5, floor 0.1, one hop per pass, budgeted stage, no-call settle), see
-  `abstractnote/docs/adr/0008-interpretation-is-a-derived-view.md` and `abstractnote/untracked/briefs/R6-propagation-design.md`.
+  `abstractnote/docs/adr/0008-interpretation-is-a-derived-view.md`, `abstractnote/untracked/briefs/R6-propagation-design.md`,
+  and AbstractNote's unmerged branch `retro/integration` (`recall/propagation.py`, `recall/activation.py`).
 
 ## Related
 
+- ADR 0002 (AbstractMemory owns the semantic temporal memory graph and all its processing).
 - Root framework ADR-0026 (truncation policy: nothing silent).
 - `memory-system.md` (attention, closures, sleep and dreams), `api.md` (closure records, `close_assertion`, consolidation).
 - AbstractEntity's maintenance phases (the sleep phase where the graph is tended) as prior art for a scheduled, bounded night.

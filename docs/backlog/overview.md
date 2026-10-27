@@ -9,8 +9,9 @@ inspect the current code first, then update the item if reality has changed.
 
 ## Current Status (reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 0 — every planned item either shipped (moved to `completed/`)
-  or was superseded (moved to `deprecated/`).
+- Planned: 6 — `planned/knowledge_graph_convergence/` (0050-0055, added
+  2026-10-27, ADR 0002). Before that date every planned item had shipped
+  (moved to `completed/`) or was superseded (moved to `deprecated/`).
 - Proposed: 13 GENUINELY open (4 in `memory_system_v1` + 9 in
   `extension_wave`)
 - Completed: 33 (12 standalone/wave items + 20 `memory_system_v1`
@@ -19,7 +20,15 @@ inspect the current code first, then update the item if reality has changed.
   activation; `006` by the shipped channel set)
 - Recurrent: 0
 
-GENUINELY OPEN (the honest desk, 2026-07-20):
+GENUINELY OPEN (the honest desk, 2026-07-20; convergence track added 2026-10-27):
+- `planned/knowledge_graph_convergence/` (0050-0055) — operator ruling
+  2026-10-27 (ADR 0002): AbstractMemory IS the semantic temporal memory
+  graph and owns all of its processing. Absorb what AbstractNote built over a
+  parallel graph (entity registry and reversible merges, claim lifecycle and
+  revision log, document-knowledge retrieval, communities/consolidation/
+  reflection, the ripple process, a notes/diary layer shared with
+  AbstractEntity). `narrow_assertion` first: it removes AbstractNote's
+  private-table write.
 - `proposed/ripple_wave/0001` — change records with magnitude, closure causes,
   `narrow_assertion`, ripple-aware `maintenance_due`, the bound read (ADR 0001,
   operator ruling 2026-10-21: an altered memory ripples through connected memories).
@@ -145,10 +154,25 @@ cross-package pre-commit gate for this package. Design corpus: a2a thread
 
 ## Planned Items
 
-None — the 2026-07-20 reconciliation moved every planned item to
+The 2026-07-20 reconciliation moved every earlier planned item to
 `completed/` (001-007 standalone, subconscious_wave 0032-0035,
 extension_wave 0037-0039) or `deprecated/` (001/003/006, each with the
-superseding pointer). New accepted work enters here as before.
+superseding pointer).
+
+### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0055)
+
+Operator ruling 2026-10-27 ([ADR 0002](../adr/0002-abstractmemory-owns-the-memory-graph.md)); see the
+[track README](planned/knowledge_graph_convergence/README.md) for scope, reading order and prior art.
+Consumer side: AbstractNote backlog 0033-0036.
+
+| Item | Priority | Notes |
+| --- | --- | --- |
+| [`0050_entity_registry_identity_and_reversible_merges.md`](planned/knowledge_graph_convergence/0050_entity_registry_identity_and_reversible_merges.md) | High | One canonical entity; candidate lookup; reversible merges; review; unify with `alias_world_model`. |
+| [`0051_claim_lifecycle_and_revision_log.md`](planned/knowledge_graph_convergence/0051_claim_lifecycle_and_revision_log.md) | High | Revision log with causes; claims with provenance; public `narrow_assertion` (ship first). |
+| [`0052_document_knowledge_retrieval.md`](planned/knowledge_graph_convergence/0052_document_knowledge_retrieval.md) | Medium | Hybrid search with facets, expansion, timelines, then-versus-now, change feed, as-received. |
+| [`0053_self_organisation_communities_consolidation_reflection.md`](planned/knowledge_graph_convergence/0053_self_organisation_communities_consolidation_reflection.md) | Medium | Communities, topics, document consolidation, reflection and insights, review list. |
+| [`0054_ripple_propagation_and_activation.md`](planned/knowledge_graph_convergence/0054_ripple_propagation_and_activation.md) | High | ADR 0001's process; absorbs AbstractNote's R6 prototype; promote `proposed/ripple_wave/0001` with it. |
+| [`0055_notes_and_diary_layer_for_consumers.md`](planned/knowledge_graph_convergence/0055_notes_and_diary_layer_for_consumers.md) | Medium | A note/diary abstraction over the graph for AbstractNote and AbstractEntity. |
 
 ## Proposed Items
 

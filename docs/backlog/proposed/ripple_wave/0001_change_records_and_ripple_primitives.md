@@ -12,8 +12,10 @@ store and journal, so that a consumer's (or a future pass's) ripple can be compu
 
 ## Why
 Operator ruling 2026-10-21: an altered memory must ripple to the memories that relied on it, evaluated hop by hop by
-effect, iteratively, bounded and visible. AbstractNote already implements the reconsideration (ADR 0008, lane R6);
-AbstractMemory should own the primitives so every consumer shares them.
+effect, iteratively, bounded and visible. Amended 2026-10-27 (ADR 0002): AbstractMemory owns the whole ripple; these
+primitives are its first step, and the process itself is planned in
+`planned/knowledge_graph_convergence/0054_ripple_propagation_and_activation.md`. AbstractNote's lane R6 (its ADR 0008)
+is a prototype to absorb.
 
 ## Current code reality
 `close_assertion` (0.3.1) and the closure kind `reinterpreted` (0.3.2) exist; closures carry `reason` text but no
@@ -22,7 +24,7 @@ structured cause; there is no change record and no magnitude; `maintenance_due` 
 
 ## Scope
 In: the five primitives above, additive, both store backends and the journal, docs (`api.md`, `memory-system.md`),
-tests with mutants. Out: the reader-driven reconsideration itself (consumer side) and any text rule on content.
+tests with mutants. Out: the propagation and reconsideration process (item 0054, also in AbstractMemory) and any text rule on content.
 
 ## Validation
 Unit tests per primitive with mutants; a consumer-shaped scenario test (a type change on one memory produces a change
