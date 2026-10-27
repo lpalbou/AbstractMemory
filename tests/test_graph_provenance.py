@@ -392,3 +392,28 @@ def test_from_legacy_reads_the_runtime_stamped_mixed_shape() -> None:
         Provenance.from_dict(stamped)  # strict: the flat keys are not the graph shape
     with pytest.raises(InvalidSourceRef):  # the stamped sources are validated
         Provenance.from_legacy({**stamped, "sources": [{"kind": "step", "run_id": "run-abc"}]})
+
+
+# Source digests (architect review A4). Mutants (each turned the test red):
+# - `SourceRef.__post_init__`: the digest format check removed               -> test_a_source_ref_carries_a_digest_beside_its_address
+# - `SourceRef.to_dict`: digest not emitted (lost in memg_provenance.ref_json) -> test_a_source_ref_carries_a_digest_beside_its_address
+
+def test_a_source_ref_carries_a_digest_beside_its_address(tmp_path) -> None:
+    import hashlib
+
+    from graph_support import claim, open_home, rev
+
+    digest = hashlib.sha256(b"the STARTED record").hexdigest()
+    ref = SourceRef.from_dict({"kind": "step", "run_id": "run-1", "seq": 3, "digest": digest.upper()})
+    assert ref.digest == digest and ref.to_dict()["digest"] == digest
+    assert ref.key() == "step:run-1#3"  # the key stays the address
+    for bad in ("abc", "g" * 64, digest + "0"):
+        with pytest.raises(InvalidSourceRef, match="digest"):
+            SourceRef.from_dict({"kind": "artifact", "artifact_id": "a", "digest": bad})
+    with pytest.raises(InvalidSourceRef, match="different digests"):
+        Provenance(sources=[ref.to_dict(), dict(ref.to_dict(), digest="0" * 64)], actor="runtime")
+    home = open_home(tmp_path, "sqlite")
+    home.graph.apply_revision(rev("r-d", claim("d-1"), provenance={"sources": [ref.to_dict()], "actor": "runtime"}))
+    [stored] = home.graph.sources_of("d-1")
+    assert stored.digest == digest  # kept in memg_provenance.ref_json
+    home.close()

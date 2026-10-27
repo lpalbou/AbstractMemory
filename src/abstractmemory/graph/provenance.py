@@ -9,6 +9,7 @@ wire).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -24,7 +25,9 @@ _KIND_FIELDS: Mapping[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "event": (("event_id",), ("stream",)),
     "diary_entry": (("entry_id",), ("run_id",)),
 }
-_STR_FIELDS = ("run_id", "step_id", "artifact_id", "message_id", "event_id", "stream", "entry_id", "runtime_id")
+_STR_FIELDS = ("run_id", "step_id", "artifact_id", "message_id", "event_id", "stream", "entry_id", "runtime_id",
+               "digest")
+_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _ALL_FIELDS = frozenset(_STR_FIELDS) | {"seq", "kind"}
 
 #: Run ids that NO ledger can load (ADR 0003 decision 11: "a synthetic run id that no store can load is not a
@@ -79,6 +82,9 @@ class SourceRef:
     stream: Optional[str] = None
     entry_id: Optional[str] = None
     runtime_id: Optional[str] = None
+    # sha256 hex of the verbatim at stamp time (the compact STARTED ledger record, the artifact's bytes, a diary
+    # entry's record_hash): rides BESIDE the address, never part of the key; the runtime stamps and verifies it.
+    digest: Optional[str] = None
 
     def __post_init__(self) -> None:
         kind = str(self.kind or "").strip().lower()
@@ -103,7 +109,12 @@ class SourceRef:
                 f"(SYNTHETIC_RUN_ID_PREFIXES = {list(SYNTHETIC_RUN_ID_PREFIXES)}); name the artifact or diary entry "
                 "it belongs to instead"
             )
-        allowed = set(required) | set(optional) | {"runtime_id"}
+        if self.digest is not None:
+            digest = self.digest.lower()
+            if not _DIGEST_RE.fullmatch(digest):
+                raise InvalidSourceRef(f"SourceRef.digest is a sha256 hex digest, 64 hex characters (got {self.digest!r})")
+            object.__setattr__(self, "digest", digest)
+        allowed = set(required) | set(optional) | {"runtime_id", "digest"}
         foreign = [n for n in (*_STR_FIELDS, "seq") if n not in allowed and getattr(self, n) is not None]
         if foreign:
             raise InvalidSourceRef(
@@ -129,7 +140,7 @@ class SourceRef:
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"kind": self.kind}
         for name in ("run_id", "seq", "step_id", "artifact_id", "message_id", "event_id", "stream", "entry_id",
-                     "runtime_id"):
+                     "runtime_id", "digest"):
             value = getattr(self, name)
             if value is not None:
                 out[name] = value
@@ -153,7 +164,10 @@ def _coerce_sources(sources: Iterable[Any]) -> Tuple[SourceRef, ...]:
     out: Dict[str, SourceRef] = {}
     for item in sources or ():
         ref = SourceRef.from_dict(item)
-        out.setdefault(ref.key(), ref)  # duplicates collapse on the canonical key, first wins
+        first = out.setdefault(ref.key(), ref)  # duplicates collapse on the canonical key, first wins
+        if first.digest and ref.digest and first.digest != ref.digest:
+            raise InvalidSourceRef(f"two refs to {ref.key()} carry different digests ({first.digest[:12]}..., "
+                                   f"{ref.digest[:12]}...): the same source cannot have had two contents")
     return tuple(out.values())
 
 
