@@ -26,6 +26,7 @@ from .provenance import (
     SourceRef,
     is_synthetic_run_id,
 )
+from . import lancedb_backend  # noqa: F401  registers the LanceDB connector (lancedb itself is imported lazily)
 from .revisions import CLOSE_KINDS, REVISION_CAUSES, REVISION_OPS, Revision, RevisionOp, RevisionResult
 
 __all__ = [

@@ -28,6 +28,8 @@ from abstractmemory import (
 from abstractmemory.graph import MemoryGraph, Revision, RevisionOp
 
 KINDS = ("sqlite", "sqlite-offfile", "memory")
+#: Every connector of abstractmemory.graph.backend (the conformance suite runs on each).
+BACKENDS = ("sqlite", "memory", "lancedb")
 
 
 def T(month: int, day: int = 1) -> str:
@@ -114,6 +116,15 @@ class Home:
 
 
 def open_home(tmp_path: Path, kind: str, name: str = "home", embedder: Any = None) -> Home:
+    if kind == "lancedb":
+        from abstractmemory import LanceDBTripleStore
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # no embedding pin on LanceDB (its #FALLBACK)
+            store = LanceDBTripleStore(tmp_path / f"{name}-lance", embedder=embedder)
+        journal_path = tmp_path / f"{name}-journal.sqlite3"  # a LanceDB mind keeps its journal elsewhere
+        journal = SQLiteJournal(journal_path)
+        return Home(kind, store, journal, MemoryGraph(store, journal), tmp_path / f"{name}-lance", journal_path)
     if kind == "memory":
         store = InMemoryTripleStore(embedder=embedder)
         with warnings.catch_warnings():
@@ -169,3 +180,24 @@ def home_state(home: Home) -> Any:
 def graph_tables(path: Path) -> Dict[str, List[tuple]]:
     """The four memg_* tables and the triple table of a home file."""
     return {t: rows for t, rows in file_state(path).items() if t.startswith("memg_") or t == "triples"}
+
+
+def mind_dump(home: Home) -> Dict[str, Any]:
+    """Everything a mind holds, read through the PUBLIC surface only (works on every connector): every triple, the
+    whole revision log, each memory's history and labelled sources, and the journal's closures."""
+    rows = store_dump(home.store)
+    revisions, cursor = [], None
+    while True:
+        page, cursor = home.graph.revisions(after=cursor, limit=1000)
+        if not page:
+            break
+        revisions.extend(r.to_dict() for r in page)
+    ids = [r["assertion_id"] for r in rows]
+    return {
+        "rows": rows,
+        "revisions": revisions,
+        "history": {i: home.graph.history(i) for i in ids},
+        "sources": {i: [{**d, "ref": d["ref"].to_dict()} for d in home.graph.sources_of(i, labelled=True)]
+                    for i in ids},
+        "closures": sorted((c.closure_id, c.assertion_id, c.kind) for c in home.journal.closures(limit=0)),
+    }

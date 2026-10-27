@@ -549,12 +549,18 @@ class _SQLiteBackend(GraphBackend):
                 f"UPDATE {self.t_rev} SET journal_applied = 1 WHERE revision_id = ?", (rid,))
 
 
-def _row_revision(r: sqlite3.Row) -> Revision:
-    return Revision.from_dict({
+def _row_revision_dict(r: Any) -> Dict[str, Any]:
+    """A logged revision row (any connector's: a mapping with the memg_revisions columns) as `Revision.from_dict`
+    input."""
+    return {
         "revision_id": r["revision_id"], "scope": r["scope"], "owner_id": r["owner_id"], "cause": r["cause"],
         "occurred_at": r["occurred_at"], "recorded_at": r["recorded_at"], "ops": json.loads(r["ops_json"]),
         "provenance": json.loads(r["provenance_json"]), "summary": r["summary"],
-    })
+    }
+
+
+def _row_revision(r: sqlite3.Row) -> Revision:
+    return Revision.from_dict(_row_revision_dict(r))
 
 
 def _sqlite_rows(store: SQLiteTripleStore,
