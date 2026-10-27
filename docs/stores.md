@@ -143,6 +143,8 @@ Persistence:
 - Data is stored under the provided `uri` (directory path).
 - Behavior is covered by the persistence test: [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
 
+As a graph home (`MemoryGraph(LanceDBTripleStore(...), journal)`, the LanceDB connector): the graph creates the triple table with an explicit schema (and adds missing nullable columns to a table `add` created from its first batch), keeps its revision log, history, provenance and derivation tables beside it, and writes each revision log-first so `repair()` can finish a crash-interrupted one. The journal lives elsewhere (a `SQLiteJournal` file). What it cannot promise, unlike SQLite: serialized writers across processes, and invisibility of a half-written revision before `repair()` ([`api.md`](api.md#connectors-abstractmemorygraphbackend), ADR 0003 decision 3).
+
 Stored columns (v0):
 - `assertion_id` (uuid)
 - `subject`, `predicate`, `object`, `scope`, `owner_id`

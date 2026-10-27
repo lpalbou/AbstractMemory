@@ -5,11 +5,26 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-10-27
 
-The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md), backlog
-0056): every change is a revision, every memory points back to the ledger. Additive: every 0.3.x call keeps working
-(`close_assertion` stays; `ClosureRecord` gains only the `merged` kind).
+The memory graph ([ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md), backlogs 0056-0058):
+`abstractmemory.graph.MemoryGraph` is the only manipulation surface of a mind; every change is a revision, every
+memory points back to the ledger, and every database is a connector behind the graph (SQLite the default). The home
+store holds a notebook-sized corpus. The API is additive: every 0.3.x call keeps working (`close_assertion` stays;
+`ClosureRecord` gains only the `merged` kind). Operator decisions adopted (2026-10-27): visibility is strict
+ownership (lineage never crosses owners; ADR 0003 decision 2); stores are connectors behind `MemoryGraph`, SQLite the
+default (decision 3); the vector re-encoding below is a documented one-way migration with a `vector_encoding` marker.
+
+### Upgrade notes: ONE-WAY migration
+
+- Opening a SQLite home with 0.4.0 rewrites its JSON-text vectors as float32 BLOBs. A 0.3.x reader decodes JSON
+  vectors only: on a home a 0.4.0 process has written it silently finds no vectors (zero semantic hits, no error).
+  Every process sharing a home or a plane must move to 0.4.0 together; an entity home copied to a 0.3.x install
+  loses semantic recall. A 0.4.0 home declares it: `<table>_meta` key `vector_encoding` = `float32-blob`
+  (`abstractmemory.vector_matrix.VECTOR_ENCODING_KEY`), written by the first write or by the upgrade, never by a
+  plain open.
+- Graph homes add four tables (`memg_revisions`, `memg_provenance`, `memg_derivations`, `memg_history`) on first
+  use; nothing else in an existing file changes shape.
 
 ### Added
 
@@ -60,7 +75,8 @@ The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provena
 - **`narrow_assertion(assertion_id, valid_until)`** on `SQLiteTripleStore` and `InMemoryTripleStore`: moves an
   already-closed validity window earlier and never widens it (`ValueError` for an open window or a value that is
   not a timestamp; `False` for an unknown id or a date at or after the current end, compared as instants). `LanceDBTripleStore.narrow_assertion` raises
-  `NotImplementedError` (backlog 0057). AbstractNote no longer needs to write the store's private table.
+  `NotImplementedError` (on LanceDB a window changes through the graph's LanceDB connector). AbstractNote no longer
+  needs to write the store's private table.
 - **Closure kind `merged`** (`abstractmemory.journal.CLOSURE_KINDS`): the memory was merged into another, named in
   `replacement_ids`. `close_assertions` and `close_record` accept it.
 - Docs: `api.md` (the graph section and its tables), `memory-system.md` ("Time axes", "Provenance").
@@ -104,15 +120,8 @@ a handle 0.44 s, it builds the matrix); file 449 MB -> 122 MB; MemorySystem
   rows of 384-d vectors). Stored precision is float32: a score differs from
   the float64 value an embedder returned by about 1e-7. A value float32 cannot
   hold raises `ValueError` at write (zero rows written) instead of being
-  stored as infinity; `stored_vector` returns the float32 values.
-  **This is a ONE-WAY migration.** A 0.3.x reader decodes JSON vectors only:
-  on a home a 0.4.0 process has opened it silently finds no vectors (zero
-  semantic hits, no error). Every process sharing a home or a plane must move
-  to 0.4.0 together, and an entity home copied to a 0.3.x install loses
-  semantic recall. A 0.4.0 home declares it in its meta table
-  (`<table>_meta`: `vector_encoding = float32-blob`,
-  `abstractmemory.vector_matrix.VECTOR_ENCODING_KEY`) so a reader can tell; the key is written by the first
-  write (or by the upgrade that rewrote JSON vectors), never by a plain open.
+  stored as infinity; `stored_vector` returns the float32 values. One-way: see
+  "Upgrade notes" above.
 - **Opening a home is a read.** `SQLiteTripleStore` and `SQLiteJournal` take no write lock when opening an
   up-to-date home (the keyword-index and vector backfills run only when there is work; every insert path keeps
   their cursors at the head; the journal checks its schema in a deferred transaction), so a reader never waits
