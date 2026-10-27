@@ -168,6 +168,15 @@ from .spreading import SpreadParams
 from .sqlite_store import SQLiteTripleStore, read_embedding_pin
 from .store import TripleQuery, TripleStore
 from .system import MemorySystem
+from .graph import (
+    InvalidSourceRef,
+    MemoryGraph,
+    Provenance,
+    ProvenanceRequired,
+    Revision,
+    RevisionOp,
+    SourceRef,
+)
 
 __all__ = [
     "ALIAS_OVERLAP_FLOOR",
@@ -205,12 +214,14 @@ __all__ = [
     "IDENTITY_SCOPE_PENDING_RULING",
     "InMemoryJournal",
     "InMemoryTripleStore",
+    "InvalidSourceRef",
     "KIND_RANKS",
     "LanceDBTripleStore",
     "MANIFEST_VERSION",
     "MECHANICAL_DIGEST_METHODS",
     "MEMORY_RECORD_KINDS",
     "MemoryEvent",
+    "MemoryGraph",
     "MemoryHandle",
     "MemoryJournal",
     "MemoryRecordInput",
@@ -222,6 +233,8 @@ __all__ = [
     "ProbeBudget",
     "ProbeHit",
     "ProbeResult",
+    "Provenance",
+    "ProvenanceRequired",
     "RECENT_RECORDS_DEFAULT_LIMIT",
     "REDIGESTION_PROTECTED_KINDS",
     "REFLECTION_FORM_KINDS",
@@ -230,6 +243,8 @@ __all__ = [
     "ReconstructionResult",
     "ReconstructionTrace",
     "RedigestionCandidate",
+    "Revision",
+    "RevisionOp",
     "SELF_FRACTION_FLOOR",
     "SHARED_VULNERABILITY_STATEMENT",
     "SQLiteJournal",
@@ -237,6 +252,7 @@ __all__ = [
     "ScopeBinding",
     "SituateBudget",
     "SleepTuning",
+    "SourceRef",
     "SpreadParams",
     "Stimulus",
     "TextEmbedder",
