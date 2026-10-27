@@ -278,6 +278,11 @@ def test_change_feed_is_lossless_under_a_concurrent_writer(tmp_path: Path, kind:
     assert reader.graph.revisions(after=cursor) == ([], cursor)  # an idle cursor stays put
     with pytest.raises(ValueError):
         reader.graph.revisions(after="not-a-cursor")
+    # Review M9: a cursor beyond the head (another graph's, or invented) would skip every revision below it.
+    # Mutant: the head check in MemoryGraph.revisions removed -> red.
+    with pytest.raises(ValueError, match="beyond this log's head"):
+        reader.graph.revisions(after=str(total + 1))
+    assert reader.graph.revisions(after=str(total))[0] == []
     if kind == "sqlite":
         writer_store.close()
     reader.close()

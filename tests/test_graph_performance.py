@@ -45,6 +45,7 @@ def expected_plans(graph: MemoryGraph) -> Dict[str, List[str]]:
         "with_ref_key": [f"idx_{b.t_prov}_ref_key (ref_key=?)"],
         "with_run": [f"idx_{b.t_prov}_run_id (run_id=?)"],
         "revisions_page": ["INTEGER PRIMARY KEY (rowid>?)"],
+        "log_head": [f"SEARCH {b.t_rev}"],  # MAX(seq) on the integer primary key: one b-tree descent
         "pending_journal": [f"USING INDEX idx_{b.t_rev}_pending"],
         "closed_payload": [hist_ix],
     }

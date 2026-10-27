@@ -340,6 +340,7 @@ class _SQLiteBackend:
             "with_ref_key": f"SELECT memory_id FROM {p} WHERE ref_key = ? ORDER BY rowid LIMIT ?",
             "with_run": f"SELECT memory_id FROM {p} WHERE run_id = ? ORDER BY rowid",
             "revisions_page": f"SELECT * FROM {r} WHERE seq > ? ORDER BY seq LIMIT ?",
+            "log_head": f"SELECT MAX(seq) FROM {r}",
             "pending_journal": f"SELECT * FROM {r} WHERE journal_applied = 0 ORDER BY seq LIMIT ?",
             "closed_payload": (f"SELECT detail_json FROM {h} WHERE memory_id = ? AND revision_id = ? AND event = ? "
                                "LIMIT 1"),
@@ -463,6 +464,10 @@ class _SQLiteBackend:
     def revisions_page(self, after: int, limit: int) -> List[Tuple[int, Revision]]:
         rows = self._read(self.sql["revisions_page"], (after, limit))
         return [(int(r["seq"]), _row_revision(r)) for r in rows]
+
+    def log_head(self) -> int:
+        row = self._read(self.sql["log_head"], ())[0]
+        return int(row[0] or 0)
 
     def pending_journal(self, limit: int) -> List[Revision]:
         rows = self._read(self.sql["pending_journal"], (limit,))
@@ -761,6 +766,10 @@ class _MemoryBackend:
     def revisions_page(self, after: int, limit: int) -> List[Tuple[int, Revision]]:
         with self._lock:
             return [(e["seq"], e["revision"]) for e in self.revisions if e["seq"] > after][:limit]
+
+    def log_head(self) -> int:
+        with self._lock:
+            return len(self.revisions)
 
     def pending_journal(self, limit: int) -> List[Revision]:
         with self._lock:
@@ -1128,7 +1137,8 @@ class MemoryGraph:
         """The change feed: revisions in log order strictly after the cursor, and the next cursor (`str(seq)` of the
         last one returned; unchanged when nothing is new). Lossless: no revision is skipped or repeated across
         calls, including while writers append (a revision's seq is allocated inside its write transaction, and
-        write transactions are serialized, so commit order is seq order)."""
+        write transactions are serialized, so commit order is seq order). A cursor beyond the log's head (from
+        another graph, or invented) raises ValueError: it would silently skip every revision below it."""
         n = _check_limit(limit)
         if after is None or after == "":
             position = 0
@@ -1136,6 +1146,12 @@ class MemoryGraph:
             position = int(after)
         else:
             raise ValueError(f"revisions(after=) takes a cursor returned by a previous call (got {after!r})")
+        if position:
+            head = self._b.log_head()
+            if position > head:  # never handed out by this log (another graph's, or invented): later revisions
+                raise ValueError(  # below it would never be delivered
+                    f"revisions(after={after!r}): beyond this log's head ({head}); a cursor comes from a previous "
+                    "call on the same graph")
         page = self._b.revisions_page(position, n)
         cursor = str(page[-1][0]) if page else str(position)
         return [rev for _, rev in page], cursor
