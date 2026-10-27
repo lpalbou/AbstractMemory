@@ -27,7 +27,8 @@ from graph_support import FakeEmbedder, claim, file_state, prov, rev, step
 
 
 def _open_all(path: Path):
-    store = SQLiteTripleStore(path, embedder=FakeEmbedder())
+    embedder = FakeEmbedder()
+    store = SQLiteTripleStore(path, embedder=embedder, embedding_pin={"model_id": embedder.model, "dimension": 64})
     journal = SQLiteJournal(path)
     return store, journal, MemoryGraph(store, journal)
 
