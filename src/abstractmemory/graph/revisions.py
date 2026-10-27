@@ -7,7 +7,8 @@ idempotent on its id, and replaying the log into an empty store yields the same 
 - ``assert``: payload = `TripleAssertion.to_dict()` (assertion_id may be given; the graph assigns a deterministic
   one otherwise, so the logged revision replays byte-identically).
 - ``close``: payload = {assertion_id, valid_until, kind, replacement_ids, reason, ripple_source, ripple_hops}; sets
-  the row's window AND writes the journal closure (cause fields on its provenance) in the same op.
+  the row's window (when it is still open; a bounded window is kept) AND writes the journal closure (cause fields on
+  its provenance) in the same op. A memory is closed once; a second close is skipped.
 - ``narrow``: payload = {assertion_id, valid_until, reason}; moves an already-closed window earlier only.
 """
 
@@ -198,7 +199,8 @@ class Revision:
 class RevisionResult:
     """What `apply_revision` did. `applied` is False when the revision id was already in the log (nothing changed).
     `skipped` lists ops that changed nothing (`{"op", "index", "assertion_id", "why"}`): an assert of an id the
-    store already holds, a close of an already-closed window, a narrow of a window already at or before the date."""
+    graph already holds, a close of a memory the graph already closed, a narrow of a window already at or before
+    the date."""
 
     revision_id: str
     applied: bool

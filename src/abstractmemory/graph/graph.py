@@ -205,6 +205,12 @@ class _SQLiteTx:
             f"SELECT 1 FROM {self.b.t_hist} WHERE memory_id = ? AND event = ? LIMIT 1", (mid, _EVENT_ASSERTED)
         ).fetchone() is not None
 
+    def closing_revision(self, mid: str) -> Optional[str]:
+        row = self.cur.execute(
+            f"SELECT revision_id FROM {self.b.t_hist} WHERE memory_id = ? AND event = ? ORDER BY seq LIMIT 1",
+            (mid, _EVENT_CLOSED)).fetchone()
+        return str(row[0]) if row else None
+
     def digest_assertion_for(self, graph_id: str) -> Optional[str]:
         row = self.cur.execute(
             f"SELECT assertion_id FROM {self.b.table} WHERE subject = ? AND predicate = ? "
@@ -520,6 +526,12 @@ class _MemoryTx:
 
     def memory_known(self, mid: str) -> bool:
         return mid in self.b.known
+
+    def closing_revision(self, mid: str) -> Optional[str]:
+        for h in self.b.hist:
+            if h["memory_id"] == mid and h["event"] == _EVENT_CLOSED:
+                return str(h["revision_id"])
+        return None
 
     def digest_assertion_for(self, graph_id: str) -> Optional[str]:
         subject = canonicalize_term(graph_id)
@@ -849,16 +861,24 @@ class MemoryGraph:
                         "adopt it with an 'import' or 'migration' revision first (its window then changes through "
                         "the graph, with a cause)")
                 if op.op == "close":
-                    if not tx.close_row(aid, payload["valid_until"]):
+                    # A memory is closed ONCE through the graph. An open window is closed at the op's valid_until;
+                    # a window the claim was asserted with (or narrowed to) stays as it is, but the close still
+                    # records its cause and writes the closure (a retracted "until June" claim must leave ranked
+                    # retrieval too); the history detail says which (`window_closed`, `row_valid_until`).
+                    earlier = tx.closing_revision(aid)
+                    if earlier is not None:
                         result.skipped.append({"op": "close", "index": index, "assertion_id": aid,
-                                               "why": f"window already closed (valid_until={window[1]})"})
+                                               "why": f"already closed by revision {earlier!r}"})
                         continue
+                    window_closed = tx.close_row(aid, payload["valid_until"])
                     closure = _closure_record(rev, payload)
                     if self._journal is not None and not tx.write_closure(closure):
                         pending.append(closure)
                     result.closed.append(aid)
                     tx.add_history(aid, _EVENT_CLOSED, at, rid, {
-                        **payload, "closure_id": closure.closure_id if self._journal is not None else None})
+                        **payload, "closure_id": closure.closure_id if self._journal is not None else None,
+                        "window_closed": window_closed,
+                        "row_valid_until": payload["valid_until"] if window_closed else window[1]})
                 else:  # narrow (raises ValueError on an open window: the whole revision rolls back)
                     if not tx.narrow_row(aid, payload["valid_until"]):
                         result.skipped.append({"op": "narrow", "index": index, "assertion_id": aid,
