@@ -86,6 +86,11 @@ DIGEST_PREDICATE = "dcterms:abstract"
 ADOPTING_CAUSES = ("import", "migration")
 
 _EVENT_ASSERTED, _EVENT_CLOSED, _EVENT_NARROWED = "asserted", "closed", "narrowed"
+#: How a provenance-index row reached a memory: the memory's own provenance, or the revision that wrote it (a memory
+#: whose own provenance is lineage only is still found from the step that produced it).
+VIA_MEMORY, VIA_REVISION = "memory", "revision"
+#: Columns added to the provenance index after it first shipped: (name, DDL). Migrated in place when a graph opens.
+_PROV_ADDED_COLUMNS: Tuple[Tuple[str, str], ...] = (("via", "TEXT NOT NULL DEFAULT 'memory'"),)
 
 # The triple store's column set this module's insert path writes. Checked when a graph opens: a store schema change
 # (backlog 0058's binary vectors, say) must update `_sqlite_rows` too, so it fails loudly here instead of writing a
@@ -288,10 +293,12 @@ class _SQLiteTx:
             f"INSERT INTO {self.b.t_hist} (memory_id, event, at, revision_id, detail_json) VALUES (?, ?, ?, ?, ?)",
             (mid, event, at, rid, _dump(detail)))
 
-    def add_source(self, mid: str, ref: SourceRef, rid: str) -> None:
+    def add_source(self, mid: str, ref: SourceRef, rid: str, via: str = VIA_MEMORY) -> None:
+        """First row per (memory, ref key) wins: write the memory's own refs before the revision's."""
         self.cur.execute(
-            f"INSERT OR IGNORE INTO {self.b.t_prov} (memory_id, ref_key, ref_kind, run_id, revision_id, ref_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)", (mid, ref.key(), ref.kind, ref.run_id, rid, _dump(ref.to_dict())))
+            f"INSERT OR IGNORE INTO {self.b.t_prov} (memory_id, ref_key, ref_kind, run_id, revision_id, ref_json, "
+            "via) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (mid, ref.key(), ref.kind, ref.run_id, rid, _dump(ref.to_dict()), via))
 
     def add_derivation(self, mid: str, from_id: str, rid: str) -> None:
         self.cur.execute(
@@ -334,7 +341,7 @@ class _SQLiteBackend:
             "closing_revision": f"SELECT revision_id FROM {h} WHERE memory_id = ? AND event = ? ORDER BY seq LIMIT 1",
             "history": (f"SELECT h.event, h.at, h.revision_id, h.detail_json, r.cause FROM {h} h "
                         f"JOIN {r} r ON r.revision_id = h.revision_id WHERE h.memory_id = ? ORDER BY h.seq LIMIT ?"),
-            "sources": f"SELECT ref_json FROM {p} WHERE memory_id = ? ORDER BY rowid LIMIT ?",
+            "sources": f"SELECT ref_json, via, revision_id FROM {p} WHERE memory_id = ? ORDER BY rowid LIMIT ?",
             "parents": f"SELECT from_id FROM {d} WHERE memory_id = ? ORDER BY rowid LIMIT ?",
             "children": f"SELECT memory_id FROM {d} WHERE from_id = ? ORDER BY rowid LIMIT ?",
             "with_ref_key": f"SELECT memory_id FROM {p} WHERE ref_key = ? ORDER BY rowid LIMIT ?",
@@ -363,7 +370,8 @@ class _SQLiteBackend:
                         f"idx_{self.t_rev}_pending")
             marks = ", ".join("?" for _ in expected)
             present = cur.execute(f"SELECT COUNT(*) FROM sqlite_master WHERE name IN ({marks})", expected).fetchone()
-            if int(present[0]) == len(expected):
+            prov_cols = {r[1] for r in cur.execute(f"PRAGMA table_info({self.t_prov})").fetchall()}
+            if int(present[0]) == len(expected) and all(c in prov_cols for c, _ in _PROV_ADDED_COLUMNS):
                 return
             cur.execute("BEGIN IMMEDIATE")
             try:
@@ -381,6 +389,10 @@ class _SQLiteBackend:
                     f"CREATE TABLE IF NOT EXISTS {self.t_prov} ("
                     "memory_id TEXT NOT NULL, ref_key TEXT NOT NULL, ref_kind TEXT NOT NULL, run_id TEXT, "
                     "revision_id TEXT NOT NULL, ref_json TEXT NOT NULL, PRIMARY KEY (memory_id, ref_key))")
+                have = {r[1] for r in cur.execute(f"PRAGMA table_info({self.t_prov})").fetchall()}
+                for name, ddl in _PROV_ADDED_COLUMNS:  # in-place upgrade of a home written before the column
+                    if name not in have:
+                        cur.execute(f"ALTER TABLE {self.t_prov} ADD COLUMN {name} {ddl}")
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_prov}_ref_key ON {self.t_prov}(ref_key)")
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_prov}_run_id ON {self.t_prov}(run_id)")
                 cur.execute(
@@ -435,9 +447,9 @@ class _SQLiteBackend:
         return [{"event": r["event"], "at": r["at"], "revision_id": r["revision_id"], "cause": r["cause"],
                  "detail": json.loads(r["detail_json"])} for r in rows]
 
-    def sources(self, mid: str, limit: int) -> List[SourceRef]:
+    def sources(self, mid: str, limit: int) -> List[Tuple[SourceRef, str, str]]:
         rows = self._read(self.sql["sources"], (mid, limit))
-        return [SourceRef.from_dict(json.loads(r[0])) for r in rows]
+        return [(SourceRef.from_dict(json.loads(r[0])), r[1], r[2]) for r in rows]
 
     def parents(self, mid: str, limit: int) -> List[str]:
         return [r[0] for r in self._read(self.sql["parents"], (mid, limit))]
@@ -656,11 +668,11 @@ class _MemoryTx:
 
         self.undo.append(_undo)
 
-    def add_source(self, mid: str, ref: SourceRef, rid: str) -> None:
+    def add_source(self, mid: str, ref: SourceRef, rid: str, via: str = VIA_MEMORY) -> None:
         b, key = self.b, ref.key()
         if (mid, key) in b.prov_keys:
             return
-        b.provenance.append((mid, key, ref, rid))
+        b.provenance.append((mid, key, ref, rid, via))
         b.prov_keys.add((mid, key))
 
         def _undo() -> None:
@@ -706,7 +718,7 @@ class _MemoryBackend:
         self.revisions: List[Dict[str, Any]] = []
         self.rev_by_id: Dict[str, Dict[str, Any]] = {}
         self.hist: List[Dict[str, Any]] = []
-        self.provenance: List[Tuple[str, str, SourceRef, str]] = []
+        self.provenance: List[Tuple[str, str, SourceRef, str, str]] = []  # memory, key, ref, revision, via
         self.prov_keys: set = set()
         self.derivations: List[Tuple[str, str, str]] = []
         self.der_keys: set = set()
@@ -749,9 +761,9 @@ class _MemoryBackend:
                     break
             return out
 
-    def sources(self, mid: str, limit: int) -> List[SourceRef]:
+    def sources(self, mid: str, limit: int) -> List[Tuple[SourceRef, str, str]]:
         with self._lock:
-            return [ref for m, _, ref, _ in self.provenance if m == mid][:limit]
+            return [(ref, via, rid) for m, _, ref, rid, via in self.provenance if m == mid][:limit]
 
     def parents(self, mid: str, limit: int) -> List[str]:
         with self._lock:
@@ -764,7 +776,7 @@ class _MemoryBackend:
     def with_ref(self, ref: SourceRef, limit: int) -> List[str]:
         with self._lock:
             out: List[str] = []
-            for m, key, r, _ in self.provenance:
+            for m, key, r, _, _ in self.provenance:
                 hit = (r.run_id == ref.run_id) if ref.kind == "run" else (key == ref.key())
                 if hit and m not in out:
                     out.append(m)
@@ -921,6 +933,8 @@ class MemoryGraph:
                     tx.add_history(aid, _EVENT_ASSERTED, at, rid, detail)
                     for ref in prov.sources:
                         tx.add_source(aid, ref, rid)
+                    for ref in rev.provenance.sources:  # the revision that wrote it (A7): found from its step too
+                        tx.add_source(aid, ref, rid, VIA_REVISION)
                     for parent in derived[aid]:
                         tx.add_derivation(aid, parent, rid)
                     continue
@@ -1102,21 +1116,25 @@ class MemoryGraph:
             return []
         return self._b.history(mid, n)
 
-    def sources_of(self, memory_id: str, *, transitive: bool = True,
-                   limit: int = DEFAULT_READ_LIMIT) -> List[SourceRef]:
-        """The ledger sources of a memory; with `transitive`, also those of the memories it was derived from
-        (breadth-first, deduplicated by key, at most `limit` refs and `MAX_LINEAGE_VISITS` memories visited).
-        Unknown id: []."""
+    def sources_of(self, memory_id: str, *, transitive: bool = True, limit: int = DEFAULT_READ_LIMIT,
+                   labelled: bool = False) -> List[Any]:
+        """The ledger sources of a memory: the refs of its own provenance AND those of the revision that wrote it
+        (a memory whose own provenance is lineage only still names the step that produced it); with `transitive`,
+        also those of the memories it was derived from (breadth-first, deduplicated by key, at most `limit` refs and
+        `MAX_LINEAGE_VISITS` memories visited). Unknown id: [].
+
+        `labelled=True` returns `{"ref": SourceRef, "via": "memory" | "revision", "memory_id", "revision_id"}`
+        dicts instead (which memory's row it is, and how the ref reached it)."""
         n = _check_limit(limit)
         start = self._resolve_read(memory_id)
         if start is None:
             return []
-        out: Dict[str, SourceRef] = {}
+        out: Dict[str, Dict[str, Any]] = {}
         seen, queue = {start}, deque([start])
         while queue and len(out) < n:
             mid = queue.popleft()
-            for ref in self._b.sources(mid, n):
-                out.setdefault(ref.key(), ref)
+            for ref, via, rid in self._b.sources(mid, n):
+                out.setdefault(ref.key(), {"ref": ref, "via": via, "memory_id": mid, "revision_id": rid})
                 if len(out) >= n:
                     break
             if transitive:
@@ -1124,7 +1142,7 @@ class MemoryGraph:
                     if parent not in seen and len(seen) < MAX_LINEAGE_VISITS:
                         seen.add(parent)
                         queue.append(parent)
-        return list(out.values())
+        return list(out.values()) if labelled else [row["ref"] for row in out.values()]
 
     def derived_from_source(self, ref: Union[SourceRef, Mapping[str, Any]], *,
                             limit: int = DEFAULT_READ_LIMIT) -> List[str]:

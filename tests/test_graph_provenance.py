@@ -417,3 +417,40 @@ def test_a_source_ref_carries_a_digest_beside_its_address(tmp_path) -> None:
     [stored] = home.graph.sources_of("d-1")
     assert stored.digest == digest  # kept in memg_provenance.ref_json
     home.close()
+
+
+# The revision's sources index the memories it writes (architect review A7). Mutants (each turned the test red):
+# - `apply_revision`: the VIA_REVISION add_source loop removed               -> test_a_memory_is_found_from_the_step_that_wrote_it[*]
+# - `_ensure_graph_schema`: the added-column migration removed               -> test_a_graph_home_without_the_via_column_is_upgraded
+
+def test_a_memory_is_found_from_the_step_that_wrote_it(home) -> None:
+    producing = step("run-sleep", 4)
+    home.graph.apply_revision(rev(
+        "r-derive", claim("pattern", o="ex:pattern", provenance=prov(derived=["base"], actor="abstractmemory:sleep")),
+        claim("own", o="ex:own", provenance=prov(art("note-9"), actor="abstractnote")),
+        cause="maintenance", provenance=prov(producing, actor="abstractmemory:sleep")))
+    assert home.graph.derived_from_source(producing) == ["pattern", "own"]
+    direct = home.graph.sources_of("pattern", transitive=False, labelled=True)
+    assert [(d["ref"].key(), d["via"], d["revision_id"]) for d in direct] == [
+        ("step:run-sleep#4", "revision", "r-derive")]
+    own = home.graph.sources_of("own", transitive=False, labelled=True)
+    assert [(d["ref"].key(), d["via"]) for d in own] == [("artifact:note-9", "memory"), ("step:run-sleep#4", "revision")]
+    assert [r.key() for r in home.graph.sources_of("pattern")] == ["step:run-sleep#4", "step:run-1#1"]
+    # A memory whose own provenance IS the revision's has one row per ref, labelled "memory".
+    assert [d["via"] for d in home.graph.sources_of("base", transitive=False, labelled=True)] == ["memory"]
+
+
+def test_a_graph_home_without_the_via_column_is_upgraded(tmp_path) -> None:
+    import sqlite3
+
+    from abstractmemory import SQLiteTripleStore
+    from abstractmemory.graph import MemoryGraph
+
+    path = tmp_path / "home.sqlite3"
+    MemoryGraph(SQLiteTripleStore(path)).apply_revision(rev("r-1", claim("a")))
+    with sqlite3.connect(str(path)) as conn:  # the table as first shipped (no via column)
+        conn.execute("ALTER TABLE memg_provenance DROP COLUMN via")
+    graph = MemoryGraph(SQLiteTripleStore(path))
+    assert [d["via"] for d in graph.sources_of("a", labelled=True)] == ["memory"]
+    graph.apply_revision(rev("r-2", claim("b", o="ex:b", provenance=prov(derived=["a"])), provenance=prov(step("run-2", 1))))
+    assert graph.derived_from_source(step("run-2", 1)) == ["b"]
