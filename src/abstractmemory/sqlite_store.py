@@ -20,6 +20,7 @@ from .embedding_pin import (
     warn_first_write_pin,
 )
 from .embeddings import TextEmbedder
+from .journal_common import normalize_iso_ts
 from .models import TripleAssertion
 from .store import TripleQuery
 from .vector_matrix import (
@@ -942,7 +943,10 @@ class SQLiteTripleStore:
                 f"narrow_assertion cannot widen or close an open window ({rid!r} has no valid_until); "
                 "close it with close_assertion (the `close` op of a revision)"
             )
-        if str(current) <= until:
+        # Instants, not strings: '2026-05-31T23:00:00-02:00' sorts before '2026-06-01T00:00:00+00:00' but is
+        # the later instant; a string compare would let a "narrow" move the end later (ValueError if either
+        # side is not a timestamp).
+        if normalize_iso_ts(str(current)) <= normalize_iso_ts(until):
             return False
         cur.execute(
             f"UPDATE {table} SET valid_until = ? WHERE assertion_id = ?", (until, rid)

@@ -55,6 +55,7 @@ from ..embedding_pin import (
 )
 from ..in_memory_store import InMemoryTripleStore
 from ..journal import ClosureRecord
+from ..journal_common import normalize_iso_ts as _instant
 from ..journal_sqlite import SQLiteJournal
 from ..models import TripleAssertion, canonicalize_term
 from ..sqlite_store import SQLiteTripleStore
@@ -874,6 +875,11 @@ class MemoryGraph:
                         f"revision {rid!r}: a {op.op!r} op names {aid!r}, a store row written outside the graph; "
                         "adopt it with an 'import' or 'migration' revision first (its window then changes through "
                         "the graph, with a cause)")
+                # A window never inverts: the end may equal the start (an empty window) but never precede it.
+                if window[0] and _instant(payload["valid_until"]) < _instant(window[0]):
+                    raise ValueError(
+                        f"revision {rid!r}: a {op.op!r} op ends {aid!r} at {payload['valid_until']}, before its "
+                        f"valid_from {window[0]} (the window would invert)")
                 if op.op == "close":
                     # A memory is closed ONCE through the graph. An open window is closed at the op's valid_until;
                     # a window the claim was asserted with (or narrowed to) stays as it is, but the close still

@@ -16,6 +16,7 @@ from .embedding_pin import (
     warn_first_write_pin,
 )
 from .embeddings import TextEmbedder
+from .journal_common import normalize_iso_ts
 from .models import TripleAssertion, normalize_term
 from .store import TripleQuery
 # Shared scoring (one definition for all stores — see vector_scoring.py);
@@ -183,7 +184,8 @@ class InMemoryTripleStore:
                         f"narrow_assertion cannot widen or close an open window ({rid!r} has no valid_until); "
                         "close it with close_assertion (the `close` op of a revision)"
                     )
-                if a.valid_until <= until:
+                # Instants, not strings (SQLite parity): mixed offsets must not let a narrow move the end later.
+                if normalize_iso_ts(a.valid_until) <= normalize_iso_ts(until):
                     return False
                 row["assertion"] = replace(a, valid_until=until)
                 return True

@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from ..journal_common import normalize_iso_ts
 from ..models import TripleAssertion, utc_now_iso_seconds
 from .provenance import Provenance
 
@@ -32,6 +33,24 @@ CLOSE_KINDS: Tuple[str, ...] = ("retract", "supersede", "reinterpreted", "merged
 _CLOSE_KEYS = frozenset({"assertion_id", "valid_until", "kind", "replacement_ids", "reason", "ripple_source",
                          "ripple_hops"})
 _NARROW_KEYS = frozenset({"assertion_id", "valid_until", "reason"})
+
+
+#: The timestamp fields of an `assert` payload, normalized like every other time of a revision.
+_ASSERT_TIMES = ("observed_at", "valid_from", "valid_until")
+
+
+def normalize_timestamp(value: Any, what: str) -> str:
+    """One timestamp of the graph: parsed as ISO-8601 and rewritten to the package's canonical UTC text form
+    (microseconds, '+00:00': `journal_common.normalize_iso_ts`, the shape of `utc_now_iso_seconds`). Stores and
+    queries compare these as strings; that is only correct when every value shares one form ('2026-05-31T23:00-02:00'
+    sorts before '2026-06-01T00:00Z' but is the later instant). Raises ValueError for anything that is not a
+    timestamp ("next tuesday")."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{what} must be a non-empty ISO-8601 timestamp (got {value!r})")
+    try:
+        return normalize_iso_ts(value)
+    except ValueError as exc:
+        raise ValueError(f"{what} must be an ISO-8601 timestamp (got {value!r}): {exc}") from None
 
 
 def _req_str(payload: Mapping[str, Any], key: str, op: str) -> str:
@@ -63,7 +82,7 @@ def _normalize_close(payload: Mapping[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"'close' ripple_hops is a non-negative int or None (got {ripple_hops!r})")
     return {
         "assertion_id": _req_str(payload, "assertion_id", "close"),
-        "valid_until": _req_str(payload, "valid_until", "close"),
+        "valid_until": normalize_timestamp(payload.get("valid_until"), "a 'close' op's valid_until"),
         "kind": kind,
         "replacement_ids": replacement_ids,
         "reason": _req_str(payload, "reason", "close"),
@@ -78,7 +97,7 @@ def _normalize_narrow(payload: Mapping[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"unknown 'narrow' op keys {unknown} (known: {sorted(_NARROW_KEYS)})")
     return {
         "assertion_id": _req_str(payload, "assertion_id", "narrow"),
-        "valid_until": _req_str(payload, "valid_until", "narrow"),
+        "valid_until": normalize_timestamp(payload.get("valid_until"), "a 'narrow' op's valid_until"),
         "reason": _req_str(payload, "reason", "narrow"),
     }
 
@@ -99,6 +118,9 @@ class RevisionOp:
             raise ValueError(f"RevisionOp.payload is a dict (got {type(self.payload).__name__})")
         if op == "assert":
             payload = dict(self.payload)
+            for key in _ASSERT_TIMES:  # absent/None stays absent (the graph fills observed_at from the revision)
+                if payload.get(key) is not None:
+                    payload[key] = normalize_timestamp(payload[key], f"an 'assert' op's {key}")
             TripleAssertion.from_dict(payload)  # validates terms; raises on a malformed claim
         elif op == "close":
             payload = _normalize_close(self.payload)
@@ -149,10 +171,7 @@ class Revision:
             raise ValueError(f"Revision.cause must be one of {list(REVISION_CAUSES)} (got {self.cause!r})")
         object.__setattr__(self, "cause", cause)
         for name in ("occurred_at", "recorded_at"):
-            value = getattr(self, name)
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"Revision.{name} is a non-empty ISO UTC timestamp (got {value!r})")
-            object.__setattr__(self, name, value.strip())
+            object.__setattr__(self, name, normalize_timestamp(getattr(self, name), f"Revision.{name}"))
         if isinstance(self.ops, (str, bytes, Mapping)):
             raise ValueError("Revision.ops is a sequence of RevisionOp")
         ops = tuple(RevisionOp.from_dict(o) for o in (self.ops or ()))

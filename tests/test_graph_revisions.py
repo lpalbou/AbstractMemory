@@ -391,3 +391,77 @@ def test_reads_honour_their_limit(home) -> None:
     assert len(home.graph.sources_of("m0", limit=2)) == 2
     page, cursor = home.graph.revisions(limit=MAX_READ_LIMIT + 50)
     assert len(page) == 1 and cursor == "1"
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Timestamps (adversarial review 2026-10-27, M2/M3). Mutants (applied by hand; each turned the named test red):
+# - `revisions._normalize_close`: valid_until kept as `_req_str` (no parsing)   -> test_a_window_end_must_be_a_timestamp
+# - `revisions.RevisionOp`: the assert payload's times not normalized          -> test_every_time_of_a_revision_is_normalized
+# - `apply_revision`: the valid_from inversion check removed                  -> test_a_close_or_narrow_never_inverts_a_window
+# - `SQLiteTripleStore._narrow_on` / `InMemoryTripleStore.narrow_assertion`: string compare restored
+#                                                                             -> test_narrow_compares_instants_not_strings
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def test_a_window_end_must_be_a_timestamp(home) -> None:
+    _seed(home)
+    home.graph.apply_revision(rev("r-nf", claim("no-from", o="ex:nf")))  # no valid_from: nothing else parses the end
+    before = home_state(home)
+    for bad in ("next tuesday", "2026-13-01", ""):
+        with pytest.raises(ValueError, match="timestamp"):
+            home.graph.apply_revision(rev("r-x", close("no-from", bad)))
+        with pytest.raises(ValueError, match="timestamp"):
+            home.graph.apply_revision(rev("r-x", claim("x-new"), close("a-open", bad)))
+        with pytest.raises(ValueError, match="timestamp"):
+            home.graph.apply_revision(rev("r-x", narrow("c-bounded", bad)))
+    with pytest.raises(ValueError, match="timestamp"):
+        home.graph.apply_revision(rev("r-x", claim("x-new", valid_from="soon")))
+    with pytest.raises(ValueError, match="timestamp"):
+        rev("r-x", claim("x-new"), occurred_at="yesterday")
+    assert home_state(home) == before
+
+
+def test_every_time_of_a_revision_is_normalized(home) -> None:
+    result = home.graph.apply_revision(rev(
+        "r-tz", claim("tz-1", valid_from="2026-06-01T02:00:00+02:00", valid_until="2026-09-01T00:00:00Z",
+                      observed_at="2026-05-31"),
+        occurred_at="2026-06-01T00:00:00Z", recorded_at="2026-06-02T12:30:00+02:00"))
+    assert result.applied
+    row = _row(home.store, "tz-1")
+    assert (row.valid_from, row.valid_until, row.observed_at) == (
+        "2026-06-01T00:00:00.000000+00:00", T(9), "2026-05-31T00:00:00.000000+00:00")
+    [logged] = home.graph.revisions()[0]
+    assert (logged.occurred_at, logged.recorded_at) == (T(6), "2026-06-02T10:30:00.000000+00:00")
+    assert logged.ops[0].payload["valid_until"] == T(9)
+    assert home.graph.history("tz-1")[0]["at"] == "2026-06-02T10:30:00.000000+00:00"
+
+
+def test_a_close_or_narrow_never_inverts_a_window(home) -> None:
+    home.graph.apply_revision(rev("r-1", claim("late", valid_from=T(6)), claim("late-b", o="ex:b", valid_from=T(6),
+                                                                              valid_until=T(9))))
+    before = home_state(home)
+    with pytest.raises(ValueError, match="window would invert"):
+        home.graph.apply_revision(rev("r-x", claim("x-new"), close("late", T(2))))
+    with pytest.raises(ValueError, match="window would invert"):
+        home.graph.apply_revision(rev("r-x", narrow("late-b", T(5))))
+    assert home_state(home) == before
+    # An empty window (end == start) is allowed: "it never held".
+    assert home.graph.apply_revision(rev("r-ok", close("late", T(6)))).closed == ["late"]
+
+
+@pytest.mark.parametrize("kind", ["sqlite", "memory"])
+def test_narrow_compares_instants_not_strings(tmp_path: Path, kind: str) -> None:
+    """'2026-05-31T23:00:00-02:00' sorts before '2026-06-01T00:00:00+00:00' but is the LATER instant (01:00 UTC):
+    a narrow to it would move the end later. The store compares instants (its public narrow_assertion too)."""
+    from abstractmemory import InMemoryTripleStore, SQLiteTripleStore, TripleAssertion
+
+    store = InMemoryTripleStore() if kind == "memory" else SQLiteTripleStore(tmp_path / "kg.sqlite3")
+    store.add([TripleAssertion(subject="ex:a", predicate="ex:p", object="ex:b", assertion_id="n1",
+                               valid_from="2026-01-01T00:00:00+00:00", valid_until="2026-06-01T00:00:00+00:00")])
+    assert store.narrow_assertion("n1", "2026-05-31T23:00:00-02:00") is False
+    assert store.narrow_assertion("n1", "2026-06-01T00:00:00Z") is False  # the same instant
+    assert _row(store, "n1").valid_until == "2026-06-01T00:00:00+00:00"
+    assert store.narrow_assertion("n1", "2026-05-31T23:00:00+00:00") is True
+    with pytest.raises(ValueError):
+        store.narrow_assertion("n1", "later")
+    store.close()

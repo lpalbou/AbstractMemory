@@ -31,7 +31,9 @@ KINDS = ("sqlite", "sqlite-offfile", "memory")
 
 
 def T(month: int, day: int = 1) -> str:
-    return f"2026-{month:02d}-{day:02d}T00:00:00+00:00"
+    """A day of 2026 in the graph's canonical timestamp form (UTC, microseconds, '+00:00'): what a revision stores
+    after normalizing whatever ISO-8601 form it was given."""
+    return f"2026-{month:02d}-{day:02d}T00:00:00.000000+00:00"
 
 
 def step(run_id: str, seq: int, step_id: Optional[str] = None) -> Dict[str, Any]:
