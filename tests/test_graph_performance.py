@@ -45,7 +45,10 @@ def expected_plans(graph: MemoryGraph) -> Dict[str, List[str]]:
         "with_ref_key": [f"idx_{b.t_prov}_ref_key (ref_key=?)"],
         "with_run": [f"idx_{b.t_prov}_run_id (run_id=?)"],
         "revisions_page": ["INTEGER PRIMARY KEY (rowid>?)"],
-        "log_head": [f"SEARCH {b.t_rev}"],  # MAX(seq) on the integer primary key: one b-tree descent
+        "log_head": [f"SEARCH {b.t_rev}"],
+        # the owner gate (architect B6): one probe of a covering (key, owner) index, whatever the fan-out
+        "names_ref_key": [f"COVERING INDEX idx_{b.t_prov}_ref_owner (ref_key=? AND owner_id=?)"],
+        "names_ref_run": [f"COVERING INDEX idx_{b.t_prov}_run_owner (run_id=? AND owner_id=?)"],  # MAX(seq) on the integer primary key: one b-tree descent
         "pending_journal": [f"USING INDEX idx_{b.t_rev}_pending"],
         "closed_payload": [hist_ix],
     }
@@ -56,7 +59,7 @@ ORDERED_WALKS = ("history", "children", "with_ref_key", "with_run", "revisions_p
 
 
 def plan_of(graph: MemoryGraph, name: str) -> str:
-    sql = graph._b.sql[name]
+    sql = graph._b.sql[name].replace("{marks}", "?")
     rows = graph.store._conn.execute("EXPLAIN QUERY PLAN " + sql, tuple(["x"] * sql.count("?"))).fetchall()
     return " | ".join(str(r[3]) for r in rows)
 
@@ -147,3 +150,41 @@ def test_opening_a_graph_on_an_existing_home_does_not_wait_for_a_writer(tmp_path
     assert_index_plans(fresh)
     fresh.store.close()
     store.close()
+
+
+@pytest.mark.parametrize("kind", ["sqlite", "memory"])
+def test_names_ref_is_the_owner_gate_in_one_probe(tmp_path: Path, kind: str) -> None:
+    """Architect B6: "does any memory of these owners name this ref" is one call. 1200 memories of owner A grounded
+    in one shared artifact, then ONE of owner B: B is allowed (a walk over the first N memories naming the ref would
+    refuse it), C is not, and on SQLite it is one covering-index probe also with several owners.
+    Mutants: names_ref ignoring the owners (`owner_id IN` dropped) -> red; the (ref_key, owner_id) index not created
+    -> red (plan)."""
+    from abstractmemory import InMemoryTripleStore
+
+    store = InMemoryTripleStore() if kind == "memory" else SQLiteTripleStore(tmp_path / "home.sqlite3")
+    graph = MemoryGraph(store)
+    shared = {"kind": "artifact", "artifact_id": "shared-import-file", "run_id": "run-imp"}
+    for k in range(240):
+        graph.apply_revision(rev(f"a-{k}", *[claim(f"a{k}-{j}", s=f"ex:a{k}-{j}") for j in range(5)],
+                                 owner_id="session_memory_A", cause="import",
+                                 provenance={"sources": [shared], "actor": "importer"}))
+    graph.apply_revision(rev("b-0", claim("b0", s="ex:b"), owner_id="session_memory_B",
+                             provenance={"sources": [shared], "actor": "b"}))
+    import time
+
+    started = time.perf_counter()
+    assert graph.names_ref(shared, ["session_memory_B"]) is True
+    elapsed = time.perf_counter() - started
+    assert graph.names_ref(shared, ["session_memory_C", "entity:x"]) is False
+    assert graph.names_ref({"kind": "run", "run_id": "run-imp"}, ["session_memory_B"]) is True
+    assert graph.names_ref({"kind": "run", "run_id": "run-other"}, ["session_memory_B"]) is False
+    assert graph.names_ref(shared, []) is False
+    with pytest.raises(ValueError):
+        graph.names_ref(shared, [f"o{i}" for i in range(1001)])
+    if kind == "sqlite":
+        assert elapsed < 0.05
+        sql = graph._b.sql["names_ref_key"].replace("{marks}", "?, ?, ?")
+        plan = " | ".join(str(r[3]) for r in store._conn.execute(
+            "EXPLAIN QUERY PLAN " + sql, ("k", "a", "b", "c")).fetchall())
+        assert f"COVERING INDEX idx_{graph._b.t_prov}_ref_owner (ref_key=? AND owner_id=?)" in plan, plan
+        store.close()

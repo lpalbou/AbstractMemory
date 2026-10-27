@@ -42,7 +42,7 @@ import weakref
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ..canonical_text import canonical_text as _canonical_text
 from ..canonical_text import is_record_edge as _is_record_edge
@@ -90,7 +90,12 @@ _EVENT_ASSERTED, _EVENT_CLOSED, _EVENT_NARROWED = "asserted", "closed", "narrowe
 #: whose own provenance is lineage only is still found from the step that produced it).
 VIA_MEMORY, VIA_REVISION = "memory", "revision"
 #: Columns added to the provenance index after it first shipped: (name, DDL). Migrated in place when a graph opens.
-_PROV_ADDED_COLUMNS: Tuple[Tuple[str, str], ...] = (("via", "TEXT NOT NULL DEFAULT 'memory'"),)
+_PROV_ADDED_COLUMNS: Tuple[Tuple[str, str], ...] = (
+    ("via", "TEXT NOT NULL DEFAULT 'memory'"),
+    # the memory's owner, denormalized (a memory's owner never changes: adoption keeps it, M6 refuses a different
+    # claim under a held id) so the owner gate `names_ref` is ONE index probe; '' for no owner
+    ("owner_id", "TEXT NOT NULL DEFAULT ''"),
+)
 
 # The triple store's column set this module's insert path writes. Checked when a graph opens: a store schema change
 # (backlog 0058's binary vectors, say) must update `_sqlite_rows` too, so it fails loudly here instead of writing a
@@ -293,12 +298,12 @@ class _SQLiteTx:
             f"INSERT INTO {self.b.t_hist} (memory_id, event, at, revision_id, detail_json) VALUES (?, ?, ?, ?, ?)",
             (mid, event, at, rid, _dump(detail)))
 
-    def add_source(self, mid: str, ref: SourceRef, rid: str, via: str = VIA_MEMORY) -> None:
+    def add_source(self, mid: str, ref: SourceRef, rid: str, owner: Optional[str], via: str = VIA_MEMORY) -> None:
         """First row per (memory, ref key) wins: write the memory's own refs before the revision's."""
         self.cur.execute(
             f"INSERT OR IGNORE INTO {self.b.t_prov} (memory_id, ref_key, ref_kind, run_id, revision_id, ref_json, "
-            "via) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (mid, ref.key(), ref.kind, ref.run_id, rid, _dump(ref.to_dict()), via))
+            "via, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (mid, ref.key(), ref.kind, ref.run_id, rid, _dump(ref.to_dict()), via, owner or ""))
 
     def add_derivation(self, mid: str, from_id: str, rid: str) -> None:
         self.cur.execute(
@@ -346,6 +351,9 @@ class _SQLiteBackend:
             "children": f"SELECT memory_id FROM {d} WHERE from_id = ? ORDER BY rowid LIMIT ?",
             "with_ref_key": f"SELECT memory_id FROM {p} WHERE ref_key = ? ORDER BY rowid LIMIT ?",
             "with_run": f"SELECT memory_id FROM {p} WHERE run_id = ? ORDER BY rowid",
+            # the owner gate: does any memory of these owners name this ref? ({marks}: one ? per owner)
+            "names_ref_key": f"SELECT 1 FROM {p} WHERE ref_key = ? AND owner_id IN ({{marks}}) LIMIT 1",
+            "names_ref_run": f"SELECT 1 FROM {p} WHERE run_id = ? AND owner_id IN ({{marks}}) LIMIT 1",
             "revisions_page": f"SELECT * FROM {r} WHERE seq > ? ORDER BY seq LIMIT ?",
             "log_head": f"SELECT MAX(seq) FROM {r}",
             "pending_journal": f"SELECT * FROM {r} WHERE journal_applied = 0 ORDER BY seq LIMIT ?",
@@ -367,7 +375,7 @@ class _SQLiteBackend:
             # transaction runs (a reader needs no write lock and never waits behind a writer).
             expected = (self.t_rev, self.t_prov, self.t_der, self.t_hist, f"idx_{self.t_prov}_ref_key",
                         f"idx_{self.t_prov}_run_id", f"idx_{self.t_der}_from", f"idx_{self.t_hist}_memory",
-                        f"idx_{self.t_rev}_pending")
+                        f"idx_{self.t_rev}_pending", f"idx_{self.t_prov}_ref_owner", f"idx_{self.t_prov}_run_owner")
             marks = ", ".join("?" for _ in expected)
             present = cur.execute(f"SELECT COUNT(*) FROM sqlite_master WHERE name IN ({marks})", expected).fetchone()
             prov_cols = {r[1] for r in cur.execute(f"PRAGMA table_info({self.t_prov})").fetchall()}
@@ -393,6 +401,11 @@ class _SQLiteBackend:
                 for name, ddl in _PROV_ADDED_COLUMNS:  # in-place upgrade of a home written before the column
                     if name not in have:
                         cur.execute(f"ALTER TABLE {self.t_prov} ADD COLUMN {name} {ddl}")
+                        if name == "owner_id":  # backfill from the memory's row
+                            cur.execute(f"UPDATE {self.t_prov} SET owner_id = COALESCE((SELECT t.owner_id FROM "
+                                        f"{self.table} t WHERE t.assertion_id = {self.t_prov}.memory_id), '')")
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_prov}_ref_owner ON {self.t_prov}(ref_key, owner_id)")
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_prov}_run_owner ON {self.t_prov}(run_id, owner_id)")
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_prov}_ref_key ON {self.t_prov}(ref_key)")
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_prov}_run_id ON {self.t_prov}(run_id)")
                 cur.execute(
@@ -456,6 +469,11 @@ class _SQLiteBackend:
 
     def children(self, fid: str, limit: int) -> List[str]:
         return [r[0] for r in self._read(self.sql["children"], (fid, limit))]
+
+    def names_ref(self, ref: SourceRef, owners: List[str]) -> bool:
+        name, key = ("names_ref_run", ref.run_id) if ref.kind == "run" else ("names_ref_key", ref.key())
+        sql = self.sql[name].format(marks=", ".join("?" for _ in owners))
+        return bool(self._read(sql, (key, *owners)))
 
     def with_ref(self, ref: SourceRef, limit: int) -> List[str]:
         if ref.kind != "run":  # one row per (memory, key): the key index answers in insertion (rowid) order
@@ -668,11 +686,11 @@ class _MemoryTx:
 
         self.undo.append(_undo)
 
-    def add_source(self, mid: str, ref: SourceRef, rid: str, via: str = VIA_MEMORY) -> None:
+    def add_source(self, mid: str, ref: SourceRef, rid: str, owner: Optional[str], via: str = VIA_MEMORY) -> None:
         b, key = self.b, ref.key()
         if (mid, key) in b.prov_keys:
             return
-        b.provenance.append((mid, key, ref, rid, via))
+        b.provenance.append((mid, key, ref, rid, via, owner or ""))
         b.prov_keys.add((mid, key))
 
         def _undo() -> None:
@@ -718,7 +736,7 @@ class _MemoryBackend:
         self.revisions: List[Dict[str, Any]] = []
         self.rev_by_id: Dict[str, Dict[str, Any]] = {}
         self.hist: List[Dict[str, Any]] = []
-        self.provenance: List[Tuple[str, str, SourceRef, str, str]] = []  # memory, key, ref, revision, via
+        self.provenance: List[Tuple[str, str, SourceRef, str, str, str]] = []  # memory, key, ref, revision, via, owner
         self.prov_keys: set = set()
         self.derivations: List[Tuple[str, str, str]] = []
         self.der_keys: set = set()
@@ -763,7 +781,7 @@ class _MemoryBackend:
 
     def sources(self, mid: str, limit: int) -> List[Tuple[SourceRef, str, str]]:
         with self._lock:
-            return [(ref, via, rid) for m, _, ref, rid, via in self.provenance if m == mid][:limit]
+            return [(ref, via, rid) for m, _, ref, rid, via, _ in self.provenance if m == mid][:limit]
 
     def parents(self, mid: str, limit: int) -> List[str]:
         with self._lock:
@@ -773,10 +791,19 @@ class _MemoryBackend:
         with self._lock:
             return [m for m, f, _ in self.derivations if f == fid][:limit]
 
+    def names_ref(self, ref: SourceRef, owners: List[str]) -> bool:
+        wanted = set(owners)
+        with self._lock:
+            for _, key, r, _, _, owner in self.provenance:
+                hit = (r.run_id == ref.run_id) if ref.kind == "run" else (key == ref.key())
+                if hit and owner in wanted:
+                    return True
+        return False
+
     def with_ref(self, ref: SourceRef, limit: int) -> List[str]:
         with self._lock:
             out: List[str] = []
-            for m, key, r, _, _ in self.provenance:
+            for m, key, r, _, _, _ in self.provenance:
                 hit = (r.run_id == ref.run_id) if ref.kind == "run" else (key == ref.key())
                 if hit and m not in out:
                     out.append(m)
@@ -932,9 +959,9 @@ class MemoryGraph:
                         detail["previous_provenance"] = dict(noted)
                     tx.add_history(aid, _EVENT_ASSERTED, at, rid, detail)
                     for ref in prov.sources:
-                        tx.add_source(aid, ref, rid)
+                        tx.add_source(aid, ref, rid, a.owner_id)
                     for ref in rev.provenance.sources:  # the revision that wrote it (A7): found from its step too
-                        tx.add_source(aid, ref, rid, VIA_REVISION)
+                        tx.add_source(aid, ref, rid, a.owner_id, VIA_REVISION)
                     for parent in derived[aid]:
                         tx.add_derivation(aid, parent, rid)
                     continue
@@ -1186,6 +1213,19 @@ class MemoryGraph:
                     out.append(child)
                     queue.append(child)
         return out[:n]
+
+    def names_ref(self, ref: Union[SourceRef, Mapping[str, Any]], owner_ids: Iterable[Optional[str]]) -> bool:
+        """The owner gate in ONE index probe: does any memory owned by one of `owner_ids` name this ledger source
+        (its own provenance or the revision that wrote it)? A `run` ref matches everything stamped with that run.
+        `None` / '' is the no-owner partition. No owners: False. At most `MAX_READ_LIMIT` owners per call (a
+        principal's owners plus the entities it owns); more raises ValueError."""
+        source = SourceRef.from_dict(ref)
+        owners = sorted({str(o or "").strip() for o in owner_ids})
+        if not owners:
+            return False
+        if len(owners) > MAX_READ_LIMIT:
+            raise ValueError(f"names_ref takes at most {MAX_READ_LIMIT} owner ids (got {len(owners)})")
+        return self._b.names_ref(source, owners)
 
     def revisions(self, after: Optional[str] = None, limit: int = DEFAULT_REVISION_PAGE) -> Tuple[List[Revision], str]:
         """The change feed: revisions in log order strictly after the cursor, and the next cursor (`str(seq)` of the

@@ -155,7 +155,7 @@ def home_state(home: Home) -> Any:
             "pin": home.store.embedding_pin(),
             "revisions": [(e["seq"], e["revision"].to_dict(), e["journal_applied"]) for e in b.revisions],
             "hist": [dict(h) for h in b.hist],
-            "provenance": [(m, k, r.to_dict(), rid, via) for m, k, r, rid, via in b.provenance],
+            "provenance": [(m, k, r.to_dict(), rid, via, o) for m, k, r, rid, via, o in b.provenance],
             "derivations": list(b.derivations),
             "known": sorted(b.known),
             "closures": [c.to_dict() for c in home.journal.closures(limit=0)],

@@ -481,3 +481,22 @@ def test_derived_from_never_crosses_owners(home) -> None:
                                        owner_id="session_memory_alice",
                                        provenance=prov({"kind": "message", "message_id": "m-from-bob"})))
     assert ok.assertion_ids == ["alice-heard"]
+
+
+def test_a_graph_home_without_the_owner_column_is_upgraded_and_backfilled(tmp_path) -> None:
+    """Architect B6: memg_provenance.owner_id (the owner gate's key) is added and backfilled from the memory rows.
+    Mutant: the backfill UPDATE removed -> red."""
+    import sqlite3
+
+    from abstractmemory import SQLiteTripleStore
+    from abstractmemory.graph import MemoryGraph
+
+    path = tmp_path / "home.sqlite3"
+    MemoryGraph(SQLiteTripleStore(path)).apply_revision(rev("r-1", claim("a"), owner_id="entity:x"))
+    with sqlite3.connect(str(path)) as conn:
+        conn.execute("DROP INDEX idx_memg_provenance_ref_owner")
+        conn.execute("DROP INDEX idx_memg_provenance_run_owner")
+        conn.execute("ALTER TABLE memg_provenance DROP COLUMN owner_id")
+    graph = MemoryGraph(SQLiteTripleStore(path))
+    assert graph.names_ref(step("run-1", 1), ["entity:x"]) is True
+    assert graph.names_ref(step("run-1", 1), ["abstractnote"]) is False
