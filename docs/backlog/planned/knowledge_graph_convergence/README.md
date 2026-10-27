@@ -5,8 +5,9 @@
 Planned — operator ruling 2026-10-27 ([ADR 0002](../../../adr/0002-abstractmemory-owns-the-memory-graph.md)):
 AbstractMemory *is* the semantic temporal memory graph and owns all of its processing. Capabilities that
 AbstractNote built for itself over a parallel graph are to be generalised here, so every consumer
-(AbstractNote, AbstractEntity, assistants, agents) uses one graph. Not started; no code change is made by
-writing this track.
+(AbstractNote, AbstractEntity, assistants, agents) uses one graph. In progress: 0056 (the provenance contract and
+the revision log, `abstractmemory.graph`, 0.4.0) landed its first slice on `feat/memory-graph-provenance`
+(2026-10-27; see the item's Report). The other items have not started.
 
 ## Purpose
 
