@@ -57,7 +57,7 @@ from ..in_memory_store import InMemoryTripleStore
 from ..journal import ClosureRecord
 from ..journal_common import normalize_iso_ts as _instant
 from ..journal_sqlite import SQLiteJournal
-from ..models import TripleAssertion, canonicalize_term
+from ..models import TripleAssertion, canonicalize_term, utc_now_iso_seconds
 from ..sqlite_store import SQLiteTripleStore
 from ..vector_matrix import encode_vector
 from .provenance import Provenance, ProvenanceRequired, SourceRef
@@ -843,9 +843,15 @@ class MemoryGraph:
 
     # -- write ---------------------------------------------------------------------------------------------------
 
-    def apply_revision(self, revision: Revision) -> RevisionResult:
+    def apply_revision(self, revision: Revision, *, replay: bool = False) -> RevisionResult:
         """Validate and apply one revision atomically; idempotent on `revision_id` (a second apply returns
-        `applied=False` and changes nothing). Raises `ProvenanceRequired` for an ungrounded write (or one that
+        `applied=False` and changes nothing).
+
+        Record time is the STORE's: a fresh apply stamps `recorded_at` with this process's UTC clock inside the
+        write transaction and ignores the value on the `Revision` (a caller cannot backdate what this mind learned;
+        the log's `seq` is the record ORDER, `recorded_at` its wall-clock reading). `replay=True` keeps the logged
+        `recorded_at`: a replay re-applies a record that already exists elsewhere, it is not a new one
+        (`replay_into` passes it; a host surface must not expose it to callers). Raises `ProvenanceRequired` for an ungrounded write (or one that
         touches a store row the graph never adopted) and ValueError for an op that names an unknown assertion,
         names one before the op that asserts it, or tries to narrow an open window; either leaves nothing behind."""
         if not isinstance(revision, Revision):
@@ -862,6 +868,8 @@ class MemoryGraph:
             seq = tx.revision_seq(rev.revision_id)
             if seq is not None:  # a concurrent apply of the same id won the race
                 return RevisionResult(revision_id=rev.revision_id, applied=False, seq=seq)
+            if not replay:  # the store's clock, read under the write lock: record time follows the log order
+                rev = replace(rev, recorded_at=utc_now_iso_seconds())
             derived = self._validate(tx, prep)
             by_id = {str(a.assertion_id): a for a in prep.assertions}
             in_store = tx.existing_ids(list(by_id))
@@ -968,6 +976,7 @@ class MemoryGraph:
                         "valid_until": payload["valid_until"], "previous_valid_until": window[1],
                         "reason": payload["reason"]})
             seq = tx.insert_revision(replace(rev, ops=tuple(logged_ops)), journal_applied=not pending)
+            result = replace(result, recorded_at=rev.recorded_at)
         if first_write_pin and pin_update is not None:
             warn_first_write_pin(pin_update)  # loud, and only once the pin is actually written
         if pending:  # the journal lives outside the store's transaction (see the module docstring)
@@ -1176,5 +1185,5 @@ class MemoryGraph:
             if not page:
                 return applied
             for rev in page:
-                if target.apply_revision(rev).applied:
+                if target.apply_revision(rev, replay=True).applied:
                     applied += 1

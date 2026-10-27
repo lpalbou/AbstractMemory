@@ -235,3 +235,4 @@ class RevisionResult:
     narrowed: List[str] = field(default_factory=list)
     skipped: List[Dict[str, Any]] = field(default_factory=list)
     seq: Optional[int] = None  # the revision's position in the log (its change-feed cursor), None when not applied
+    recorded_at: Optional[str] = None  # the record time the store stamped (fresh apply) or kept (replay)

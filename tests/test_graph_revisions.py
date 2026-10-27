@@ -471,9 +471,29 @@ def test_every_time_of_a_revision_is_normalized(home) -> None:
     assert (row.valid_from, row.valid_until, row.observed_at) == (
         "2026-06-01T00:00:00.000000+00:00", T(9), "2026-05-31T00:00:00.000000+00:00")
     [logged] = home.graph.revisions()[0]
-    assert (logged.occurred_at, logged.recorded_at) == (T(6), "2026-06-02T10:30:00.000000+00:00")
+    assert logged.occurred_at == T(6)  # (recorded_at is the store's: test_record_time_is_the_stores)
     assert logged.ops[0].payload["valid_until"] == T(9)
-    assert home.graph.history("tz-1")[0]["at"] == "2026-06-02T10:30:00.000000+00:00"
+    assert Revision.from_dict({**logged.to_dict(), "recorded_at": "2026-06-02T12:30:00+02:00"}).recorded_at == \
+        "2026-06-02T10:30:00.000000+00:00"
+
+
+def test_record_time_is_the_stores(home) -> None:
+    """Review A3: a caller cannot backdate what this mind learned. A fresh apply stamps recorded_at with the store's
+    clock (the Revision's value is ignored); replay_into keeps the logged value (a replay is not a new record).
+    Mutant: the `if not replay` stamp in apply_revision removed (the caller's value kept) -> red."""
+    from abstractmemory.models import utc_now_iso_seconds
+
+    before = utc_now_iso_seconds()
+    result = home.graph.apply_revision(rev("r-back", claim("back-1"), recorded_at="2020-01-01T00:00:00+00:00"))
+    after = utc_now_iso_seconds()
+    [logged] = home.graph.revisions()[0]
+    assert before <= logged.recorded_at <= after and result.recorded_at == logged.recorded_at
+    assert home.graph.history("back-1")[0]["at"] == logged.recorded_at
+    # replay keeps the logged record time
+    target = MemoryGraph(__import__("abstractmemory").InMemoryTripleStore())
+    assert home.graph.replay_into(target) == 1
+    assert target.revisions()[0][0].recorded_at == logged.recorded_at
+    assert target.apply_revision(rev("r-old", claim("old-1"), recorded_at=T(1)), replay=True).recorded_at == T(1)
 
 
 def test_a_close_or_narrow_never_inverts_a_window(home) -> None:
