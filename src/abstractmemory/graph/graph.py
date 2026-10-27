@@ -356,6 +356,15 @@ class _SQLiteBackend:
                     f"abstractmemory.graph: the triple table {self.table!r} has columns {sorted(columns)}, the graph's "
                     f"insert path writes {sorted(_STORE_COLUMNS)}; update graph._sqlite_rows with the store schema"
                 )
+            # Opening a graph on an existing home is a READ: when every table and index is there, no DDL
+            # transaction runs (a reader needs no write lock and never waits behind a writer).
+            expected = (self.t_rev, self.t_prov, self.t_der, self.t_hist, f"idx_{self.t_prov}_ref_key",
+                        f"idx_{self.t_prov}_run_id", f"idx_{self.t_der}_from", f"idx_{self.t_hist}_memory",
+                        f"idx_{self.t_rev}_pending")
+            marks = ", ".join("?" for _ in expected)
+            present = cur.execute(f"SELECT COUNT(*) FROM sqlite_master WHERE name IN ({marks})", expected).fetchone()
+            if int(present[0]) == len(expected):
+                return
             cur.execute("BEGIN IMMEDIATE")
             try:
                 cur.execute(

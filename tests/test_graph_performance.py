@@ -120,3 +120,30 @@ def test_graph_rows_are_served_by_the_vector_matrix(tmp_path: Path) -> None:
     assert list(store._vectors.positions_of(["graph-1", "graph-2"]))  # in the matrix, appended by rowid
     journal.close()
     store.close()
+
+
+def test_opening_a_graph_on_an_existing_home_does_not_wait_for_a_writer(tmp_path: Path) -> None:
+    """Review M13: a MemoryGraph on a home whose graph tables exist runs no DDL transaction, so a reader neither needs
+    the write lock nor waits behind a writer (busy_timeout is 5 s; a BEGIN IMMEDIATE here would block, then raise).
+    Mutant: the "already there" early return in `_ensure_graph_schema` removed -> red."""
+    import sqlite3
+    import time
+
+    path = tmp_path / "home.sqlite3"
+    store = SQLiteTripleStore(path)
+    MemoryGraph(store).apply_revision(rev("r-1", claim("a"), provenance=prov(step("run-1", 1))))
+    writer = sqlite3.connect(str(path), isolation_level=None, timeout=0.1)
+    writer.execute("BEGIN IMMEDIATE")  # another process holds the write lock
+    try:
+        started = time.monotonic()
+        reader = MemoryGraph(store)
+        assert reader.history("a")[0]["revision_id"] == "r-1"
+        assert time.monotonic() - started < 1.0
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
+    # A fresh home still gets its tables.
+    fresh = MemoryGraph(SQLiteTripleStore(tmp_path / "fresh.sqlite3"))
+    assert_index_plans(fresh)
+    fresh.store.close()
+    store.close()
