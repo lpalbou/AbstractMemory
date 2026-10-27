@@ -9,7 +9,7 @@ test_graph_provenance.py and test_graph_performance.py; the LanceDB-specific one
 src/abstractmemory/graph/lancedb_backend.py; each turned the named case red):
 - `transaction`: the staged plan flushed even when the block raised       -> test_a_failing_revision_leaves_nothing[lancedb-*]
 - `_commit`: the log row written AFTER the projections                    -> test_lancedb_repair_finishes_a_half_projected_revision
-- `_apply_plan`: plain `add` instead of the keyed merge-insert for triples -> test_lancedb_repair_finishes_a_half_projected_revision
+- `_apply_plan`: plain `add` instead of the keyed merge-insert on repair -> test_lancedb_repair_finishes_a_half_projected_revision
 - `revisions_page`: the `status = 'applied'` filter removed               -> test_lancedb_repair_finishes_a_half_projected_revision
 """
 from __future__ import annotations
@@ -299,13 +299,13 @@ def test_lancedb_repair_finishes_a_half_projected_revision(tmp_path: Path, monke
     real = backend._apply_plan
     calls = {"n": 0}
 
-    def crash_after_triples(plan):
+    def crash_after_triples(plan, fresh=False):
         calls["n"] += 1
         if calls["n"] == 1:
             rows_only = dict(plan, updates={}, history=[], provenance=[], derivations=[])
-            real(rows_only)
+            real(rows_only, fresh=fresh)
             raise RuntimeError("power cut after the triple rows")
-        return real(plan)
+        return real(plan, fresh=fresh)
 
     monkeypatch.setattr(backend, "_apply_plan", crash_after_triples)
     with pytest.raises(RuntimeError, match="power cut"):
@@ -329,8 +329,8 @@ def test_lancedb_a_crash_mid_projection_is_invisible_before_repair(tmp_path: Pat
     backend = home.graph._b
     real = backend._apply_plan
 
-    def crash(plan):
-        real(dict(plan, updates={}, history=[], provenance=[], derivations=[]))
+    def crash(plan, fresh=False):
+        real(dict(plan, updates={}, history=[], provenance=[], derivations=[]), fresh=fresh)
         raise RuntimeError("power cut")
 
     monkeypatch.setattr(backend, "_apply_plan", crash)

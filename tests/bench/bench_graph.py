@@ -133,23 +133,32 @@ def main() -> None:
     ap.add_argument("--size", type=int, default=50000)
     ap.add_argument("--repeat", type=int, default=200)
     ap.add_argument("--embed", action="store_true")
+    ap.add_argument("--backend", choices=("sqlite", "lancedb"), default="sqlite",
+                    help="the connector behind MemoryGraph (abstractmemory.graph.backend)")
     args = ap.parse_args()
     warnings.simplefilter("ignore")
     rnd = random.Random(7)
     root = Path(tempfile.mkdtemp(prefix="bench-graph-"))
     try:
-        path = root / "home.sqlite3"
-        store = SQLiteTripleStore(path, embedder=FakeEmbedder() if args.embed else None)
-        journal = SQLiteJournal(path)
+        embedder = FakeEmbedder() if args.embed else None
+        if args.backend == "lancedb":
+            from abstractmemory import LanceDBTripleStore
+
+            store = LanceDBTripleStore(root / "home-lance", embedder=embedder)
+            journal = SQLiteJournal(root / "journal.sqlite3")
+        else:
+            path = root / "home.sqlite3"
+            store = SQLiteTripleStore(path, embedder=embedder)
+            journal = SQLiteJournal(path)
         graph = MemoryGraph(store, journal)
         info = build(graph, args.size, rnd)
         n_rev = info["revisions"]
         n_sourced_revs = n_rev - len(info["derived"]) // CLAIMS_PER_REVISION
         print(f"built {args.size} assertions in {n_rev} revisions ({info['closes']} closes) in "
               f"{info['build_s']:.1f}s = {n_rev / info['build_s']:.0f} revisions/s, "
-              f"{args.size / info['build_s']:.0f} assertions/s; embed={args.embed}; "
-              f"file {sum(p.stat().st_size for p in root.iterdir()) / 1e6:.1f} MB")
-        plans = assert_index_plans(graph)
+              f"{args.size / info['build_s']:.0f} assertions/s; embed={args.embed}; backend={args.backend}; "
+              f"on disk {sum(p.stat().st_size for p in root.rglob('*') if p.is_file()) / 1e6:.1f} MB")
+        plans = assert_index_plans(graph) if args.backend == "sqlite" else {}
         R = args.repeat
         steps = [({"kind": "step", "run_id": f"run-{r // STEPS_PER_RUN:05d}", "seq": r % STEPS_PER_RUN + 1},)
                  for r in (rnd.randrange(n_sourced_revs) for _ in range(R))]
@@ -174,14 +183,16 @@ def main() -> None:
 
             probes = [(FakeEmbedder().embed_texts([f"probe {k}"])[0],) for k in range(20)]
             store.query(TripleQuery(query_vector=probes[0][0], scope="global", limit=20))  # builds the matrix
-            rows["vector query, limit 20 (" + store.vector_engine + ")"] = timeit(
+            engine = getattr(store, "vector_engine", "lancedb-flat")
+            rows["vector query, limit 20 (" + engine + ")"] = timeit(
                 lambda v: store.query(TripleQuery(query_vector=v, scope="global", limit=20)), probes)
 
         def before(run):  # the 0.3 way: scan every row's provenance JSON for the run id
             return store._conn.execute(f"SELECT assertion_id FROM triples WHERE provenance_json LIKE ?",
                                        (f'%"{run["run_id"]}"%',)).fetchall()
 
-        rows["BEFORE: provenance_json scan by run"] = timeit(before, runs[:20])
+        if args.backend == "sqlite":
+            rows["BEFORE: provenance_json scan by run"] = timeit(before, runs[:20])
         print(f"\n| read @ {args.size} assertions | median ms | p95 ms | n | rows returned (last) |")
         print("|---|---:|---:|---:|---:|")
         for name, r in rows.items():

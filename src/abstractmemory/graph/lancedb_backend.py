@@ -54,6 +54,18 @@ from .revisions import Revision
 
 #: Ids per `assertion_id IN (...)` filter (keeps a filter string bounded).
 IN_CHUNK = 500
+#: Every this many commits a mind's tables are compacted (`optimize()`) and their scalar indexes brought up to date:
+#: each LanceDB commit adds a fragment, and keyed reads over un-indexed fragments are scans (measured with
+#: tests/bench/bench_graph.py --backend lancedb: see backlog 0057).
+COMPACT_EVERY = 50
+#: The keyed columns of each table (BTREE scalar indexes, created at the first compaction with rows).
+INDEXED_COLUMNS = {
+    "revisions": ("revision_id", "seq", "status"),
+    "history": ("memory_id", "revision_id"),
+    "provenance": ("pk", "memory_id", "ref_key", "run_id"),
+    "derivations": ("pk", "memory_id", "from_id"),
+    "triples": ("assertion_id", "subject"),
+}
 _TRIPLE_TEXT = ("assertion_id", "subject", "predicate", "object", "scope", "owner_id", "observed_at", "valid_from",
                 "valid_until", "provenance_json", "attributes_json", "text")
 
@@ -98,6 +110,8 @@ class _State:
         self.tables: Dict[str, Any] = {}
         self.triples: Any = None
         self.counters: Optional[Dict[str, int]] = None
+        self.commits = 0
+        self.pending_possible = True  # checked once at open, then only after a commit of this process failed
 
     def open(self) -> None:
         """Open the graph tables, creating only those that are absent (opening an existing mind writes nothing)."""
@@ -131,6 +145,18 @@ class _State:
             self.triples = self.db.create_table(
                 self.table_name, schema=_triples_schema(self.pa, self.vector_column, dim))
         return self.triples
+
+    def compact(self) -> None:
+        """Compact every table and bring its scalar indexes up to date (COMPACT_EVERY)."""
+        handles = dict(self.tables, triples=self.triples) if self.triples is not None else dict(self.tables)
+        for key, table in handles.items():
+            if table.count_rows() == 0:
+                continue
+            have = {c for idx in table.list_indices() for c in getattr(idx, "columns", [])}
+            for column in INDEXED_COLUMNS[key]:
+                if column not in have:
+                    table.create_scalar_index(column)
+            table.optimize()
 
     def counter_values(self) -> Dict[str, int]:
         if self.counters is None:
@@ -320,7 +346,8 @@ class _LanceTx(GraphTx):
 
     def add_source(self, mid: str, ref: SourceRef, rid: str, owner: Optional[str], via: str = VIA_MEMORY) -> None:
         pk = f"{mid}\x1f{ref.key()}"
-        if pk in self.provenance or _rows(self.s.tables["provenance"], f"pk = {_q(pk)}", ["pk"], limit=1):
+        if pk in self.provenance or (mid not in self.new_rows and  # a memory new in this revision has no stored row
+                                     _rows(self.s.tables["provenance"], f"pk = {_q(pk)}", ["pk"], limit=1)):
             return
         self.provenance[pk] = {"pk": pk, "pseq": self.s.take("pseq"), "memory_id": mid, "ref_key": ref.key(),
                                "ref_kind": ref.kind, "run_id": ref.run_id, "revision_id": rid,
@@ -328,7 +355,8 @@ class _LanceTx(GraphTx):
 
     def add_derivation(self, mid: str, from_id: str, rid: str) -> None:
         pk = f"{mid}\x1f{from_id}"
-        if pk in self.derivations or _rows(self.s.tables["derivations"], f"pk = {_q(pk)}", ["pk"], limit=1):
+        if pk in self.derivations or (mid not in self.new_rows and
+                                      _rows(self.s.tables["derivations"], f"pk = {_q(pk)}", ["pk"], limit=1)):
             return
         self.derivations[pk] = {"pk": pk, "dseq": self.s.take("dseq"), "memory_id": mid, "from_id": from_id,
                                 "revision_id": rid}
@@ -382,7 +410,9 @@ class LanceDBBackend(GraphBackend):
     def transaction(self) -> Iterator[_LanceTx]:
         state = self.state
         with state.lock:
-            self._repair_locked()
+            if state.pending_possible:
+                self._repair_locked()
+                state.pending_possible = False
             saved = dict(state.counter_values())
             tx = _LanceTx(self)
             try:
@@ -391,7 +421,14 @@ class LanceDBBackend(GraphBackend):
                 state.counters = saved  # nothing was written: give the staged sequence numbers back
                 raise
             if tx.revision is not None:
-                self._commit(tx)
+                try:
+                    self._commit(tx)
+                except BaseException:
+                    state.pending_possible = True  # the log row may be written: the next transaction repairs it
+                    raise
+                state.commits += 1
+                if state.commits % COMPACT_EVERY == 0:
+                    state.compact()
 
     def _commit(self, tx: _LanceTx) -> None:
         state = self.state
@@ -399,12 +436,14 @@ class LanceDBBackend(GraphBackend):
         row = dict(tx.revision, status="pending", plan_json=json.dumps(plan, ensure_ascii=False))  # type: ignore
         state.tables["revisions"].add(state.pa.Table.from_pylist([row], schema=state.tables["revisions"].schema))
         state.counter_values()["seq"] = row["seq"]  # the log row is written: its seq is taken
-        self._apply_plan(plan)
+        self._apply_plan(plan, fresh=True)
         state.tables["revisions"].update(where=f"revision_id = {_q(row['revision_id'])}",
                                          values={"status": "applied", "plan_json": ""})
 
-    def _apply_plan(self, plan: Dict[str, Any]) -> None:
-        """Idempotent: every projection write is keyed (merge-insert of new keys only; updates set a value)."""
+    def _apply_plan(self, plan: Dict[str, Any], fresh: bool = False) -> None:
+        """Write a revision's projections. `fresh` (the commit that staged them): every key is new (the stage
+        checked), so rows are appended. Otherwise (repair, re-applying a plan a crash interrupted) every write is
+        keyed and idempotent: merge-insert of the keys not yet stored; updates set a value."""
         state, pa = self.state, self.state.pa
         rows = plan["rows"]
         if rows:
@@ -413,7 +452,10 @@ class LanceDBBackend(GraphBackend):
             self.store._table = triples
             names = triples.schema.names
             batch = pa.Table.from_pylist([{k: r.get(k) for k in names} for r in rows], schema=triples.schema)
-            triples.merge_insert("assertion_id").when_not_matched_insert_all().execute(batch)
+            if fresh:
+                triples.add(batch)
+            else:
+                triples.merge_insert("assertion_id").when_not_matched_insert_all().execute(batch)
         for aid, values in plan["updates"].items():
             state.triples.update(where=f"assertion_id = {_q(aid)}", values=values)
         for key, table_key, col in (("history", "history", "hseq"), ("provenance", "provenance", "pk"),
@@ -421,7 +463,10 @@ class LanceDBBackend(GraphBackend):
             if plan[key]:
                 table = state.tables[table_key]
                 batch = pa.Table.from_pylist(plan[key], schema=table.schema)
-                table.merge_insert(col).when_not_matched_insert_all().execute(batch)
+                if fresh:
+                    table.add(batch)
+                else:
+                    table.merge_insert(col).when_not_matched_insert_all().execute(batch)
 
     def _repair_locked(self) -> int:
         pending = _all(self.state.tables["revisions"], "status = 'pending'", ["seq", "revision_id", "plan_json"])
