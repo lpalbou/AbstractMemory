@@ -11,7 +11,8 @@ Mutants (applied by hand to src/abstractmemory/graph/graph.py; each turned this 
 - `_SQLiteTx.add_source`: no-op                        -> derived_from_source / sources_of assertions
 - `_SQLiteTx.add_derivation`: no-op                    -> the reflection's transitive sources
 - `apply_revision`: the narrow branch's `add_history` removed -> the history sequence asserted -> closed -> narrowed
-- `_prepare`: the per-memory `is_grounded` refusal AND `_validate`'s ungrounded refusal removed -> the refused write
+- `_prepare`: the per-memory `is_grounded` refusal AND `_validate`'s ungrounded refusal removed -> the third refused
+  write (a grounded revision carrying a memory with an empty provenance) goes through
 """
 from __future__ import annotations
 
@@ -180,6 +181,12 @@ def test_two_consumers_write_one_mind_and_read_it_back(tmp_path: Path) -> None:
                 ops=(RevisionOp("assert", {"assertion_id": "c-bad", "subject": "ex:person-dana",
                                            "predicate": "schema:livesIn", "object": "ex:paris"}),),
                 provenance={"sources": [], "derived_from": [], "actor": "abstractnote"}))
+        # A grounded revision does not ground a memory that names its own, empty, provenance.
+        with pytest.raises(ProvenanceRequired):
+            note.apply("nb-bad-2", RevisionOp("assert", {
+                "assertion_id": "c-bad-2", "subject": "ex:person-dana", "predicate": "schema:livesIn",
+                "object": "ex:lyon", "provenance": {"sources": [], "derived_from": [], "actor": "abstractnote"}}),
+                run_id="run-cap-4", seq=1, note_id="n4", quote="?", cause="ingest", occurred_at=T(7))
         assert _counts(home) == counts
         assert file_state(home) == state
     finally:
