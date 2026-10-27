@@ -1073,8 +1073,6 @@ class MemoryGraph:
         present revision ids are no-ops, so a replay is resumable)."""
         if not isinstance(target, MemoryGraph):
             raise TypeError("replay_into expects a MemoryGraph")
-        if target._b is self._b:
-            raise ValueError("replay_into: the target is this graph's own store")
         applied, cursor = 0, None
         while True:
             page, cursor = self.revisions(after=cursor, limit=DEFAULT_REVISION_PAGE)
