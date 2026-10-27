@@ -50,6 +50,13 @@ Optional LanceDB backend:
 python -m pip install -e ".[lancedb]"
 ```
 
+Fast vector search on the SQLite store (numpy; without it the store serves the
+same results from a labelled Python scan):
+
+```bash
+python -m pip install -e ".[fast]"
+```
+
 PyPI (packaged release):
 
 ```bash
@@ -57,7 +64,7 @@ python -m pip install AbstractMemory
 python -m pip install "AbstractMemory[lancedb]"
 ```
 
-The distribution name is `AbstractMemory` (pip is case-insensitive); the import name is `abstractmemory`. The `[apple]`/`[gpu]` extras are no-op compatibility aliases; `[all]`, `[all-apple]`, and `[all-gpu]` install the LanceDB backend.
+The distribution name is `AbstractMemory` (pip is case-insensitive); the import name is `abstractmemory`. The `[apple]`/`[gpu]` extras are no-op compatibility aliases; `[fast]` installs numpy for the SQLite store's vector matrix cache; `[all]`, `[all-apple]`, and `[all-gpu]` install the LanceDB backend and numpy.
 
 ## Quick example — layer 1 (triples)
 

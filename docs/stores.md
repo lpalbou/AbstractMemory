@@ -42,9 +42,29 @@ Semantic/vector support (mirrors the InMemory reference semantics exactly):
   the same file. An embedder failure aborts the add with zero rows written.
 - `query_text=...` requires the embedder (raises the same `ValueError` as
   InMemory — no keyword fallback); `query_vector=...` works directly.
-- Cosine ranking runs in Python over the SQL-filtered candidates (shared
-  `vector_scoring.py` — both stores rank identically). The scan is linear,
-  comfortable at single-home scale; ANN indexing is on the design backlog.
+- Vectors are stored as float32 little-endian BLOBs (4 bytes per
+  dimension; backlog 0058). A home written by an earlier version (JSON text
+  vectors) is upgraded in place when the store opens: rows above the
+  `vector_blob_high_water` cursor of the meta sidecar are rewritten in
+  bounded transactions, so the upgrade is idempotent and an interrupted one
+  resumes (about 5 s for 50k rows of 384-d vectors, once). Values float32
+  cannot hold are refused at write (`ValueError`) rather than clipped.
+- Cosine ranking returns exactly what the reference scan of
+  `vector_scoring.py` returns (same rows, same order, bit-identical scores;
+  both stores rank identically). With numpy installed
+  (`pip install "abstractmemory[fast]"`), the store serves it from an
+  in-process float32 matrix cache: built at a handle's first semantic query,
+  appended with the rows written since (by any handle or process), rebuilt
+  when `replace_vectors` or the upgrade rewrites the vectors
+  (`vector_generation` in the meta sidecar). A float32 pass selects the
+  candidates with a margin above its error bound and the candidates are
+  re-scored with the reference arithmetic. Memory: 4 bytes per dimension
+  per vectored row (about 77 MB for 50k rows of 384-d vectors).
+  `store.vector_engine` says which path serves: `"numpy-matrix-cache"` or
+  `"python-linear-scan"`. The Python scan serves (labelled once per handle
+  with a `#FALLBACK` warning) when numpy is absent or a stored vector cannot
+  be scored exactly by the matrix (mixed dimensions, non-finite values).
+  ANN indexing stays out of scope (LanceDB is the optional accelerator).
 - Rows added while no embedder was configured stay vectorless: vector
   queries skip them and layer-2 recall labels the degradation
   (`#FALLBACK`). The `reembed_store(...)` repair pass backfills them.
@@ -85,7 +105,22 @@ Stored columns:
 - `observed_at`, `valid_from`, `valid_until`, `confidence`
 - `provenance_json`, `attributes_json` (serialized dicts)
 - `text` (canonical text, kept inspectable)
-- `embedding` (JSON-encoded float list; NULL for vectorless rows)
+- `embedding` (float32 little-endian BLOB since 0.4.0; JSON text in homes
+  not yet upgraded; NULL for vectorless rows)
+
+Reads (backlog 0058):
+- Structured reads select the assertion columns only (never `embedding` or
+  `text`); `stored_vector(id)` and semantic queries read the vector.
+- The owner filter is an index-usable equality; partition reads ("latest N
+  in a (scope, owner)", as-of windows, per-pair scans) walk
+  `idx_<table>_scope_owner_observed` in query order; reads anchored on ids,
+  a subject or an object use their own index. `query_plan(q)` returns
+  SQLite's `EXPLAIN QUERY PLAN` lines for a query.
+- `assertions_after(cursor, *, scope=None, owner_id=None, limit=1000)` is a
+  bounded change feed in rowid order (`(rows, next_cursor)`); the
+  maintenance cadence folds it so a check reads only the rows written since
+  the previous one. `InMemoryTripleStore` offers the same feed over its
+  insertion order.
 
 ## LanceDBTripleStore
 
