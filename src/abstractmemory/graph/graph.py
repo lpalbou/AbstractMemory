@@ -62,9 +62,12 @@ from .provenance import Provenance, ProvenanceRequired, SourceRef
 from .revisions import Revision, RevisionOp, RevisionResult
 
 # -- named constants (ADR 0003 enforcement: page sizes and bounds live in one place) --------------------------------
-# Measured 2026-10-27 on a temporary SQLite home with 50,000 graph-asserted memories (tests/test_graph_performance.py;
-# numbers in backlog 0056 "Report"): every bounded read below stays an index read, so the bounds are set by what a
-# caller can usefully consume in one call, not by cost.
+# Measured 2026-10-27 on a temporary SQLite home with 50,000 graph-asserted memories (tests/bench/bench_graph.py; the
+# full table is in backlog 0056 "Report"; the plans are pinned by tests/test_graph_performance.py). Every read below
+# is an index read whose cost is linear in what it returns: history 0.02 ms, sources_of 0.04 ms (transitive over a
+# derived memory 0.10 ms), derived_from_source(step) 0.05 ms, a run walk returning 128 memories 0.8 ms, a change-feed
+# page of 100 revisions 4 ms (decoding dominates). So the bounds are set by what a caller can use in one call, not
+# by cost: a full 1000-memory lineage walk stays in single-digit milliseconds.
 #: Default change-feed page (`revisions(limit=)`).
 DEFAULT_REVISION_PAGE = 100
 #: The largest page any one graph read returns; a larger `limit` is clamped to it.
