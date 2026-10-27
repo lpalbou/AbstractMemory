@@ -6,6 +6,8 @@ Mutants (each applied by hand to src/abstractmemory/graph/graph.py, the named te
 - `_MemoryBackend.transaction`: `tx.rollback()` removed                         -> test_a_failing_op_rolls_back_the_whole_revision[memory]
 - `_SQLiteTx.write_closure`: `self.b.journal.append_closure(closure)` (the journal's own transaction) instead of
   `_append_closure_on(self.cur, ...)`                                         -> test_a_failing_op_rolls_back_the_whole_revision[sqlite]
+  (red as "database is locked": the journal's own BEGIN IMMEDIATE waits on the store's open write transaction, which
+  is why the same-file closure MUST ride the store's cursor)
 - `apply_revision`: the in-transaction `revision_seq` idempotency check AND the pre-check removed
                                                                                -> test_a_revision_is_idempotent_on_its_id[*]
 - `apply_revision`: the `close` branch's `tx.write_closure`/pending append removed -> test_close_writes_the_window_and_the_closure_together[*]
