@@ -556,7 +556,10 @@ class SQLiteTripleStore:
         # M1 read guard: a wrong-space query vector refuses loudly here; the
         # vector CHANNEL converts this into its labeled #FALLBACK, so recall
         # degrades to exact/keyword instead of serving cross-space cosine.
-        check_query_dimension(self.embedding_pin(), query_vector)
+        # Structured reads skip the pin read entirely (0058: it was a meta
+        # query + JSON parse on every one of the ~260 reads of a reconstruct).
+        if query_vector is not None:
+            check_query_dimension(self.embedding_pin(), query_vector)
 
         raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
         limit: Optional[int]

@@ -154,3 +154,26 @@ def test_structured_reads_never_fetch_the_vector_column(tmp_path: Path) -> None:
     # The explicit vector read still returns the stored vector.
     assert store.stored_vector("a-1") == [0.0, 1.0, 0.0]
     store.close()
+
+
+def test_structured_reads_do_not_read_the_embedding_pin(tmp_path: Path) -> None:
+    """The pin guards semantic queries only; a structured read (the ~260
+    store reads of one reconstruct) issues no meta-table query. Mutant:
+    calling `check_query_dimension(self.embedding_pin(), ...)`
+    unconditionally goes red."""
+    store = SQLiteTripleStore(tmp_path / "kg.sqlite3", embedder=_AxisEmbedder(), embedding_pin=_AXIS_PIN)
+    store.add([_row(1, owner="entity:a")])
+    seen: list = []
+    store._conn.set_trace_callback(seen.append)  # noqa: SLF001 - observing the reads
+    try:
+        store.query(TripleQuery(subject="ex:s", scope="life", owner_id="entity:a"))
+        store.query(TripleQuery(scope="life", limit=0))
+        structured = list(seen)
+        store.query(TripleQuery(query_vector=[1.0, 0.0, 0.0], limit=1))
+    finally:
+        store._conn.set_trace_callback(None)  # noqa: SLF001
+    assert not [s for s in structured if "triples_meta" in s], structured
+    assert any("embedding_pin" in s for s in seen[len(structured):]), "the semantic read still checks the pin"
+    with pytest.raises(ValueError):
+        store.query(TripleQuery(query_vector=[1.0, 0.0], limit=1))   # wrong dimension still refused
+    store.close()
