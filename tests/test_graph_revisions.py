@@ -228,7 +228,7 @@ def test_change_feed_is_lossless_under_a_concurrent_writer(tmp_path: Path, kind:
     thread.start()
     seen: list = []
     cursor = None
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         page, cursor = reader.graph.revisions(after=cursor, limit=7)
         seen.extend(r.revision_id for r in page)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from abstractmemory import InvalidSourceRef, Provenance, ProvenanceRequired, SourceRef
-from abstractmemory.graph import SOURCE_KINDS
+from abstractmemory.graph import SOURCE_KINDS, RevisionOp
 
 FULL = {
     "run": {"kind": "run", "run_id": "run-1"},
@@ -142,3 +142,179 @@ def test_from_legacy_reads_a_graph_shaped_dict() -> None:
     prov = Provenance.from_legacy({"sources": [FULL["run"]], "extra": {"note_id": "n"}})
     assert prov.sources[0].key() == "run:run-1"
     assert prov.actor == "runtime"
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The graph enforces it (ADR 0003 decision 8 and "Enforcement"): MemoryGraph.apply_revision.
+# Graph-level mutants (applied by hand to src/abstractmemory/graph/graph.py; each turned the named test red):
+# - `_prepare`: the per-memory `is_grounded()` refusal removed                -> test_a_write_with_neither_sources_nor_lineage_is_refused[*]
+# - `_prepare`: the revision-level `is_grounded()` refusal removed            -> test_a_revision_must_itself_be_grounded[*]
+# - `_validate`: the fixpoint seeds every in-revision memory as grounded      -> test_a_derived_chain_that_never_reaches_a_source_is_refused[*]
+# - `_validate._resolve`: an unknown id resolves to itself                    -> test_a_derived_chain_that_never_reaches_a_source_is_refused[*]
+# - `_adopt`: the cause gate removed                                         -> test_a_store_row_written_outside_the_graph_must_be_adopted_first[*]
+# - `_adopt`: the content comparison removed                                 -> test_a_store_row_written_outside_the_graph_must_be_adopted_first[*]
+# - `apply_revision`: `tx.set_provenance` for adopted rows removed            -> test_a_store_row_written_outside_the_graph_must_be_adopted_first[*]
+# - `apply_revision`: the close/narrow "not a memory of this graph" refusal removed
+#                                                                             -> test_a_store_row_written_outside_the_graph_must_be_adopted_first[*]
+# - `_SQLiteTx.write_pin` writes nothing and `_sqlite_rows` writes the pin itself (the 0.3 path, before the tx)
+#                                                                             -> test_a_refused_write_leaves_no_embedding_pin
+# - `_SQLiteBackend.with_ref`: a run ref matched on ref_key                   -> test_sources_of_and_derived_from_source[*]
+# - `MemoryGraph.sources_of`: parents never enqueued                          -> test_sources_of_and_derived_from_source[*]
+# ---------------------------------------------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from abstractmemory import TripleAssertion, TripleQuery  # noqa: E402
+
+from graph_support import (  # noqa: E402
+    KINDS,
+    FakeEmbedder,
+    T,
+    art,
+    claim,
+    close,
+    file_state,
+    home_state,
+    narrow,
+    open_home,
+    prov,
+    rev,
+    step,
+)
+
+
+@pytest.fixture(params=KINDS)
+def home(request, tmp_path: Path):
+    h = open_home(tmp_path, request.param)
+    h.graph.apply_revision(rev("r-base", claim("base", valid_from=T(1)), provenance=prov(step("run-1", 1))))
+    yield h
+    h.close()
+
+
+def test_a_write_with_neither_sources_nor_lineage_is_refused(home) -> None:
+    before = home_state(home)
+    for bad in (prov(), {"sources": [], "derived_from": [], "actor": "runtime"}):
+        with pytest.raises(ProvenanceRequired, match="never neither"):
+            home.graph.apply_revision(rev("r-x", claim("x", provenance=bad)))
+    # A payload provenance in the legacy flat shape is refused, pointing at from_legacy.
+    with pytest.raises(ProvenanceRequired, match="from_legacy"):
+        home.graph.apply_revision(rev("r-x", claim("x", provenance={"run_id": "run-1", "actor": "runtime"})))
+    assert home_state(home) == before
+    assert home.graph.revisions()[0][-1].revision_id == "r-base"
+
+
+def test_a_revision_must_itself_be_grounded(home) -> None:
+    before = home_state(home)
+    with pytest.raises(ProvenanceRequired, match="cause of every change"):
+        home.graph.apply_revision(rev("r-x", close("base", T(3)), provenance=prov(actor="abstractnote")))
+    with pytest.raises(ProvenanceRequired, match="not a memory of this graph"):
+        home.graph.apply_revision(rev("r-x", close("base", T(3)), provenance=prov(derived=["ghost"])))
+    assert home_state(home) == before
+    ok = home.graph.apply_revision(rev("r-ok", close("base", T(3)), provenance=prov(derived=["base"], actor="person")))
+    assert ok.closed == ["base"]
+
+
+def test_a_derived_chain_that_never_reaches_a_source_is_refused(home) -> None:
+    before = home_state(home)
+    cases = {
+        "unknown parent": [claim("d1", provenance=prov(derived=["ghost"]))],
+        "self": [claim("d1", provenance=prov(derived=["d1"]))],
+        "cycle": [claim("d1", provenance=prov(derived=["d2"])), claim("d2", o="ex:x", provenance=prov(derived=["d1"]))],
+        "chain to nothing": [claim("d1", provenance=prov(derived=["d2"])),
+                             claim("d2", o="ex:x", provenance=prov(derived=["d3"])),
+                             claim("d3", o="ex:y", provenance=prov(derived=["d1"]))],
+    }
+    for name, ops in cases.items():
+        with pytest.raises(ProvenanceRequired):
+            home.graph.apply_revision(rev(f"r-{name}", *ops, provenance=prov(step("run-1", 2))))
+        assert home_state(home) == before, name
+    # Grounded chains are accepted: from a memory of the graph, and through a chain inside one revision.
+    result = home.graph.apply_revision(rev(
+        "r-ok",
+        claim("d3", o="ex:z", provenance=prov(derived=["d2"], actor="abstractmemory:sleep")),
+        claim("d2", o="ex:y", provenance=prov(derived=["d1"], actor="abstractmemory:sleep")),
+        claim("d1", o="ex:x", provenance=prov(derived=["base"], actor="abstractmemory:sleep")),
+        provenance=prov(derived=["base"], actor="abstractmemory:sleep")))
+    assert result.assertion_ids == ["d3", "d2", "d1"]
+    assert [s.key() for s in home.graph.sources_of("d3")] == ["step:run-1#1"]
+    assert home.graph.sources_of("d3", transitive=False) == []
+
+
+def test_derived_from_accepts_a_record_graph_id(home) -> None:
+    home.graph.apply_revision(rev("r-note", claim("note-digest", s="ex:note-7", p="dcterms:abstract",
+                                                  o="dana joined acme", attributes={"literal": True}),
+                                  provenance=prov(art("note-7"))))
+    home.graph.apply_revision(rev("r-derived", claim("lesson", s="ex:dana", p="ex:lesson", o="ex:x",
+                                                     provenance=prov(derived=["ex:note-7"], actor="entity:e1")),
+                                  provenance=prov(derived=["ex:note-7"], actor="entity:e1")))
+    assert [s.key() for s in home.graph.sources_of("lesson")] == ["artifact:note-7"]
+    assert home.graph.history("ex:note-7")[0]["revision_id"] == "r-note"  # a graph id reads its digest's history
+    assert home.graph.derived_from_source(art("note-7")) == ["note-digest", "lesson"]
+
+
+def test_a_store_row_written_outside_the_graph_must_be_adopted_first(home) -> None:
+    legacy = TripleAssertion(subject="ex:dana", predicate="schema:worksFor", object="ex:oldco", scope="global",
+                             owner_id="abstractnote", observed_at=T(1), valid_from=T(1), assertion_id="legacy-1",
+                             provenance={"note_id": "nt_1", "run_id": "chat-1"}, attributes={"certainty": "stated"})
+    home.store.add([legacy])
+    before = home_state(home)
+    # Not a memory of the graph: deriving from it, closing it, narrowing it, or re-asserting it as an ingest.
+    for bad in (rev("r-x", claim("y", provenance=prov(derived=["legacy-1"]))),
+                rev("r-x", close("legacy-1", T(4))),
+                rev("r-x", narrow("legacy-1", T(4))),
+                rev("r-x", RevisionOp("assert", dict(legacy.to_dict(), provenance=prov(art("note-1"))))),
+                ):
+        with pytest.raises(ProvenanceRequired, match="adopt"):
+            home.graph.apply_revision(bad)
+        assert home_state(home) == before
+    # An import adopts it only as stored: a different claim under the same id is refused.
+    with pytest.raises(ValueError, match="differs from the stored row"):
+        home.graph.apply_revision(rev("r-import", RevisionOp("assert", dict(
+            legacy.to_dict(), object="ex:newco", provenance=prov(art("note-1")))), cause="import"))
+    assert home_state(home) == before
+    graph_prov = Provenance.from_legacy(legacy.provenance, actor="abstractnote")
+    graph_prov = Provenance(sources=[art("note-1")], actor="abstractnote", extra=graph_prov.extra)
+    adopted = home.graph.apply_revision(rev("r-import", RevisionOp(
+        "assert", dict(legacy.to_dict(), provenance=graph_prov.to_dict())), cause="import"))
+    assert adopted.assertion_ids == ["legacy-1"]
+    [row] = home.store.query(TripleQuery(assertion_ids=("legacy-1",)))
+    assert row.provenance == graph_prov.to_dict()  # the row now carries the graph shape ...
+    [event] = home.graph.history("legacy-1")
+    assert event["detail"]["adopted"] is True
+    assert event["detail"]["previous_provenance"] == {"note_id": "nt_1", "run_id": "chat-1"}  # ... nothing lost
+    # Now it changes through the graph.
+    assert home.graph.apply_revision(rev("r-close", close("legacy-1", T(4)))).closed == ["legacy-1"]
+
+
+def test_a_refused_write_leaves_no_embedding_pin(tmp_path: Path) -> None:
+    home = open_home(tmp_path, "sqlite", embedder=FakeEmbedder())
+    before = file_state(home.path)
+    assert home.store.embedding_pin() is None
+    with pytest.raises(ProvenanceRequired):  # refused INSIDE the transaction (the chain check), after embedding
+        home.graph.apply_revision(rev("r-x", claim("x", provenance=prov(derived=["ghost"]))))
+    assert file_state(home.path) == before and home.store.embedding_pin() is None
+    with pytest.warns(RuntimeWarning, match="FIRST WRITE"):
+        home.graph.apply_revision(rev("r-ok", claim("x")))
+    assert home.store.embedding_pin()["dimension"] == 64
+    home.close()
+
+
+def test_sources_of_and_derived_from_source(home) -> None:
+    home.graph.apply_revision(rev(
+        "r-1", claim("c1", o="ex:a"), claim("c2", o="ex:b"),
+        provenance=prov(step("run-9", 3, "st-3"), art("art-9", "run-9"), {"kind": "message", "message_id": "m-1"})))
+    home.graph.apply_revision(rev("r-2", claim("c3", o="ex:c"), provenance=prov(step("run-9", 4))))
+    home.graph.apply_revision(rev(
+        "r-3", claim("sum", o="ex:sum", provenance=prov(derived=["c1", "c3"], actor="abstractmemory:sleep")),
+        cause="maintenance", provenance=prov(derived=["c1"], actor="abstractmemory:sleep")))
+    assert [s.key() for s in home.graph.sources_of("sum")] == [
+        "step:run-9#3", "artifact:art-9", "message:m-1", "step:run-9#4"]
+    assert home.graph.sources_of("sum", transitive=False) == []
+    assert home.graph.sources_of("sum", limit=2)[1].key() == "artifact:art-9"
+    assert home.graph.derived_from_source(step("run-9", 3)) == ["c1", "c2", "sum"]
+    assert home.graph.derived_from_source(step("run-9", 4)) == ["c3", "sum"]
+    # A run ref matches every ref stamped with that run (steps and artifacts), once per memory.
+    assert home.graph.derived_from_source({"kind": "run", "run_id": "run-9"}) == ["c1", "c2", "c3", "sum"]
+    assert home.graph.derived_from_source({"kind": "message", "message_id": "m-1"}) == ["c1", "c2", "sum"]
+    assert home.graph.derived_from_source({"kind": "run", "run_id": "run-unknown"}) == []
+    assert home.graph.sources_of("unknown") == [] and home.graph.history("unknown") == []
