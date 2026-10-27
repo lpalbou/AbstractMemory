@@ -148,6 +148,25 @@ The one real cost added by the fixes is timestamp normalization when a logged re
 one process, 50.9 us vs 43.6 us per 5-claim revision (+17%, about 0.7 ms per page of 100). The first table stays the
 reference figure; every read is still an index search (the bench asserts the plans).
 
+### Architect review (Fable, 2026-10-27): clear changes, each its own commit with tests and mutants
+
+- A3: record time is the store's (`apply_revision` stamps `recorded_at` under the write lock; `replay=True`, used
+  by `replay_into`, keeps the logged value). A5: a revision already in the log returns its logged outcome (ids read
+  back through a new `(revision_id, seq)` history index). A4: `SourceRef.digest` (sha256 hex beside the address).
+  A7: every memory is also indexed by the sources of the revision that wrote it (`via`), so a lineage-only memory is
+  found from its producing step; `sources_of(labelled=True)`. A6: `repair()` documented as off-file only.
+- B3: `derived_from` never crosses `owner_id` (other owners' knowledge enters as a source). B6:
+  `names_ref(ref, owner_ids)`, the owner gate in one covering-index probe (`memg_provenance.owner_id`,
+  denormalized and backfilled; `(ref_key, owner_id)` / `(run_id, owner_id)` indexes): at 1201 memories naming one
+  artifact, the last one's owner is allowed in one probe.
+- C1: opening a home is a read (store, journal and graph take no write lock on an up-to-date home; cursors kept
+  current by every insert path; the encoding marker written by the first write). C2: the matrix reserves its rows
+  at a build and grows by at most 10 %; 100k x 1024 holds 424 MB (552 MB before), build peak 460 MB (833 MB).
+  The old matrix was already freed before a rebuild allocated (proved with a weak reference); the 2.35 GB RSS was
+  the high-water mark of doubling growth copies.
+- E1: re-observation, not duplication (an open assert of a held open claim adds sources, no second row).
+- After the batch: full suite 1347 passed, 4 skipped.
+
 Open (next slices): `as_of` / `as_recorded` reads (0052); entity and alias ops (0050); the runtime facade that stamps
 step refs and reconstructs sources (AbstractRuntime ADR 0009); the gateway routes; AbstractNote and the runtime's
 writers moving onto `apply_revision`; the LanceDB plane store (0057).

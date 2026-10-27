@@ -35,12 +35,19 @@ The memory graph's write path ([ADR 0003](docs/adr/0003-one-graph-ledger-provena
     the revision id; deterministic ids so the logged revision replays identically. A store row written outside
     the graph is adopted only by an `import` / `migration` revision that carries it as stored (logged with its
     previous provenance, so a replay reproduces it); a different claim under an id the graph holds is refused;
-    a close/narrow-only revision must name a cause other than the memories it changes.
+    a close/narrow-only revision must name a cause other than the memories it changes; a `derived_from` across
+    owners is refused (other owners' knowledge enters as a source). Re-observation, not duplication: an open
+    assert of a claim the graph holds open records its sources on the held memory (`re_observed`, history
+    `re-observed`) instead of a second row. Record time is the store's: a fresh apply stamps `recorded_at` with
+    its clock (`apply_revision(rev, replay=True)`, used by `replay_into`, keeps the logged value). A revision
+    already in the log returns its logged outcome. Every memory is also indexed by the sources of the revision
+    that wrote it (`via`). `SourceRef.digest`: an optional sha256 of the verbatim, beside the address.
   - Reads, all bounded index reads: `history(memory_id)` (asserted / closed / narrowed, by which revision, with
     its cause), `sources_of(memory_id, transitive=True)`, `derived_from_source(ref)` (a `run` ref matches
     everything stamped with that run), the lossless change feed `revisions(after=cursor)` (a cursor beyond the
-    log's head is refused), `replay_into(target)` (an empty home replays to the same file, adoptions included), and `repair()` for closures a crash left unwritten when the journal
-    lives in another file.
+    log's head is refused), `replay_into(target)` (an empty home replays to the same file, adoptions included),
+    `names_ref(ref, owner_ids)` (the owner gate in one index probe), and `repair()` for closures a crash left
+    unwritten when the journal lives in another file (never needed for same-file plane and entity homes).
   - Four tables in the home file: `memg_revisions`, `memg_provenance`, `memg_derivations`, `memg_history`.
 - **`narrow_assertion(assertion_id, valid_until)`** on `SQLiteTripleStore` and `InMemoryTripleStore`: moves an
   already-closed validity window earlier and never widens it (`ValueError` for an open window or a value that is
@@ -96,7 +103,16 @@ a handle 0.44 s, it builds the matrix); file 449 MB -> 122 MB; MemorySystem
   to 0.4.0 together, and an entity home copied to a 0.3.x install loses
   semantic recall. A 0.4.0 home declares it in its meta table
   (`<table>_meta`: `vector_encoding = float32-blob`,
-  `abstractmemory.vector_matrix.VECTOR_ENCODING_KEY`) so a reader can tell.
+  `abstractmemory.vector_matrix.VECTOR_ENCODING_KEY`) so a reader can tell; the key is written by the first
+  write (or by the upgrade that rewrote JSON vectors), never by a plain open.
+- **Opening a home is a read.** `SQLiteTripleStore` and `SQLiteJournal` take no write lock when opening an
+  up-to-date home (the keyword-index and vector backfills run only when there is work; every insert path keeps
+  their cursors at the head; the journal checks its schema in a deferred transaction), so a reader never waits
+  behind a writer (before: up to `busy_timeout`, then "database is locked").
+- **Matrix cache footprint.** A (re)build reserves exactly the table's vector rows (one allocation); appends
+  grow by at most 10 % (`store_tuning.VECTOR_MATRIX_GROWTH`; no doubling). Per process that queries a home:
+  rows x dims x 4 B plus about 170 B per row (`store_tuning.py`). Measured at 100k x 1024: 424 MB held (552 MB
+  with doubling), build peak 460 MB (833 MB).
 - **Vector queries from an in-process matrix cache.** With numpy installed
   (new extra `abstractmemory[fast]`; also in `all`, `all-apple`, `all-gpu`
   and `test`), vector queries are served from a float32 matrix built at a
