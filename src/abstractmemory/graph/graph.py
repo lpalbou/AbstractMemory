@@ -284,7 +284,7 @@ class _SQLiteTx:
         cols = ", ".join(_STORE_COLUMNS)
         marks = ", ".join("?" for _ in _STORE_COLUMNS)
         self.cur.executemany(f"INSERT OR IGNORE INTO {self.b.table} ({cols}) VALUES ({marks})", rows)
-        self.b.store._sync_fts_index(self.cur)  # keyword index rides the same transaction (store.add parity)
+        self.b.store._after_insert(self.cur)  # keyword index, vector cursor, encoding marker (store.add parity)
 
     def window(self, aid: str) -> Optional[Tuple[Optional[str], Optional[str]]]:
         row = self.cur.execute(

@@ -250,7 +250,10 @@ class SQLiteTripleStore:
             self._fts_supported = True
         except sqlite3.OperationalError:
             self._fts_supported = False
-        if self._fts_supported:
+        # OPENING A HOME IS A READ (architect C1): the backfills below take the write lock only when there is work
+        # (rows above their cursors), so a reader opening an up-to-date home never waits behind a writer. Every
+        # write path keeps the cursors current (`_after_insert`).
+        if self._fts_supported and self._meta_cursor(cur, "fts_high_water") < self._max_rowid(cur):
             cur.execute("BEGIN IMMEDIATE")
             try:
                 self._sync_fts_index(cur)
@@ -259,8 +262,29 @@ class SQLiteTripleStore:
                 cur.execute("ROLLBACK")
                 raise
         self._upgrade_vector_encoding(cur)
-        # Declare the encoding once the upgrade above has run to the end (review M4): this home's vectors are float32
-        # BLOBs from now on, which a 0.3.x reader cannot decode. Written only when absent (an open stays a read).
+
+    def _meta_cursor(self, cur: sqlite3.Cursor, key: str) -> int:
+        row = cur.execute(f"SELECT value FROM {self._table}_meta WHERE key = ?", (key,)).fetchone()
+        return int(row[0]) if row and str(row[0]).lstrip("-").isdigit() else 0
+
+    def _max_rowid(self, cur: sqlite3.Cursor) -> int:
+        top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
+        return int(top) if top is not None else 0
+
+    def _after_insert(self, cur: sqlite3.Cursor) -> None:
+        """Bookkeeping every insert path runs INSIDE its write transaction (`add`, and `abstractmemory.graph`):
+        the keyword index; the vector-encoding cursor advanced past the new rows (they are float32 BLOBs, unless a
+        0.3.x process wrote JSON rows in between, which the next open upgrades); and the home's declaration that
+        its vectors are float32 BLOBs (review M4: a one-way migration, written by the first write, never by an
+        open)."""
+        self._sync_fts_index(cur)
+        high_water = self._meta_cursor(cur, "vector_blob_high_water")
+        legacy = cur.execute(
+            f"SELECT 1 FROM {self._table} WHERE rowid > ? AND typeof(embedding) = 'text' LIMIT 1", (high_water,)
+        ).fetchone()
+        if legacy is None:
+            cur.execute(f"INSERT OR REPLACE INTO {self._table}_meta (key, value) VALUES ('vector_blob_high_water', ?)",
+                        (str(self._max_rowid(cur)),))
         marker = cur.execute(
             f"SELECT value FROM {self._table}_meta WHERE key = ?", (VECTOR_ENCODING_KEY,)).fetchone()
         if marker is None or marker[0] != VECTOR_ENCODING_FLOAT32_BLOB:
@@ -286,6 +310,11 @@ class SQLiteTripleStore:
         if top is None or int(top) <= high_water:
             return
         top = int(top)
+        if cur.execute(  # a read first: no JSON vector above the cursor -> no write lock (opening is a read, C1)
+            f"SELECT 1 FROM {self._table} WHERE rowid > ? AND rowid <= ? AND typeof(embedding) = 'text' LIMIT 1",
+            (high_water, top),
+        ).fetchone() is None:
+            return
         size = int(VECTOR_UPGRADE_BATCH)
         while high_water < top:
             cur.execute("BEGIN IMMEDIATE")
@@ -308,6 +337,8 @@ class SQLiteTripleStore:
                     cur.executemany(
                         f"UPDATE {self._table} SET embedding = ? WHERE rowid = ?", updates)
                     self._bump_vector_generation(cur)
+                    cur.execute(f"INSERT OR REPLACE INTO {self._table}_meta (key, value) VALUES (?, ?)",
+                                (VECTOR_ENCODING_KEY, VECTOR_ENCODING_FLOAT32_BLOB))  # one-way (review M4)
                 high_water = int(batch[-1][0]) if len(batch) == size else top
                 cur.execute(
                     f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
@@ -530,7 +561,7 @@ class SQLiteTripleStore:
                 # batch indexes nothing; the high-water cursor makes the
                 # sync exact under OR IGNORE dedup (skipped rows sit below
                 # the cursor already).
-                self._sync_fts_index(cur)
+                self._after_insert(cur)
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")

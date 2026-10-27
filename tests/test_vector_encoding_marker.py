@@ -2,7 +2,8 @@
 migration a 0.3.x reader cannot follow (it decodes JSON only and silently finds no vectors), so the meta table says
 `vector_encoding = float32-blob` for any later reader to check.
 
-Mutant (applied by hand to SQLiteTripleStore._create_schema): the marker write removed -> both tests red.
+Mutants (applied by hand to SQLiteTripleStore): the marker write removed from `_after_insert` -> the first test red;
+removed from the upgrade transaction -> the second test red.
 """
 from __future__ import annotations
 
@@ -20,9 +21,16 @@ def _meta(path: Path, key: str):
     return row[0] if row else None
 
 
-def test_a_new_home_declares_float32_blob(tmp_path: Path) -> None:
+def test_a_new_home_declares_float32_blob_at_its_first_write(tmp_path: Path) -> None:
+    """Opening writes nothing (architect C1: opening a home is a read); the first write declares the encoding."""
+    from abstractmemory import TripleAssertion
+
     path = tmp_path / "home.sqlite3"
     SQLiteTripleStore(path).close()
+    assert _meta(path, VECTOR_ENCODING_KEY) is None
+    store = SQLiteTripleStore(path)
+    store.add([TripleAssertion(subject="ex:a", predicate="ex:p", object="ex:b")])
+    store.close()
     assert _meta(path, VECTOR_ENCODING_KEY) == VECTOR_ENCODING_FLOAT32_BLOB == "float32-blob"
 
 

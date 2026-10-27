@@ -134,13 +134,30 @@ class SQLiteJournal:
     def _ensure_schema(self) -> None:
         # Schema DDL lives with the row codecs (journal_sqlite_rows.ensure_schema):
         # table shapes and row mappings are one concern and drift together.
+        # OPENING A HOME IS A READ (architect C1): first in a DEFERRED transaction, where every statement on a
+        # complete schema (CREATE ... IF NOT EXISTS of existing objects, the conditional counter row and column
+        # probes) only reads, so a reader never waits behind a writer. Only when that attempt must write and
+        # cannot (another writer holds the lock, or committed under its snapshot) is it redone under BEGIN
+        # IMMEDIATE, the serialized creation path.
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                ensure_schema(cur, prefix_tables=self._schema_tables())
+                cur.execute("COMMIT")
+                return
+            except sqlite3.OperationalError:
+                cur.execute("ROLLBACK")
         with self._txn() as cur:
-            ensure_schema(cur, prefix_tables={
-                "events": self._t_events, "bindings": self._t_bindings,
-                "closures": self._t_closures, "traces": self._t_traces,
-                "snapshots": self._t_snapshots, "valence": self._t_valence,
-                "seq": self._t_seq, "counts": self._t_counts,
-            })
+            ensure_schema(cur, prefix_tables=self._schema_tables())
+
+    def _schema_tables(self) -> Dict[str, str]:
+        return {
+            "events": self._t_events, "bindings": self._t_bindings,
+            "closures": self._t_closures, "traces": self._t_traces,
+            "snapshots": self._t_snapshots, "valence": self._t_valence,
+            "seq": self._t_seq, "counts": self._t_counts,
+        }
 
     # -- write plumbing ---------------------------------------------------------
 
