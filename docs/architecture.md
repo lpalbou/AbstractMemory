@@ -62,7 +62,7 @@ The same discipline extends to every derived read: inspection (`activation`, `ac
 There is no delete surface anywhere in the package:
 
 - Updates are new assertions with fresh provenance.
-- Belief revision is a `ClosureRecord` (`retract`, `supersede` with replacements, or `reinterpreted` when the writer reads the source differently) — the old record leaves ranked retrieval but remains in the store and in history.
+- Belief revision is a `ClosureRecord` (`retract`, `supersede` with replacements, `reinterpreted` when the writer reads the source differently, or `merged` into another memory) — the old record leaves ranked retrieval but remains in the store and in history.
 - Visibility is a `ScopeBinding` fold (latest per record/scope/owner wins): `hidden` removes a record from ranked retrieval in that scope pair only; re-binding `indexed` restores it.
 - Forgetting is decay of retrieval strength plus closures and silencing. Storage never decays; only the temporal-access signal does. The global access count (`selected_count`) never decays at all.
 
@@ -79,7 +79,8 @@ There is no compaction and no rewriting-in-place. Degradation through summarize-
 | Area | Modules |
 |---|---|
 | Layer-1 data model | `models.py` (`TripleAssertion`), `store.py` (`TripleQuery`, `TripleStore`) |
-| Stores | `in_memory_store.py`, `sqlite_store.py`, `lancedb_store.py`, `vector_scoring.py` |
+| Stores | `in_memory_store.py`, `sqlite_store.py`, `lancedb_store.py`, `vector_scoring.py`, `vector_matrix.py`, `store_tuning.py` |
+| The memory graph | `graph/` (`MemoryGraph`, the only manipulation surface of a mind: revisions, provenance, history, change feed; `backend.py` the connector Protocols; the SQLite and in-memory connectors in `graph.py`, the LanceDB connector in `lancedb_backend.py`) |
 | Embedders | `embeddings.py`, `embeddings_openai_compat.py` |
 | Journal | `journal.py` (records + protocol), `journal_memory.py`, `journal_sqlite.py` |
 | Seam types | `seam.py` (`Stimulus`, `RecallBudget`, `MemoryHandle`, `ReconstructionResult`, `ActiveMemorySnapshot`, floors) |
@@ -90,6 +91,10 @@ There is no compaction and no rewriting-in-place. Degradation through summarize-
 | Identity | `spark.py`, `engram.py`, `diary.py`, `gradation.py` |
 | Facade | `system.py` (`MemorySystem`), `system_access.py`, `system_valence.py` |
 | Derived reads | `consolidation.py` (sleep/dreams), `replay.py` (stream), `entity_card.py` |
+
+## One graph surface, connectors behind it
+
+A *mind* (a person's plane, an entity's home) is changed only through `abstractmemory.graph.MemoryGraph`: every change is a `Revision` applied atomically, every memory names its ledger sources or its lineage, and the reads (history, sources, derived-from, the change feed) are bounded index reads ([ADR 0003](adr/0003-one-graph-ledger-provenance-and-revisions.md)). The database behind a mind is a connector (`abstractmemory.graph.backend`): SQLite is the default for planes and entity homes; the LanceDB and in-memory connectors pass the same conformance suite, LanceDB with two documented exceptions (writers in two processes; a crash mid-commit visible until `repair()`). Changing a mind's database means writing a connector, never touching `MemoryGraph` or its callers.
 
 ## AbstractFramework boundary
 

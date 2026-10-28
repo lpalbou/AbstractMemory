@@ -99,6 +99,20 @@ read_embedding_pin("memory.sqlite3")
 
 To move a home to a different space deliberately, use `reembed_store(...)`, which re-derives every vector and swaps the pin last, so a crash never leaves a half-migrated space.
 
+### `#FALLBACK: SQLite vector search uses the Python linear scan`
+
+`SQLiteTripleStore` serves vector queries from an in-process float32 matrix when numpy is importable. This warning (once per store handle) says the Python reference scan answers instead. The results are the same; only the speed differs (seconds instead of milliseconds at tens of thousands of rows). The message names the reason:
+
+- `numpy is not importable`: install the extra, `pip install "abstractmemory[fast]"`.
+- `the store holds a vector the float32 matrix cannot score exactly (...)`: a row holds vectors of another dimension, non-finite values, an empty vector or non-numeric JSON. Re-derive the vectors with `reembed_store(...)`; the matrix is rebuilt after the swap.
+- a query vector of another dimension than the stored vectors: query with the pinned model.
+
+`store.vector_engine` reports the current path (`"numpy-matrix-cache"` or `"python-linear-scan"`).
+
+### Opening an older home takes a few seconds once
+
+Homes written before 0.4.0 store vectors as JSON text. The first open rewrites them as float32 BLOBs in bounded transactions (about 5 s for 50k rows of 384-d vectors); later opens only look at rows written since. An interrupted upgrade resumes where it stopped. The file shrinks only after a `VACUUM`.
+
 ### `ValueError: table_name must match [A-Za-z_][A-Za-z0-9_]*`
 
 Table names are interpolated into SQL identifiers, which cannot be bound as parameters, so they are validated at construction. Use a plain identifier. The same rule applies to `SQLiteJournal`'s `table_prefix`.
@@ -113,6 +127,14 @@ Table names are interpolated into SQL identifiers, which cannot be bound as para
 store = SQLiteTripleStore("memory.sqlite3")
 journal = SQLiteJournal("memory.sqlite3")   # sidecar tables in the same file
 ```
+
+### `ProvenanceRequired` from `MemoryGraph.apply_revision`
+
+The graph refuses a memory that is neither sourced nor derived: name at least one ledger `SourceRef` (a step `(run_id, seq)`, an artifact, a message, an event, a diary entry) or a `derived_from` memory of the SAME owner whose lineage reaches a source. Also refused: a lineage that never reaches a source (a cycle), a `derived_from` across owners (enter the other owner's knowledge as a source), a close or narrow of a store row the graph never adopted (adopt it first with an `import` revision that carries the row as stored), and a close-only revision citing only the memory it closes. The message names the rule. A flat legacy provenance dict (`run_id`, `span_id`, ...) converts with `Provenance.from_legacy`.
+
+### A 0.3.x process finds no vectors in a home
+
+0.4.0 rewrote the home's vectors as float32 BLOBs (a one-way migration; the meta key `vector_encoding = float32-blob` says so). Move every process that shares the home to 0.4.0.
 
 ### Replay shows gaps in `seq`
 

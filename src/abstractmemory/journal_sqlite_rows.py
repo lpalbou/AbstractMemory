@@ -85,7 +85,10 @@ def ensure_schema(cur: sqlite3.Cursor, *, prefix_tables: Mapping[str, str]) -> N
         f"""CREATE TABLE IF NOT EXISTS {t["seq"]} (
           id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL)"""
     )
-    cur.execute(f'INSERT OR IGNORE INTO {t["seq"]} (id, value) VALUES (1, 0)')
+    # Conditional (not INSERT OR IGNORE): an existing counter row is read, never written, so opening a complete
+    # schema takes no write lock (SQLiteJournal._ensure_schema).
+    if cur.execute(f'SELECT 1 FROM {t["seq"]} WHERE id = 1').fetchone() is None:
+        cur.execute(f'INSERT OR IGNORE INTO {t["seq"]} (id, value) VALUES (1, 0)')
     cur.execute(
         f"""CREATE TABLE IF NOT EXISTS {t["counts"]} (
           record_id TEXT PRIMARY KEY, n INTEGER NOT NULL)"""

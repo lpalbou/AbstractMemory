@@ -5,8 +5,9 @@ import re
 import sqlite3
 import threading
 import uuid
+import warnings
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 from .embedding_pin import (
     annotate_embed_failure,
@@ -19,8 +20,23 @@ from .embedding_pin import (
     warn_first_write_pin,
 )
 from .embeddings import TextEmbedder
+from .journal_common import normalize_iso_ts
 from .models import TripleAssertion
 from .store import TripleQuery
+from .vector_matrix import (
+    ID_FETCH_CHUNK,
+    SYNC_FETCH_ROWS,
+    VECTOR_ENGINE_NUMPY,
+    VECTOR_ENCODING_FLOAT32_BLOB,
+    VECTOR_ENCODING_KEY,
+    VECTOR_ENGINE_PYTHON,
+    VECTOR_UPGRADE_BATCH,
+    VectorMatrix,
+    _Unrepresentable,
+    decode_vector,
+    encode_vector,
+    numpy_module,
+)
 from .vector_scoring import rank_by_cosine
 
 
@@ -46,6 +62,22 @@ def _checked_table(table_name: Optional[str]) -> str:
     return table
 
 
+# COLUMN PROJECTION (backlog 0058): the columns `_row_to_assertion` reads.
+# Structured reads never fetch `embedding` (the stored vector: several KB per
+# row, the bulk of every scan when it rode along with `SELECT *`) nor `text`
+# (the canonical text, which only the FTS index and the embedder consume).
+# Vectors are read only by semantic queries and the explicit vector reads
+# (`stored_vector`, the vector matrix cache).
+# Sentinel of `_rank_in_snapshot`: the matrix named a row the table lacks.
+_STALE = object()
+
+_ASSERTION_COLUMNS = (
+    "assertion_id", "subject", "predicate", "object", "scope", "owner_id",
+    "observed_at", "valid_from", "valid_until", "confidence",
+    "provenance_json", "attributes_json",
+)
+
+
 class SQLiteTripleStore:
     """SQLite-backed append-only triple store with native vector support.
 
@@ -55,14 +87,16 @@ class SQLiteTripleStore:
       except `close_assertion`, which only closes an open validity window.
     - VECTORS (a2a 0003, the entity-home pairing): pass `embedder=` and each
       added assertion's canonical text is embedded and persisted in the SAME
-      .sqlite3 file (JSON-encoded `embedding` column; in-place ALTER TABLE
-      upgrade for pre-vector homes — old rows stay NULL/vectorless and the
-      VECTOR CHANNEL labels that degradation at recall). Mirrors the
-      InMemory reference semantics exactly: edge assertions are never
-      embedded; `query_text` requires the embedder (no keyword fallback);
-      `query_vector` is accepted directly; cosine ranking happens in Python
-      over the SQL-filtered candidates (honest v1: linear scan —
-      comfortable at entity-home scale; ANN lifts are backlog 0019).
+      .sqlite3 file (float32 BLOB `embedding` column since 0058; JSON-text
+      homes upgrade in place on open; in-place ALTER TABLE upgrade for
+      pre-vector homes — old rows stay NULL/vectorless and the VECTOR
+      CHANNEL labels that degradation at recall). Mirrors the InMemory
+      reference semantics exactly: edge assertions are never embedded;
+      `query_text` requires the embedder (no keyword fallback);
+      `query_vector` is accepted directly; cosine ranking over the
+      SQL-filtered candidates is the reference scan's, served from the
+      in-process matrix cache when numpy is importable (`vector_matrix.py`)
+      or by the labelled Python scan (ANN lifts are backlog 0019).
 
     Concurrency (0013 contract, hardened after the persistence audit):
     ``check_same_thread=False`` + one internal RLock around ALL cursor use, so
@@ -88,6 +122,10 @@ class SQLiteTripleStore:
         self._embedder = embedder
 
         self._lock = threading.RLock()
+        # Vector matrix cache (0058): built at the first semantic query,
+        # appended from new rows, dropped when the vectors are rewritten.
+        self._vectors: Optional[VectorMatrix] = None
+        self._vector_fallback_warned = False
         # isolation_level=None -> autocommit + explicit BEGIN/COMMIT in add():
         # Python's implicit-transaction mode is what allowed failed batches to
         # leave uncommitted rows that a LATER unrelated commit() flushed.
@@ -170,12 +208,26 @@ class SQLiteTripleStore:
         # a multi-year store pays seconds). One covering index; created
         # on open, so existing homes gain it at their next process start.
         cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self._table}_object ON {self._table}(object, predicate)")
+        # PARTITION READS IN ORDER (backlog 0058): "latest N in (scope,
+        # owner)", the as-of window and the per-pair full scans read one
+        # partition newest-first. (scope, owner_id) alone forced a temp
+        # B-tree sort of the WHOLE partition (588 ms for latest-100 at 50k
+        # rows); with observed_at + the assertion_id tie-breaker in the key
+        # the partition is walked in query order and LIMIT stops the walk.
+        # Created on open: existing homes gain it at their next process
+        # start (no row is rewritten).
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{self._table}_scope_owner_observed "
+            f"ON {self._table}(scope, owner_id, observed_at, assertion_id)")
         # IN-PLACE UPGRADE (a2a 0003: the one-file home stands): pre-vector
         # homes gain the embedding column on open; their existing rows stay
         # NULL (vectorless) — the vector channel labels that at recall.
         columns = {r[1] for r in cur.execute(f"PRAGMA table_info({self._table})").fetchall()}
         if "embedding" not in columns:
-            cur.execute(f"ALTER TABLE {self._table} ADD COLUMN embedding TEXT")
+            # Declared BLOB since 0058 (float32 little-endian); homes that
+            # gained the column earlier declare TEXT, which stores a BLOB
+            # unchanged (SQLite affinity only converts numbers).
+            cur.execute(f"ALTER TABLE {self._table} ADD COLUMN embedding BLOB")
         # Store metadata sidecar (M1): the embedding pin lives IN the same
         # file — the one-file home invariant covers the space identity too.
         cur.execute(
@@ -198,7 +250,10 @@ class SQLiteTripleStore:
             self._fts_supported = True
         except sqlite3.OperationalError:
             self._fts_supported = False
-        if self._fts_supported:
+        # OPENING A HOME IS A READ (architect C1): the backfills below take the write lock only when there is work
+        # (rows above their cursors), so a reader opening an up-to-date home never waits behind a writer. Every
+        # write path keeps the cursors current (`_after_insert`).
+        if self._fts_supported and self._meta_cursor(cur, "fts_high_water") < self._max_rowid(cur):
             cur.execute("BEGIN IMMEDIATE")
             try:
                 self._sync_fts_index(cur)
@@ -206,6 +261,99 @@ class SQLiteTripleStore:
             except Exception:
                 cur.execute("ROLLBACK")
                 raise
+        self._upgrade_vector_encoding(cur)
+
+    def _meta_cursor(self, cur: sqlite3.Cursor, key: str) -> int:
+        row = cur.execute(f"SELECT value FROM {self._table}_meta WHERE key = ?", (key,)).fetchone()
+        return int(row[0]) if row and str(row[0]).lstrip("-").isdigit() else 0
+
+    def _max_rowid(self, cur: sqlite3.Cursor) -> int:
+        top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
+        return int(top) if top is not None else 0
+
+    def _after_insert(self, cur: sqlite3.Cursor) -> None:
+        """Bookkeeping every insert path runs INSIDE its write transaction (`add`, and `abstractmemory.graph`):
+        the keyword index; the vector-encoding cursor advanced past the new rows (they are float32 BLOBs, unless a
+        0.3.x process wrote JSON rows in between, which the next open upgrades); and the home's declaration that
+        its vectors are float32 BLOBs (review M4: a one-way migration, written by the first write, never by an
+        open)."""
+        self._sync_fts_index(cur)
+        high_water = self._meta_cursor(cur, "vector_blob_high_water")
+        legacy = cur.execute(
+            f"SELECT 1 FROM {self._table} WHERE rowid > ? AND typeof(embedding) = 'text' LIMIT 1", (high_water,)
+        ).fetchone()
+        if legacy is None:
+            cur.execute(f"INSERT OR REPLACE INTO {self._table}_meta (key, value) VALUES ('vector_blob_high_water', ?)",
+                        (str(self._max_rowid(cur)),))
+        marker = cur.execute(
+            f"SELECT value FROM {self._table}_meta WHERE key = ?", (VECTOR_ENCODING_KEY,)).fetchone()
+        if marker is None or marker[0] != VECTOR_ENCODING_FLOAT32_BLOB:
+            cur.execute(f"INSERT OR REPLACE INTO {self._table}_meta (key, value) VALUES (?, ?)",
+                        (VECTOR_ENCODING_KEY, VECTOR_ENCODING_FLOAT32_BLOB))
+
+    def _upgrade_vector_encoding(self, cur: sqlite3.Cursor) -> None:
+        """IN-PLACE UPGRADE (0058): rewrite JSON-text vectors as float32
+        BLOBs, above the `vector_blob_high_water` rowid cursor of the meta
+        sidecar (the FTS backfill pattern): idempotent, resumable, O(rows
+        written since the last open), `VECTOR_UPGRADE_BATCH` rows per
+        transaction. Unreadable or non-numeric JSON, and values float32
+        cannot hold, stay as they are (the reference scan reads them as
+        before). A batch that rewrote rows bumps `vector_generation` in the
+        same transaction, so a matrix another handle built from the JSON
+        values rebuilds. The file does not shrink until a VACUUM; new rows
+        are written as BLOBs by `add`."""
+        row = cur.execute(
+            f"SELECT value FROM {self._table}_meta WHERE key = 'vector_blob_high_water'"
+        ).fetchone()
+        high_water = int(row[0]) if row and str(row[0]).lstrip("-").isdigit() else 0
+        top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
+        if top is None or int(top) <= high_water:
+            return
+        top = int(top)
+        if cur.execute(  # a read first: no JSON vector above the cursor -> no write lock (opening is a read, C1)
+            f"SELECT 1 FROM {self._table} WHERE rowid > ? AND rowid <= ? AND typeof(embedding) = 'text' LIMIT 1",
+            (high_water, top),
+        ).fetchone() is None:
+            return
+        size = int(VECTOR_UPGRADE_BATCH)
+        while high_water < top:
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                batch = cur.execute(
+                    f"SELECT rowid, embedding FROM {self._table} "
+                    "WHERE rowid > ? AND rowid <= ? AND typeof(embedding) = 'text' "
+                    "ORDER BY rowid LIMIT ?", (high_water, top, size),
+                ).fetchall()
+                updates = []
+                for rowid, raw in batch:
+                    vector = decode_vector(raw)
+                    if vector is None:
+                        continue
+                    try:
+                        updates.append((encode_vector(vector), rowid))
+                    except (TypeError, ValueError, OverflowError):
+                        continue  # non-numeric / beyond float32: left untouched
+                if updates:
+                    cur.executemany(
+                        f"UPDATE {self._table} SET embedding = ? WHERE rowid = ?", updates)
+                    self._bump_vector_generation(cur)
+                    cur.execute(f"INSERT OR REPLACE INTO {self._table}_meta (key, value) VALUES (?, ?)",
+                                (VECTOR_ENCODING_KEY, VECTOR_ENCODING_FLOAT32_BLOB))  # one-way (review M4)
+                high_water = int(batch[-1][0]) if len(batch) == size else top
+                cur.execute(
+                    f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
+                    "VALUES ('vector_blob_high_water', ?)", (str(high_water),))
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+
+    def _bump_vector_generation(self, cur: sqlite3.Cursor) -> None:
+        """Mark every stored vector as rewritten (caller owns the
+        transaction): each handle's matrix sees a new token and rebuilds."""
+        cur.execute(
+            f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
+            "VALUES ('vector_generation', ?)", (str(uuid.uuid4()),))
 
     def _sync_fts_index(self, cur: sqlite3.Cursor) -> None:
         """Index rows above the high-water rowid (caller owns the
@@ -267,7 +415,7 @@ class SQLiteTripleStore:
         params.append(int(limit))
         with self._lock:
             rows = self._conn.cursor().execute(
-                f"SELECT t.* FROM {self._table}_fts f "
+                f"SELECT {', '.join('t.' + c for c in _ASSERTION_COLUMNS)} FROM {self._table}_fts f "
                 f"JOIN {self._table} t ON t.rowid = f.rowid "
                 f"WHERE {self._table}_fts MATCH ? AND t.scope = ? {owner_clause} "
                 f"ORDER BY bm25({self._table}_fts), t.rowid DESC LIMIT ?",
@@ -384,7 +532,7 @@ class SQLiteTripleStore:
                     json.dumps(a.provenance, ensure_ascii=False, separators=(",", ":")),
                     json.dumps(a.attributes, ensure_ascii=False, separators=(",", ":")),
                     _canonical_text(a),
-                    json.dumps([float(x) for x in vector], separators=(",", ":")) if vector is not None else None,
+                    encode_vector(vector) if vector is not None else None,
                 )
             )
 
@@ -413,11 +561,19 @@ class SQLiteTripleStore:
                 # batch indexes nothing; the high-water cursor makes the
                 # sync exact under OR IGNORE dedup (skipped rows sit below
                 # the cursor already).
-                self._sync_fts_index(cur)
+                self._after_insert(cur)
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
                 raise
+            if self._vectors is not None:
+                # Append the committed rows to the matrix (O(new rows)). A
+                # failure here must not report the committed add as failed:
+                # the cache is dropped and the next semantic query rebuilds.
+                try:
+                    self._synced_vectors()
+                except Exception:
+                    self._vectors = None
         return ids
 
     def query(self, q: TripleQuery) -> List[TripleAssertion]:
@@ -443,7 +599,10 @@ class SQLiteTripleStore:
         # M1 read guard: a wrong-space query vector refuses loudly here; the
         # vector CHANNEL converts this into its labeled #FALLBACK, so recall
         # degrades to exact/keyword instead of serving cross-space cosine.
-        check_query_dimension(self.embedding_pin(), query_vector)
+        # Structured reads skip the pin read entirely (0058: it was a meta
+        # query + JSON parse on every one of the ~260 reads of a reconstruct).
+        if query_vector is not None:
+            check_query_dimension(self.embedding_pin(), query_vector)
 
         raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
         limit: Optional[int]
@@ -452,8 +611,57 @@ class SQLiteTripleStore:
         else:
             limit = max(1, raw_limit)
 
+        if query_vector is not None:
+            # Cosine over ALL filtered candidates, THEN limit (InMemory
+            # parity). Served by the vector matrix when numpy is importable
+            # (0058); otherwise, or when the matrix cannot represent the
+            # stored vectors exactly, by the reference Python scan (labelled
+            # once with a #FALLBACK warning). Same results either way.
+            with self._lock:
+                ranked = self._rank_with_matrix(q, query_vector, limit)
+            if ranked is None:
+                where, params = self._where_clause(q)
+                sql = f"SELECT {', '.join(_ASSERTION_COLUMNS)}, embedding FROM {self._table}"
+                if where:
+                    sql += f" WHERE {where}"
+                sql += " ORDER BY rowid"  # ties keep rowid order, like the matrix
+                with self._lock:
+                    rows = self._conn.cursor().execute(sql, params).fetchall()
+                ranked = rank_by_cosine(
+                    query_vector, rows, lambda r: self._row_vector(r),
+                    min_score=q.min_score, limit=limit,
+                )
+            out: List[TripleAssertion] = []
+            for score, r in ranked:
+                a = self._row_to_assertion(r)
+                attrs = dict(a.attributes) if isinstance(a.attributes, dict) else {}
+                retrieval = attrs.get("_retrieval") if isinstance(attrs.get("_retrieval"), dict) else {}
+                retrieval2 = dict(retrieval)
+                retrieval2["score"] = float(score)
+                retrieval2.setdefault("metric", "cosine")
+                attrs["_retrieval"] = retrieval2
+                a.attributes.clear()
+                a.attributes.update(attrs)
+                out.append(a)
+            return out
+
+        sql, params = self._structured_sql(q, limit)
+        with self._lock:
+            rows = self._conn.cursor().execute(sql, params).fetchall()
+        return [self._row_to_assertion(r) for r in rows]
+
+    def _where_clause(self, q: TripleQuery) -> Tuple[str, List[Any]]:
+        """The WHERE of a query (filters only; no ordering, no limit)."""
         parts: List[str] = []
         params: List[Any] = []
+        # INDEX CHOICE (backlog 0058). An id / subject / object filter is the
+        # selective anchor: its own index (pk, spo, object) finds a handful
+        # of rows and scope/owner are checked per row — the unary `+` keeps
+        # the planner from preferring the (scope, owner) index, which a
+        # one-partition home matches entirely (34 ms per subject read at
+        # 50k rows). Without an anchor, scope/owner ARE the index key.
+        anchored = bool(q.assertion_ids or q.subject or q.object)
+        col = "+" if anchored else ""
 
         if q.assertion_ids:
             placeholders = ", ".join("?" for _ in q.assertion_ids)
@@ -469,10 +677,15 @@ class SQLiteTripleStore:
             parts.append("object = ?")
             params.append(q.object)
         if q.scope:
-            parts.append("scope = ?")
+            parts.append(f"{col}scope = ?")
             params.append(q.scope)
         if q.owner_id:
-            parts.append("COALESCE(owner_id, '') = ?")
+            # Plain equality, never COALESCE(owner_id, '') = ?: a function of
+            # the column cannot use any index on owner_id. Same rows: the
+            # filter only applies to a NON-EMPTY owner (TripleQuery maps ''
+            # to None = no owner filter), and a NULL or '' stored owner never
+            # equals a non-empty one under either form.
+            parts.append(f"{col}owner_id = ?")
             params.append(q.owner_id)
         if q.since:
             parts.append("observed_at >= ?")
@@ -486,46 +699,212 @@ class SQLiteTripleStore:
             params.append(q.active_at)
             parts.append("(valid_until IS NULL OR valid_until > ?)")
             params.append(q.active_at)
+        return " AND ".join(parts), params
 
-        where = " AND ".join(parts)
-        sql = f"SELECT * FROM {self._table}"
+    def _structured_sql(self, q: TripleQuery, limit: Optional[int]) -> Tuple[str, List[Any]]:
+        """The non-semantic read: filters, observed_at order with the
+        assertion_id tie-breaker, optional LIMIT."""
+        where, params = self._where_clause(q)
+        sql = f"SELECT {', '.join(_ASSERTION_COLUMNS)} FROM {self._table}"
         if where:
             sql += f" WHERE {where}"
-
-        if query_vector is not None:
-            # Cosine ranking in Python over ALL SQL-filtered candidates
-            # (InMemory parity: score first, THEN limit — honest v1 linear
-            # scan; ANN lifts are backlog 0019).
-            with self._lock:
-                rows = self._conn.cursor().execute(sql, params).fetchall()
-            ranked = rank_by_cosine(
-                query_vector, rows, lambda r: self._row_vector(r),
-                min_score=q.min_score, limit=limit,
-            )
-            out: List[TripleAssertion] = []
-            for score, r in ranked:
-                a = self._row_to_assertion(r)
-                attrs = dict(a.attributes) if isinstance(a.attributes, dict) else {}
-                retrieval = attrs.get("_retrieval") if isinstance(attrs.get("_retrieval"), dict) else {}
-                retrieval2 = dict(retrieval)
-                retrieval2["score"] = float(score)
-                retrieval2.setdefault("metric", "cosine")
-                attrs["_retrieval"] = retrieval2
-                a.attributes.clear()
-                a.attributes.update(attrs)
-                out.append(a)
-            return out
-
         order_sql = "ASC" if str(q.order or "").strip().lower() == "asc" else "DESC"
         # Deterministic tie-breaker on assertion_id.
         sql += f" ORDER BY observed_at {order_sql}, assertion_id {order_sql}"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
+        return sql, params
 
+    @property
+    def vector_engine(self) -> str:
+        """Which path serves semantic queries: `"numpy-matrix-cache"`, or the
+        labelled `"python-linear-scan"` (numpy not importable, or the stored
+        vectors include one the matrix cannot score exactly). Before the
+        first semantic query of a handle the matrix is not built yet and the
+        answer is `"numpy-matrix-cache"` whenever numpy is importable; the
+        build itself may still find an unrepresentable vector (it then warns
+        with `#FALLBACK` and this property turns to the scan)."""
+        if numpy_module() is None:
+            return VECTOR_ENGINE_PYTHON
+        matrix = self._vectors
+        return VECTOR_ENGINE_NUMPY if matrix is None or matrix.exact else VECTOR_ENGINE_PYTHON
+
+    def _warn_python_path(self, reason: str) -> None:
+        """The labelled fallback: once per store handle (the scan answers
+        every later query the same way, only slower)."""
+        if self._vector_fallback_warned:
+            return
+        self._vector_fallback_warned = True
+        warnings.warn(
+            f"#FALLBACK: SQLite vector search uses the Python linear scan: {reason}",
+            RuntimeWarning, stacklevel=4)
+
+    def _vector_token(self, cur: sqlite3.Cursor) -> Tuple[Any, ...]:
+        """Identity of the stored vector space: the embedding pin plus the
+        `vector_generation` that every whole-store rewrite bumps."""
+        return tuple(
+            (str(k), str(v)) for k, v in cur.execute(
+                f"SELECT key, value FROM {self._table}_meta "
+                "WHERE key IN ('embedding_pin', 'vector_generation') ORDER BY key"
+            ).fetchall())
+
+    def _synced_vectors(self) -> Optional[VectorMatrix]:
+        """The vector matrix brought up to date (caller holds the lock and,
+        for a consistent snapshot, a read transaction), or None when the
+        Python scan must serve. Rebuilt from a scan only when absent or when
+        the vector space changed (`vector_generation` or the embedding pin,
+        written by `replace_vectors` and the in-place upgrade in any
+        process); otherwise only the rows above its rowid high-water are
+        read."""
+        if numpy_module() is None:
+            self._warn_python_path(
+                "numpy is not importable (install abstractmemory[fast] for the matrix cache)")
+            return None
+        cur = self._conn.cursor()
+        token = self._vector_token(cur)
+        top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
+        matrix = self._vectors
+        if matrix is None or matrix.token != token:
+            # Drop the old matrix BEFORE building the new one (a rebuild never holds two), and reserve exactly
+            # the vector rows the table holds (no growth copies during the build; store_tuning.py footprint).
+            self._vectors = matrix = None
+            matrix = VectorMatrix(token)
+            if top is not None:
+                matrix.size_hint = int(cur.execute(
+                    f"SELECT COUNT(*) FROM {self._table} WHERE rowid <= ? AND embedding IS NOT NULL",
+                    (int(top),)).fetchone()[0])
+            self._vectors = matrix
+        if top is not None and int(top) > matrix.high_water:
+            rows = cur.execute(
+                f"SELECT rowid, assertion_id, scope, owner_id, embedding FROM {self._table} "
+                "WHERE rowid > ? AND rowid <= ? AND embedding IS NOT NULL ORDER BY rowid",
+                (matrix.high_water, int(top)))
+            while True:
+                chunk = rows.fetchmany(SYNC_FETCH_ROWS)
+                if not chunk:
+                    break
+                matrix.append(tuple(r) for r in chunk)
+            matrix.high_water = max(matrix.high_water, int(top))
+        if not matrix.exact:
+            self._warn_python_path(
+                f"the store holds a vector the float32 matrix cannot score exactly ({matrix.inexact_reason})")
+            return None
+        return matrix
+
+    def _rank_with_matrix(
+        self, q: TripleQuery, query_vector: List[float], limit: Optional[int],
+    ) -> Optional[List[Tuple[float, sqlite3.Row]]]:
+        """`(score, row)` best first from the matrix (caller holds the lock),
+        or None when the Python scan must answer. Sync, candidate filter,
+        ranking and the row read share ONE read transaction (one snapshot:
+        a concurrent writer cannot slip rows or a new vector space in
+        between)."""
+        for attempt in (0, 1):
+            cur = self._conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                ranked = self._rank_in_snapshot(cur, q, query_vector, limit)
+            finally:
+                cur.execute("COMMIT")
+            if ranked is not _STALE:
+                return ranked
+            # The matrix names a row the table no longer has (the file was
+            # rewritten under this handle): rebuild once from the table.
+            self._vectors = None
+        self._warn_python_path("the vector matrix disagrees with the table after a rebuild")
+        return None
+
+    def _rank_in_snapshot(
+        self, cur: sqlite3.Cursor, q: TripleQuery, query_vector: List[float], limit: Optional[int],
+    ) -> Any:
+        matrix = self._synced_vectors()
+        if matrix is None:
+            return None
+        partition_only = not (q.assertion_ids or q.subject or q.predicate or q.object
+                              or q.since or q.until or q.active_at)
+        if partition_only:
+            # The vector channel's shape: (scope, owner) is a mask, no SQL.
+            positions = matrix.partition(q.scope or None, q.owner_id or None)
+        else:
+            where, params = self._where_clause(q)
+            ids = [r[0] for r in cur.execute(
+                f"SELECT assertion_id FROM {self._table} WHERE {where} AND embedding IS NOT NULL",
+                params).fetchall()]
+            positions = matrix.positions_of(ids)
+        try:
+            scored = matrix.rank(query_vector, positions, min_score=q.min_score, limit=limit)
+        except _Unrepresentable as e:
+            self._warn_python_path(str(e))
+            return None
+        ids = [aid for _, aid in scored]
+        rows: dict = {}
+        for k in range(0, len(ids), ID_FETCH_CHUNK):
+            chunk = ids[k:k + ID_FETCH_CHUNK]
+            marks = ", ".join("?" for _ in chunk)
+            for r in cur.execute(
+                f"SELECT {', '.join(_ASSERTION_COLUMNS)} FROM {self._table} "
+                f"WHERE assertion_id IN ({marks})", chunk,
+            ).fetchall():
+                rows[r["assertion_id"]] = r
+        if len(rows) != len(set(ids)):
+            return _STALE
+        return [(score, rows[aid]) for score, aid in scored]
+
+    def assertions_after(
+        self, cursor: int, *, scope: Optional[str] = None, owner_id: Optional[str] = None,
+        limit: int = 1000,
+    ) -> Tuple[List[Tuple[int, TripleAssertion]], int]:
+        """CHANGE FEED (backlog 0058): the assertions written after rowid
+        `cursor`, in rowid order, at most `limit`, filtered exactly like
+        `query(TripleQuery(scope=..., owner_id=...))` (assertion columns
+        only, no vector). Returns `(rows, next_cursor)`: rows are
+        `(rowid, assertion)`; `next_cursor` is where to resume (the last
+        rowid examined, so rows of other partitions are not re-read); the
+        feed is exhausted when fewer than `limit` rows come back. The table
+        is append-only (rowids are never reused), so a cursor never misses
+        or repeats a row, whichever handle or process wrote it."""
+        # The rowid range is the access path (O(rows written since the
+        # cursor)); the unary `+` keeps the planner off the partition index,
+        # which would walk the whole partition. Same normalisation and
+        # predicate as `query` (TripleQuery: scope lowercased, '' = no filter).
+        filters = TripleQuery(scope=scope, owner_id=owner_id)
+        where, params = "", []
+        if filters.scope:
+            where, params = "+scope = ?", [filters.scope]
+        if filters.owner_id:
+            where = f"{where} AND +owner_id = ?" if where else "+owner_id = ?"
+            params.append(filters.owner_id)
+        bound = max(1, int(limit))
+        after = max(0, int(cursor))
         with self._lock:
-            rows = self._conn.cursor().execute(sql, params).fetchall()
-        return [self._row_to_assertion(r) for r in rows]
+            cur = self._conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                top = cur.execute(f"SELECT MAX(rowid) FROM {self._table}").fetchone()[0]
+                top = int(top) if top is not None else 0
+                sql = (f"SELECT rowid AS _rowid, {', '.join(_ASSERTION_COLUMNS)} FROM {self._table} "
+                       "WHERE rowid > ? AND rowid <= ?")
+                if where:
+                    sql += f" AND {where}"
+                sql += " ORDER BY rowid LIMIT ?"
+                rows = cur.execute(sql, [after, top, *params, bound]).fetchall()
+            finally:
+                cur.execute("COMMIT")
+        out = [(int(r["_rowid"]), self._row_to_assertion(r)) for r in rows]
+        next_cursor = out[-1][0] if len(out) == bound else max(after, top)
+        return out, next_cursor
+
+    def query_plan(self, q: TripleQuery) -> List[str]:
+        """SQLite's `EXPLAIN QUERY PLAN` detail lines for the structured
+        read `query(q)` would run (filters, order, limit; a semantic query's
+        candidate filter is the same WHERE). A measurement surface: tests pin
+        that partition and anchored reads stay on their indexes (0058)."""
+        raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
+        sql, params = self._structured_sql(q, None if raw_limit <= 0 else max(1, raw_limit))
+        with self._lock:
+            rows = self._conn.cursor().execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+        return [str(r[3]) for r in rows]
 
     def close_assertion(self, assertion_id: str, valid_until: str) -> bool:
         """Close one assertion's validity window IN PLACE (additive, backlog:
@@ -560,6 +939,67 @@ class SQLiteTripleStore:
                 raise
         return changed
 
+    def narrow_assertion(self, assertion_id: str, valid_until: str) -> bool:
+        """Move an already-CLOSED validity window EARLIER, in place (ADR 0003
+        decision 7; the `narrow` op of a revision, `abstractmemory.graph`).
+
+        True when the row's `valid_until` was later than `valid_until` and is
+        now set to it. False for an unknown id, or a window already at or
+        before `valid_until` (idempotent replays: a retrospective note placed
+        after a later, narrower one changes nothing). Raises ValueError for an
+        OPEN row (valid_until NULL): narrowing an open window would be a
+        close (or, read the other way, a widening of a window the writer
+        never closed), and closing is `close_assertion`'s job. Like
+        `close_assertion`, only `valid_until` moves: terms, provenance,
+        attributes, the FTS row and the vector are untouched. The journal is
+        not written here: the revision that carries the op records it."""
+        rid, until = self._narrow_args(assertion_id, valid_until)
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                changed = self._narrow_on(cur, self._table, rid, until)
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+        return changed
+
+    @staticmethod
+    def _narrow_args(assertion_id: str, valid_until: str) -> tuple:
+        rid = str(assertion_id or "").strip()
+        until = str(valid_until or "").strip()
+        if not rid:
+            raise ValueError("narrow_assertion requires an assertion_id")
+        if not until:
+            raise ValueError("narrow_assertion requires a valid_until timestamp")
+        return rid, until
+
+    @staticmethod
+    def _narrow_on(cur: sqlite3.Cursor, table: str, rid: str, until: str) -> bool:
+        """narrow_assertion's statement on a caller-owned transaction (the
+        revision apply in `abstractmemory.graph` runs it inside its own)."""
+        row = cur.execute(
+            f"SELECT valid_until FROM {table} WHERE assertion_id = ?", (rid,)
+        ).fetchone()
+        if row is None:
+            return False
+        current = row[0]
+        if current is None or not str(current).strip():
+            raise ValueError(
+                f"narrow_assertion cannot widen or close an open window ({rid!r} has no valid_until); "
+                "close it with close_assertion (the `close` op of a revision)"
+            )
+        # Instants, not strings: '2026-05-31T23:00:00-02:00' sorts before '2026-06-01T00:00:00+00:00' but is
+        # the later instant; a string compare would let a "narrow" move the end later (ValueError if either
+        # side is not a timestamp).
+        if normalize_iso_ts(str(current)) <= normalize_iso_ts(until):
+            return False
+        cur.execute(
+            f"UPDATE {table} SET valid_until = ? WHERE assertion_id = ?", (until, rid)
+        )
+        return int(cur.rowcount or 0) > 0
+
     def replace_vectors(
         self, vectors: dict, pin: dict, *,
         expected_row_count: int, embedder: Optional[TextEmbedder] = None,
@@ -572,8 +1012,7 @@ class SQLiteTripleStore:
         the OLD space consistently until the commit — never a mixed space.
         The live embedder swaps with the pin so subsequent adds embed into
         the new space. Returns the number of vectored rows."""
-        payload = {str(k): json.dumps([float(x) for x in v], separators=(",", ":"))
-                   for k, v in vectors.items() if v is not None}
+        payload = {str(k): encode_vector(v) for k, v in vectors.items() if v is not None}
         with self._lock:
             cur = self._conn.cursor()
             cur.execute("BEGIN IMMEDIATE")
@@ -590,11 +1029,14 @@ class SQLiteTripleStore:
                     f"UPDATE {self._table} SET embedding = ? WHERE assertion_id = ?",
                     [(vec, rid) for rid, vec in sorted(payload.items())],
                 )
+                # Every vector changed: other handles' matrices must rebuild.
+                self._bump_vector_generation(cur)
                 self._write_pin(pin, cursor=cur)
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
                 raise
+            self._vectors = None  # this handle rebuilds at its next semantic query
             if embedder is not None:
                 self._embedder = embedder
         return len(payload)
@@ -614,14 +1056,9 @@ class SQLiteTripleStore:
 
     @staticmethod
     def _row_vector(r: sqlite3.Row) -> Any:
-        raw = r["embedding"]
-        if not raw:
-            return None  # vectorless row: skipped by ranking; channel labels it
-        try:
-            vector = json.loads(raw)
-        except (TypeError, ValueError):
-            return None
-        return vector if isinstance(vector, list) else None
+        # float32 BLOB or legacy JSON text; None = vectorless row (skipped
+        # by ranking; the channel labels it).
+        return decode_vector(r["embedding"])
 
     @staticmethod
     def _row_to_assertion(r: sqlite3.Row) -> TripleAssertion:

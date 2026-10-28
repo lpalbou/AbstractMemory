@@ -5,9 +5,154 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
-## Unreleased
+## [0.4.0] - 2026-10-27
 
-*No unreleased changes.*
+The memory graph ([ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md), backlogs 0056-0058):
+`abstractmemory.graph.MemoryGraph` is the only manipulation surface of a mind; every change is a revision, every
+memory points back to the ledger, and every database is a connector behind the graph (SQLite the default). The home
+store holds a notebook-sized corpus. The API is additive: every 0.3.x call keeps working (`close_assertion` stays;
+`ClosureRecord` gains only the `merged` kind). Operator decisions adopted (2026-10-27): visibility is strict
+ownership (lineage never crosses owners; ADR 0003 decision 2); stores are connectors behind `MemoryGraph`, SQLite the
+default (decision 3); the vector re-encoding below is a documented one-way migration with a `vector_encoding` marker.
+
+### Upgrade notes: ONE-WAY migration
+
+- Opening a SQLite home with 0.4.0 rewrites its JSON-text vectors as float32 BLOBs. A 0.3.x reader decodes JSON
+  vectors only: on a home a 0.4.0 process has written it silently finds no vectors (zero semantic hits, no error).
+  Every process sharing a home or a plane must move to 0.4.0 together; an entity home copied to a 0.3.x install
+  loses semantic recall. A 0.4.0 home declares it: `<table>_meta` key `vector_encoding` = `float32-blob`
+  (`abstractmemory.vector_matrix.VECTOR_ENCODING_KEY`), written by the first write or by the upgrade, never by a
+  plain open.
+- Graph homes add four tables (`memg_revisions`, `memg_provenance`, `memg_derivations`, `memg_history`) on first
+  use; nothing else in an existing file changes shape.
+
+### Added
+
+- **Connectors** (ADR 0003 decision 3, operator decision 2026-10-27): `MemoryGraph` is the only manipulation
+  surface of a mind and every store is a connector behind it: `abstractmemory.graph.backend` (`GraphBackend`,
+  `GraphTx` Protocols with their invariants; `register_backend`, `backend_for`, `registered_backends`). SQLite (the
+  default for planes and entity homes) and in-memory are declared implementations; a new LanceDB connector
+  (`abstractmemory.graph.lancedb_backend`, over `LanceDBTripleStore`: explicit Arrow schemas, a staged transaction,
+  a log-first commit, `repair()` re-derives a half-projected revision from the log). One conformance suite,
+  `tests/test_graph_conformance.py`, runs every connector; the LanceDB connector cannot promise serialized writers
+  across processes nor invisibility of a half-projected revision before `repair()` (strict xfails).
+- **`abstractmemory.graph`**, the one write path of a mind:
+  - `SourceRef` (`run`, `step` with the ledger row address `(run_id, seq)`, `seq` 1-based, `artifact`, `message`, `event`,
+    `diary_entry`; optional `runtime_id`; one canonical `key()`), validated per kind (`InvalidSourceRef`); a
+    `run` / `step` ref naming a synthetic run id (`SYNTHETIC_RUN_ID_PREFIXES`: `chat-`, `diary:`,
+    `session_memory_`, `global_memory`) is refused.
+  - `Provenance(sources, derived_from, actor, reader, reason, extra)`, strict about its shape;
+    `Provenance.from_legacy(...)` lifts the old flat keys (`run_id`, `span_id`, `payload_ref`, `entry_id`, ...)
+    in one place, never fabricates a reference (a synthetic run id stays in `extra`), and reads the mixed shape
+    the runtime stamps (flat keys plus `sources`: flat keys into `extra`).
+  - `Revision` (`revision_id`, `scope`, `owner_id`, `cause`, `occurred_at`, `recorded_at`, `ops`, `provenance`,
+    `summary`) with the ops `assert`, `close` (`retract` / `supersede` / `reinterpreted` / `merged`, replacement
+    ids, ripple source and hops) and `narrow`. Every time a revision carries is parsed and normalized to one
+    UTC text form; a non-timestamp is refused. A close ends the row at the earlier of its current end and the
+    close (so `TripleQuery(active_at=)` and ranked recall agree after every close); a close or narrow before the
+    claim's `valid_from` is refused.
+  - `MemoryGraph(store, journal).apply_revision(rev)`: refuses a memory that is neither sourced nor derived from a
+    grounded memory (`ProvenanceRequired`; chains that never reach a source and cycles included); applies all ops
+    in ONE SQLite transaction (triples and their keyword rows, window changes, the journal closure when the
+    journal shares the file, the revision, provenance, derivation and history rows), or not at all; idempotent on
+    the revision id; deterministic ids so the logged revision replays identically. A store row written outside
+    the graph is adopted only by an `import` / `migration` revision that carries it as stored (logged with its
+    previous provenance, so a replay reproduces it); a different claim under an id the graph holds is refused;
+    a close/narrow-only revision must name a cause other than the memories it changes; a `derived_from` across
+    owners is refused (other owners' knowledge enters as a source). Re-observation, not duplication: an open
+    assert of a claim the graph holds open records its sources on the held memory (`re_observed`, history
+    `re-observed`) instead of a second row. Record time is the store's: a fresh apply stamps `recorded_at` with
+    its clock (`apply_revision(rev, replay=True)`, used by `replay_into`, keeps the logged value). A revision
+    already in the log returns its logged outcome. Every memory is also indexed by the sources of the revision
+    that wrote it (`via`). `SourceRef.digest`: an optional sha256 of the verbatim, beside the address.
+  - Reads, all bounded index reads: `history(memory_id)` (asserted / closed / narrowed, by which revision, with
+    its cause), `sources_of(memory_id, transitive=True)`, `derived_from_source(ref)` (a `run` ref matches
+    everything stamped with that run), the lossless change feed `revisions(after=cursor)` (a cursor beyond the
+    log's head is refused), `replay_into(target)` (an empty home replays to the same file, adoptions included),
+    `names_ref(ref, owner_ids)` (the owner gate in one index probe), and `repair()` for closures a crash left
+    unwritten when the journal lives in another file (never needed for same-file plane and entity homes).
+  - Four tables in the home file: `memg_revisions`, `memg_provenance`, `memg_derivations`, `memg_history`.
+- **`narrow_assertion(assertion_id, valid_until)`** on `SQLiteTripleStore` and `InMemoryTripleStore`: moves an
+  already-closed validity window earlier and never widens it (`ValueError` for an open window or a value that is
+  not a timestamp; `False` for an unknown id or a date at or after the current end, compared as instants). `LanceDBTripleStore.narrow_assertion` raises
+  `NotImplementedError` (on LanceDB a window changes through the graph's LanceDB connector). AbstractNote no longer
+  needs to write the store's private table.
+- **Closure kind `merged`** (`abstractmemory.journal.CLOSURE_KINDS`): the memory was merged into another, named in
+  `replacement_ids`. `close_assertions` and `close_record` accept it.
+- Docs: `api.md` (the graph section and its tables), `memory-system.md` ("Time axes", "Provenance").
+- Measured at 50,000 assertions (`tests/bench/bench_graph.py`): `history` 0.02 ms, `sources_of` 0.04 ms,
+  `derived_from_source` by step 0.05 ms and by run 0.8 ms, a change-feed page of 100 revisions 4 ms; the 0.3
+  alternative (scanning provenance JSON) took 18 ms on vectorless rows and 38 ms with 384-d vectors in the rows.
+
+### Performance (0058)
+
+Backlog 0058 (ADR 0003 decisions 3 and 12): the SQLite home store holds a
+notebook-sized corpus. Measured with `tests/bench/bench_store.py`, `main`
+versus this release on the same machine, back to back: subject + owner query
+at 50k rows 14.8 ms -> 0.33 ms; scope "latest 100" 377 ms -> 0.9 ms; scope
+full scan 2.6 s -> 0.5 s; vector query at 50k 5.3 s -> 1.4 ms (first query of
+a handle 0.44 s, it builds the matrix); file 449 MB -> 122 MB; MemorySystem
+`reconstruct` at 20k records 2.7 s -> 0.2 s; `maintenance_due` at 20k 1.9 s ->
+0.07 ms when nothing is new, 0.1 s after new records. Full table: backlog
+0058's Report.
+
+- **Owner-filtered reads use the indexes.** The owner filter is now
+  `owner_id = ?` instead of `COALESCE(owner_id, '') = ?` (same rows: the
+  filter only applies to a non-empty owner, which a NULL or empty stored owner
+  never equals). A new index `idx_<table>_scope_owner_observed (scope,
+  owner_id, observed_at, assertion_id)` serves "latest N in a (scope, owner)",
+  as-of windows and per-pair scans in query order without sorting the
+  partition; reads anchored on ids, a subject or an object use their own index
+  and check scope/owner per row. Existing homes gain the index when the store
+  is opened; no row is rewritten. `SQLiteTripleStore.query_plan(q)` returns
+  SQLite's `EXPLAIN QUERY PLAN` lines for a query (tests pin the plans).
+- **Structured reads no longer fetch the vector column.** `query` (without
+  `query_text`/`query_vector`) and `query_keywords` select the assertion
+  columns only, instead of `SELECT *` dragging the stored embedding (several KB
+  per row) and the canonical text through every scan. They no longer read the
+  embedding pin either (it guards semantic queries only). Semantic queries and
+  `stored_vector` still read the vector; `TripleAssertion` is unchanged.
+- **Vectors are float32 BLOBs.** `SQLiteTripleStore` stores vectors as float32
+  little-endian BLOBs (4 bytes per dimension instead of ~20 bytes of JSON
+  text). Homes holding JSON vectors are upgraded in place when the store opens:
+  rows above the `vector_blob_high_water` cursor are rewritten in bounded
+  transactions (idempotent; an interrupted upgrade resumes; ~5 s once for 50k
+  rows of 384-d vectors). Stored precision is float32: a score differs from
+  the float64 value an embedder returned by about 1e-7. A value float32 cannot
+  hold raises `ValueError` at write (zero rows written) instead of being
+  stored as infinity; `stored_vector` returns the float32 values. One-way: see
+  "Upgrade notes" above.
+- **Opening a home is a read.** `SQLiteTripleStore` and `SQLiteJournal` take no write lock when opening an
+  up-to-date home (the keyword-index and vector backfills run only when there is work; every insert path keeps
+  their cursors at the head; the journal checks its schema in a deferred transaction), so a reader never waits
+  behind a writer (before: up to `busy_timeout`, then "database is locked").
+- **Matrix cache footprint.** A (re)build reserves exactly the table's vector rows (one allocation); appends
+  grow by at most 10 % (`store_tuning.VECTOR_MATRIX_GROWTH`; no doubling). Per process that queries a home:
+  rows x dims x 4 B plus about 170 B per row (`store_tuning.py`). Measured at 100k x 1024: 424 MB held (552 MB
+  with doubling), build peak 460 MB (833 MB).
+- **Vector queries from an in-process matrix cache.** With numpy installed
+  (new extra `abstractmemory[fast]`; also in `all`, `all-apple`, `all-gpu`
+  and `test`), vector queries are served from a float32 matrix built at a
+  handle's first semantic query, appended with rows written since by any
+  handle or process, and rebuilt when the vectors are rewritten
+  (`replace_vectors`, the upgrade; `vector_generation` in the meta sidecar).
+  Results are the reference scan's (`vector_scoring.rank_by_cosine`): same
+  rows, same order (ties in rowid order), bit-identical scores — a float32
+  pass picks the candidates with a margin above its error bound, and they are
+  re-scored with the reference arithmetic. Without numpy, or when a stored
+  vector cannot be scored exactly (mixed dimensions, non-finite values), the
+  Python scan answers, labelled once per handle with a `#FALLBACK`
+  `RuntimeWarning`. `SQLiteTripleStore.vector_engine` reports the path.
+- **`maintenance_due` bounded by a cursor.** For the SQLite and in-memory
+  stores the answer is folded from the new store change feed
+  `assertions_after(cursor, *, scope, owner_id, limit)`: a check reads only the
+  rows written since the previous check of the same (store, journal, scopes)
+  and re-reads the journal's formation bindings only when the journal moved.
+  `last_maintenance_seq` uses the same fold. The answer is the full scan's
+  (other stores keep the scan).
+- Tuning constants of the store (margins, batch and page sizes) live in
+  `abstractmemory.store_tuning`, each with its bound or measurement.
+- The benchmark lives in the repository: `tests/bench/bench_store.py`.
 
 ## [0.3.2] - 2026-10-20
 

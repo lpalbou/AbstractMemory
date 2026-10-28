@@ -44,9 +44,11 @@ they belong in AbstractMemory so every consumer benefits, not in one application
 ## Consequences
 
 ### Positive
-- Every application (AbstractNote, AbstractEntity, AbstractAssistant, agents) shares one understanding of what
-  is known, and improvements to memory reach all of them.
-- Knowledge captured through one app is visible to the others through the gateway.
+- Every application (AbstractNote, AbstractEntity, AbstractAssistant, agents) runs on one implementation of
+  memory, and improvements to memory reach all of them.
+- Knowledge captured through one app is visible to its OWNER's other apps through the gateway (and an entity's to
+  the person who owns the entity); never to another person by default: visibility is strict ownership, and a plane
+  is not a sharing scope (ADR 0003 decision 2, amended 2026-10-27).
 
 ### Negative
 - AbstractMemory grows a document and world-knowledge layer beside its agent memory system, and must keep both

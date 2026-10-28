@@ -50,6 +50,13 @@ Optional LanceDB backend:
 python -m pip install -e ".[lancedb]"
 ```
 
+Fast vector search on the SQLite store (numpy; without it the store serves the
+same results from a labelled Python scan):
+
+```bash
+python -m pip install -e ".[fast]"
+```
+
 PyPI (packaged release):
 
 ```bash
@@ -57,7 +64,7 @@ python -m pip install AbstractMemory
 python -m pip install "AbstractMemory[lancedb]"
 ```
 
-The distribution name is `AbstractMemory` (pip is case-insensitive); the import name is `abstractmemory`. The `[apple]`/`[gpu]` extras are no-op compatibility aliases; `[all]`, `[all-apple]`, and `[all-gpu]` install the LanceDB backend.
+The distribution name is `AbstractMemory` (pip is case-insensitive); the import name is `abstractmemory`. The `[apple]`/`[gpu]` extras are no-op compatibility aliases; `[fast]` installs numpy for the SQLite store's vector matrix cache; `[all]`, `[all-apple]`, and `[all-gpu]` install the LanceDB backend and numpy.
 
 ## Quick example — layer 1 (triples)
 
@@ -105,6 +112,10 @@ result = system.reconstruct(Stimulus(cue_text="pool outage"), scopes=[("session"
 system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2]])
 ```
 
+## The memory graph: revisions and provenance
+
+`abstractmemory.graph` is the write path of a mind (0.4.0): every change to the graph is one `Revision` (a cause such as `ingest`, `reinterpret` or `maintenance`, plus `assert` / `close` / `narrow` operations applied together and atomically, once per revision id), and every memory must name where it came from in AbstractRuntime's ledger (a `SourceRef` to a run, a step `(run_id, seq)`, an artifact, a message, an event or a diary entry) or the memories it was derived from; a write with neither is refused with `ProvenanceRequired`. `MemoryGraph(store, journal)` then answers `history(memory_id)` (asserted, closed, narrowed: by which revision and why), `sources_of(memory_id)`, `derived_from_source(ref)`, a lossless change feed `revisions(after=cursor)`, and `replay_into(...)`. The database is a connector behind the graph (`abstractmemory.graph.backend`): SQLite by default, LanceDB and in-memory held to the same conformance suite. See [`docs/api.md`](docs/api.md#the-memory-graph-revisions-and-provenance) and the "Time axes" and "Provenance" sections of [`docs/memory-system.md`](docs/memory-system.md).
+
 ## Documentation
 
 - Getting started: [`docs/getting-started.md`](docs/getting-started.md)
@@ -128,7 +139,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 ## Design principles
 
-- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
+- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted/merged); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
 - **Reads are pure**: reconstruction, inspection, replay, and the entity card deposit nothing. `commit_selection` is the only strengthening path.
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.

@@ -7,6 +7,7 @@ See also: [`getting-started.md`](getting-started.md) for first examples, [`archi
 Contents:
 
 - [Layer 1: triples, queries, stores, embedders](#layer-1-triples-queries-stores-embedders)
+- [The memory graph: revisions and provenance](#the-memory-graph-revisions-and-provenance)
 - [Layer 2: the MemorySystem facade](#layer-2-the-memorysystem-facade)
   - [Seam types](#seam-types)
   - [The journal](#the-journal)
@@ -64,10 +65,15 @@ Vector results carry retrieval metadata in `attributes["_retrieval"]` (`score`, 
 
 `add(assertions) -> list[str]` (returns assertion ids), `query(q) -> list[TripleAssertion]`, `close()`.
 
-`InMemoryTripleStore` and `SQLiteTripleStore` also expose `close_assertion(assertion_id, valid_until) -> bool`: the one in-place change the stores allow. It sets `valid_until` on an assertion whose window is still open and touches nothing else (terms, provenance, attributes, the keyword index and the stored vector stay as written). It returns `True` when a row changed and `False` for an unknown id or a window that is already closed, so a replay is harmless; an empty `assertion_id` or `valid_until` raises `ValueError`. Use it when a later fact supersedes an earlier one and `TripleQuery(active_at=...)` must stop returning the old row from that moment on. The layer-2 `close_assertions` (below) is a different operation: it appends a closure record and leaves the row's window as written.
+`InMemoryTripleStore` and `SQLiteTripleStore` also expose `close_assertion(assertion_id, valid_until) -> bool`: the one in-place change the stores allow. It sets `valid_until` on an assertion whose window is still open and touches nothing else (terms, provenance, attributes, the keyword index and the stored vector stay as written). It returns `True` when a row changed and `False` for an unknown id or a window that is already closed, so a replay is harmless; an empty `assertion_id` or `valid_until` raises `ValueError`. Use it when a later fact supersedes an earlier one and `TripleQuery(active_at=...)` must stop returning the old row from that moment on. The layer-2 `close_assertions` (below) is a different operation: it appends a closure record and leaves the row's window as written. In a mind written through [`MemoryGraph`](#the-memory-graph-revisions-and-provenance), a window is closed by a revision's `close` op, which writes the window and the closure together; a direct `close_assertion` call bypasses the revision log.
+
+The same two stores expose `narrow_assertion(assertion_id, valid_until) -> bool`: it moves an already-closed window **earlier** (a later, retrospective note dates the end before the recorded one). `True` when the row's `valid_until` was later and is now `valid_until`; `False` for an unknown id or a window already at or before that date (compared as instants, so mixed UTC offsets cannot move an end later; a value that is not a timestamp raises `ValueError`) (a replay, or a note that would widen it, changes nothing); `ValueError` for an open window (closing is `close_assertion`'s job) or an empty argument. Only `valid_until` moves, and the journal is not written: the revision that carries the `narrow` op records it. `LanceDBTripleStore.narrow_assertion` raises `NotImplementedError` (backlog 0057).
 
 - `InMemoryTripleStore(embedder=None)` — dependency-free, volatile, vector-capable.
-- `SQLiteTripleStore(path, embedder=None)` — persistent single file (stdlib only), structured queries and native vector search. With an embedder, `add(...)` embeds each assertion's canonical text and persists the vector in the same file; files created before the vector column existed upgrade in place on open. Rows added without an embedder stay vectorless (vector queries skip them; layer-2 recall labels the degradation `#FALLBACK`).
+- `SQLiteTripleStore(path, embedder=None)` — persistent single file (stdlib only), structured queries and native vector search. With an embedder, `add(...)` embeds each assertion's canonical text and persists the vector in the same file as a float32 little-endian BLOB (a value float32 cannot hold raises `ValueError`, zero rows written); files created before the vector column existed, and homes holding JSON-text vectors (0.3.x), upgrade in place on open (resumable, `vector_blob_high_water` cursor). Rows added without an embedder stay vectorless (vector queries skip them; layer-2 recall labels the degradation `#FALLBACK`). Performance surfaces (backlog 0058):
+  - `vector_engine -> str` — `"numpy-matrix-cache"` (vector queries served from the in-process float32 matrix cache, numpy installed: `pip install "abstractmemory[fast]"`) or `"python-linear-scan"` (numpy absent, or a stored vector the matrix cannot score exactly; labelled once per handle with a `#FALLBACK` `RuntimeWarning`). Both paths return the same rows, order and scores as `vector_scoring.rank_by_cosine`.
+  - `query_plan(q) -> list[str]` — SQLite's `EXPLAIN QUERY PLAN` lines for the structured read `query(q)` would run.
+  - `assertions_after(cursor, *, scope=None, owner_id=None, limit=1000) -> (list[(rowid, TripleAssertion)], next_cursor)` — bounded change feed in rowid order (append-only rows: a cursor never misses or repeats one). `InMemoryTripleStore` has the same method over its insertion order.
 - `LanceDBTripleStore(uri, embedder=None, ...)` — persistent, vector-capable; requires the optional `lancedb` dependency (constructing without it raises `ImportError` with an install hint).
 
 Backend details and column layouts: [`stores.md`](stores.md).
@@ -84,6 +90,120 @@ Keep one embedding model per store: vectors from different models are not compar
 
 - `canonical_text(a) -> str` — the shared text rendering stores embed and index (`CANONICAL_TEXT_VERSION` names the current rendering, version 2). Changing this rendering invalidates stored vectors, so it must bump the version and ride a re-embed migration.
 - `token_estimate(text) -> int` — the package-wide token estimate (~4 chars/token) used by budgets and handles.
+
+---
+
+## The memory graph: revisions and provenance
+
+Source: [`src/abstractmemory/graph/`](../src/abstractmemory/graph/) (`provenance.py`, `revisions.py`, `graph.py`). Decision record: [ADR 0003](adr/0003-one-graph-ledger-provenance-and-revisions.md). Importable from `abstractmemory.graph`; `SourceRef`, `Provenance`, `ProvenanceRequired`, `InvalidSourceRef`, `Revision`, `RevisionOp` and `MemoryGraph` are also top-level exports.
+
+`MemoryGraph` is the write path of a *mind* (one graph home): every change is one **revision** whose operations apply together, atomically, and every memory it writes must say where it came from in the **ledger** (AbstractRuntime's runs, steps, artifacts, messages, events and diary entries), or which memories it was derived from. This package only stores and indexes these references; resolving one to its verbatim source is the runtime's job (ADR 0003 decision 10).
+
+### `SourceRef`
+
+A typed pointer into the ledger: a frozen dataclass, a plain dict on the wire (`SourceRef.from_dict(d)`, `.to_dict()`). `SOURCE_KINDS = ("run", "step", "artifact", "message", "event", "diary_entry")`.
+
+| `kind` | required | optional | `key()` |
+| --- | --- | --- | --- |
+| `run` | `run_id` | | `run:<run_id>` |
+| `step` | `run_id`, `seq` (int ≥ 1: the ledger row address; AbstractRuntime numbers rows from 1) | `step_id` | `step:<run_id>#<seq>` |
+| `artifact` | `artifact_id` | `run_id` | `artifact:<artifact_id>` |
+| `message` | `message_id` | `run_id` | `message:<message_id>` |
+| `event` | `event_id` | `stream` | `event:<event_id>` |
+| `diary_entry` | `entry_id` | `run_id` (`diary:<entity_id>`) | `diary_entry:<entry_id>` |
+
+Every kind may carry `runtime_id` (which ledger: a plane's runtime or an entity home, since homes travel). An unknown kind, a missing required id, a blank id, a `seq` that is not an int ≥ 1 (0 is never a ledger row), an unknown key, or a field another kind owns (an `artifact` with a `seq`) raises `InvalidSourceRef` (a `ValueError`), and so does a `run` or `step` ref naming a run id no ledger can load: `SYNTHETIC_RUN_ID_PREFIXES` = `chat-`, `diary:`, `session_memory_`, `global_memory` (`is_synthetic_run_id(run_id)`; ADR 0003 decision 11: such an id is not a source, the artifact or diary entry it belongs to is). The key is the identity: two refs with the same key are the same source. Any kind may also carry `digest`, the sha256 hex of the verbatim at stamp time (the compact STARTED ledger record, the artifact's bytes, a diary entry's `record_hash`): it rides beside the address (not part of `key()`), is kept in the provenance index, and two refs to one key with different digests are refused. This package only validates it; the runtime stamps and verifies it.
+
+### `Provenance`
+
+```python
+Provenance(sources=(...), derived_from=(...), actor="abstractnote", reader=None, reason=None, extra={})
+```
+
+- `sources` — `SourceRef`s (dicts accepted; duplicates collapse on the key, first wins).
+- `derived_from` — memory ids this memory was derived from (assertion ids, or a record's graph id).
+- `actor` — required, non-empty: `"abstractnote"`, `"entity:<id>"`, `"runtime"`, `"abstractmemory:<pass>"`.
+- `reader` — the model that exercised judgement, when one did; `reason` — free text; `extra` — anything else (`turn_id`, `note_id`, the consumer's own revision ids).
+
+`is_grounded()` is true when it names a source or a parent. `from_dict(d)` is strict: a key outside the six above raises `ProvenanceRequired`, and a legacy flat key (`run_id`, `turn_id`, `writer_run_id`, `span_id`, `payload_ref`, `entry_id`) names `from_legacy` in the error. `Provenance.from_legacy(flat, *, actor=None)` lifts the old flat shape in one place: `run_id` → a `run` ref unless it is synthetic (a `diary:<entity_id>` pseudo-run rides the `diary_entry` ref; any other synthetic id stays in `extra`), `span_id` and `payload_ref` → `artifact` refs, `entry_id` → a `diary_entry` ref, everything else into `extra`; it never fabricates a ref for an absent or empty key, and `actor` defaults to the dict's own, else `"runtime"`. A dict that already carries `sources` or `derived_from`, including the mixed shape the runtime stamps (its legacy flat keys kept for older readers plus the `sources` it vouches for), keeps its graph keys as they are and lifts every other key into `extra`, with no ref lifted from a flat key (an explicit `extra` wins over a flat key of the same name).
+
+### `Revision`, `RevisionOp`, `RevisionResult`
+
+```python
+Revision(revision_id=..., scope=..., owner_id=..., cause=..., occurred_at=..., ops=(...), provenance=...,
+         recorded_at=<now>, summary=None)          # keyword-only
+RevisionOp(op, payload)
+```
+
+- `revision_id` — the idempotency key. `cause` ∈ `REVISION_CAUSES` = `ingest`, `reinterpret`, `merge`, `unmerge`, `ripple`, `person`, `maintenance`, `import`, `migration`.
+- `occurred_at` — observation time (when the source said it); `recorded_at` — record time (when this mind learned it). Record time is the STORE's: a fresh `apply_revision` stamps it with the store's clock under the write lock and ignores the value on the `Revision`; only `apply_revision(rev, replay=True)` (what `replay_into` uses: a replay is not a new record) keeps the logged value. The log's `seq` is the record order.
+- Every time of a revision (`occurred_at`, `recorded_at`, an assert's `observed_at` / `valid_from` / `valid_until`, a close's or narrow's `valid_until`) is parsed as ISO-8601 and normalized to the package's canonical UTC text form (microseconds, `+00:00`, as `utc_now_iso_seconds` writes; naive times are UTC, `Z` is accepted) when the revision is built; anything else ("next tuesday") raises `ValueError`. Stores and queries compare these strings, which is only correct in one form.
+- `ops` (`REVISION_OPS`), validated and normalized at construction:
+  - `assert` — payload = `TripleAssertion.to_dict()`. Missing `scope`/`owner_id` come from the revision, a missing `observed_at` is the revision's `occurred_at`, a missing `assertion_id` is derived deterministically from the revision id and the op index (so the logged revision replays identically). A `provenance` in the payload is that memory's own; without one the memory carries the revision's.
+  - `close` — `{assertion_id, valid_until, kind, replacement_ids, reason, ripple_source, ripple_hops}` with `kind` ∈ `CLOSE_KINDS` = `retract`, `supersede`, `reinterpreted`, `merged`; `supersede` and `merged` require `replacement_ids`. It sets the row's end to the earlier of its current end and `valid_until` (compared as instants: an open window closes at `valid_until`; a claim "valid until December" retracted in March ends in March; an end already at or before it is kept) and writes the journal `ClosureRecord` in the same operation (the revision id, cause, record time and ripple fields ride the closure's `provenance`; its id is deterministic), so `TripleQuery(active_at=...)` and ranked recall agree after every close. A `valid_until` before the claim's `valid_from` raises `ValueError` (an equal one, an empty window, is allowed). A memory is closed once; a second close is reported in `skipped`.
+  - `narrow` — `{assertion_id, valid_until, reason}`: moves an already-closed window earlier (`narrow_assertion`). An open window, or a date before the claim's `valid_from`, raises `ValueError` and the whole revision rolls back; a date at or after the current end is a no-op reported in `skipped`.
+- `RevisionResult` — `revision_id`, `applied` (`False` when the id was already in the log: nothing changed), `assertion_ids`, `re_observed` (held memories the revision re-observed), `closed`, `narrowed`, `skipped` (`{op, index, assertion_id, why}` for ops that changed nothing; `why` = `"re-observed"` names the held memory), `seq` (the revision's position in the log) and `recorded_at`. When `applied` is `False` the lists are the revision's LOGGED outcome, read back from its history rows, so a retried step learns the memories its revision named.
+
+### `MemoryGraph`
+
+```python
+MemoryGraph(store, journal=None)
+```
+
+`store` selects the CONNECTOR (see "Connectors" below): a `SQLiteTripleStore` (the default home: the graph's tables live in its file), a `LanceDBTripleStore` (the LanceDB connector; its journal lives in another file), or an `InMemoryTripleStore` (tests, dev; graph state is shared by every `MemoryGraph` over the same store object). A store with no registered connector raises `NotImplementedError`. `journal` receives the `close` ops' closure records; `None` writes none (the history and the revision still record the close).
+
+**`apply_revision(revision, *, replay=False) -> RevisionResult`** — the one write path. In order:
+
+1. Pure checks, before anything is read or embedded: every asserted memory and the revision itself must name sources or `derived_from`, else `ProvenanceRequired`.
+2. A revision id already in the log returns `applied=False` (nothing embedded, nothing written).
+3. Assertions are embedded outside the transaction (as `SQLiteTripleStore.add` does); a first embedded write's pin is written inside it.
+4. One transaction: each `derived_from` chain must reach a ledger source (a memory already in the graph counts as grounded; a cycle, a self-derivation or a chain to nothing raises `ProvenanceRequired`); a revision whose ops are all `close`/`narrow` must name a source, or a memory other than the ones it changes, as its cause (`ProvenanceRequired`: citing the closed memory as the reason for closing it names no cause); an assertion id already in the store but never asserted through the graph may only be *adopted* by an `import` or `migration` revision that carries the row as stored (everything but provenance equal, else `ValueError`), which rewrites the row's provenance to the graph shape, keeps the old one in the history and logs it with the op (`adoption: {previous_provenance}`, so a replay reproduces the adoption); re-asserting an id the graph already holds is a reported skip when it is the same claim and a `ValueError` when its terms, scope, owner or `valid_from` differ (a changed claim gets a new id); a `close` or `narrow` may only name a memory of the graph (else `ProvenanceRequired`: adopt it first), and only after the op that asserts it when both are in one revision. Lineage never crosses owners: a memory (or a revision) whose `derived_from` names a memory of another `owner_id` raises `ProvenanceRequired` (knowledge from another owner enters as a source: the message or artifact it came through). Re-observation, not duplication: an open assert (no `valid_until`) of a claim the graph already holds OPEN (same subject, predicate, object, scope, owner and `valid_from`) writes no second row; it records the revision's sources and lineage on the held memory, adds a `re-observed` history event and reports it in `re_observed` (also for a duplicate inside one revision; a later op naming the duplicate's id acts on the held memory). A closed claim asserted again, or a bounded assert, is a new memory. Then the triples (with their keyword rows), window changes, closures, history, provenance and derivation rows and the revision row are written; any failure rolls all of it back.
+
+On SQLite with a `SQLiteJournal` on the **same file**, the closures commit in that same transaction, so `TripleQuery(active_at=...)` and ranked recall never disagree. With a journal elsewhere (another file, `InMemoryJournal`) the closures are appended after the commit and the revision is marked `journal_applied = 0` until they are.
+
+Ownership: the graph has no principal. Its reads are keyed by id, reference or cursor, and `derived_from_source`, transitive `sources_of` and `revisions` cross owners by construction (a revision carries its `owner_id`). Visibility is strict ownership ([ADR 0003](adr/0003-one-graph-ledger-provenance-and-revisions.md) decision 2): the host above this package filters by `owner_id` before a result reaches a caller.
+
+Reads (every read is bounded: `limit` must be a positive int and is clamped to `MAX_READ_LIMIT` = 1000; `0`, a negative, a bool or a float raises `ValueError`):
+
+- `history(memory_id, *, limit=200) -> list[dict]` — the memory's lifecycle in record order: `{event: "asserted" | "re-observed" | "closed" | "narrowed", at (record time), revision_id, cause, detail}`. `detail` holds the terms, window and sources of an assertion (`adopted` and `previous_provenance` for an adoption), the close payload with `closure_id`, `window_closed` (the op moved the row's end), `previous_valid_until` and `row_valid_until`, or `valid_until`, `previous_valid_until` and `reason` of a narrow. Accepts an assertion id or a record's graph id (resolved to its digest assertion). Unknown id: `[]`.
+- `sources_of(memory_id, *, transitive=True, limit=200, labelled=False) -> list[SourceRef]` — the memory's ledger sources: the refs of its own provenance AND of every revision that asserted or re-observed it (so a memory whose own provenance is lineage only still names the step that produced it); with `transitive`, breadth-first through what it was derived from (deduplicated by key, at most `MAX_LINEAGE_VISITS` = 1000 memories visited). `labelled=True` returns `{"ref", "via": "memory" | "revision", "memory_id", "revision_id"}` dicts.
+- `names_ref(ref, owner_ids) -> bool` — the owner gate in one covering-index probe: does any memory owned by one of `owner_ids` name this source (a `run` ref by its `run_id`)? `None`/`''` is the no-owner partition; no owners is `False`; more than `MAX_READ_LIMIT` owners raises `ValueError`.
+- `derived_from_source(ref, *, limit=200) -> list[str]` — memory ids grounded in a source: those that name it, then everything derived from them. A `run` ref matches every ref stamped with that run (its own `run` ref and the steps, artifacts, messages and diary entries carrying its `run_id`), once per memory.
+- `revisions(after=None, limit=100) -> (list[Revision], cursor)` — the change feed in log order, strictly after the cursor; the returned cursor is `str(seq)` of the last revision (unchanged when nothing is new). Lossless: a revision's position is allocated inside its write transaction and writers are serialized, so no revision is skipped or repeated across calls, also while other connections append. A cursor that is not a number, or one beyond the log's head (another graph's, or invented: it would silently skip every revision below it), raises `ValueError`.
+- `replay_into(target) -> int` — re-applies this graph's log, in order, into another `MemoryGraph`; returns how many revisions it applied (ids already there are no-ops, so a replay resumes). Replaying into an empty SQLite home reproduces the original file's triples, keyword index, graph tables and closures exactly, adoptions included.
+- `repair(*, limit=1000) -> int` — appends the closures of revisions a crash left with `journal_applied = 0`. Only meaningful for a journal OUTSIDE the store's file: plane and entity homes keep the journal in the same file, where closures commit with the revision and nothing is ever left to repair (it returns 0). Oldest first, oldest first; closure ids are deterministic, so it is idempotent. Raises `RuntimeError` when revisions await closures and no journal is attached.
+
+Constants: `DEFAULT_READ_LIMIT` (200), `DEFAULT_REVISION_PAGE` (100), `MAX_READ_LIMIT` (1000), `MAX_LINEAGE_VISITS` (1000), `ADOPTING_CAUSES` (`import`, `migration`), `DIGEST_PREDICATE` (`dcterms:abstract`, how a record's graph id resolves to its digest assertion), `PROVENANCE_KEYS`, `LEGACY_KEYS`, `SYNTHETIC_RUN_ID_PREFIXES`.
+
+Opening a `MemoryGraph` on a home whose graph tables and indexes exist is a read (no DDL transaction): a reader needs no write lock and does not wait behind a writer.
+
+### Connectors (`abstractmemory.graph.backend`)
+
+`MemoryGraph` is the only manipulation surface of a mind ([ADR 0003](adr/0003-one-graph-ledger-provenance-and-revisions.md) decision 3); a database is a connector behind it. A connector implements two Protocols:
+
+- `GraphBackend` — `prepare_rows(assertions)` (embed and shape rows before the transaction), `transaction()` (a context manager yielding a `GraphTx`), the reads `applied_seq`, `resolve`, `history`, `sources`, `parents`, `children`, `with_ref`, `names_ref`, `revisions_page`, `log_head`, `logged_outcome`, and `pending_journal` / `closed_payload` / `mark_journal_applied` / `repair_projections` (crash repair).
+- `GraphTx` — one revision's reads (`revision_seq`, `memory_known`, `closing_revision`, `open_same_claim`, `digest_assertion_for`, `existing_ids`, `stored`, `window`; they see the transaction's own writes) and writes (`write_pin`, `insert_assertions`, `set_provenance`, `end_row`, `narrow_row`, `write_closure`, `add_history`, `add_source`, `add_derivation`, `insert_revision`).
+
+Invariants (the module docstring states them): the writes of one transaction become visible together or not at all; `insert_revision` allocates `seq` = head + 1 and transactions are serialized (the change feed is lossless); an assertion id, a (memory, ref key) provenance row and a (memory, parent) derivation row are written once, the first winning; every read is bounded; opening a mind writes nothing.
+
+Connectors shipped: SQLite (`_SQLiteBackend`, one transaction per revision), in-memory (`_MemoryBackend`, an undo log), LanceDB (`abstractmemory.graph.lancedb_backend.LanceDBBackend`: a staged transaction whose reads overlay its writes, a log-first commit, `repair_projections()` re-deriving a half-projected revision from the log; one lock, table handles and counters per mind per process). What the LanceDB connector cannot promise: writers of one mind in two processes are not serialized, and a crash in the middle of a commit leaves the rows of an unapplied revision visible until `repair()`.
+
+To add a connector: implement both Protocols for a store class, call `register_backend(StoreClass, factory)` (`factory(store, journal) -> GraphBackend`; the most recently registered matching class wins), add the backend to `BACKENDS` in `tests/graph_support.py` (an `open_home` branch), and run `tests/test_graph_conformance.py`: every case passes, or is marked `xfail(strict=True)` with the reason and listed in ADR 0003 decision 3. `backend_for(store, journal)` and `registered_backends()` inspect the registry.
+
+### The graph tables (SQLite)
+
+In the store's file, beside the triple table and the journal's `memj_*` tables (a store with a custom `table_name` prefixes them `memg_<table>_`):
+
+| Table | Columns | Indexes |
+| --- | --- | --- |
+| `memg_revisions` | `seq` (INTEGER PRIMARY KEY AUTOINCREMENT: the change-feed cursor), `revision_id` (UNIQUE), `scope`, `owner_id`, `cause`, `occurred_at`, `recorded_at`, `ops_json`, `provenance_json`, `summary`, `journal_applied` | `revision_id`; partial index on `seq` where `journal_applied = 0` |
+| `memg_provenance` | `memory_id`, `ref_key`, `ref_kind`, `run_id`, `revision_id`, `ref_json`, `via` (`memory` or `revision`), `owner_id` (the memory's, `''` for none); PRIMARY KEY (`memory_id`, `ref_key`) | `ref_key`, `run_id`, (`ref_key`, `owner_id`), (`run_id`, `owner_id`) |
+| `memg_derivations` | `memory_id`, `from_id`, `revision_id`; PRIMARY KEY (`memory_id`, `from_id`) | `from_id` |
+| `memg_history` | `seq` (INTEGER PRIMARY KEY AUTOINCREMENT), `memory_id`, `event`, `at`, `revision_id`, `detail_json` | (`memory_id`, `seq`), (`revision_id`, `seq`) |
+
+Columns and indexes added after the tables first shipped (`via`, `owner_id`, the history revision index) are added in place when a graph opens a home that lacks them (`owner_id` backfilled from the memory rows); a home that has them opens without a write.
+
+Every keyed read above is an index search (pinned by `tests/test_graph_performance.py`). Measured on a temporary home of 50,000 assertions written through the graph (`tests/bench/bench_graph.py`): `history` 0.02 ms, `sources_of` 0.04 ms (0.10 ms transitive over a derived memory), `derived_from_source` by step 0.05 ms and by run (128 memories) 0.8 ms, a change-feed page of 100 revisions 4 ms; the only provenance lookup a 0.3 home allowed, a scan of every row's provenance JSON, took 18 ms on vectorless rows and 38 ms with 384-d vectors in the rows.
 
 ---
 
@@ -135,7 +255,7 @@ Record families (all append-only, all `seq`-stamped by the journal):
 
 - `MemoryEvent` — attention events. Scoring kinds: `selected`, `co_selected` (pair trails), `pinned`, `silenced`; decay marker: `refocus`; audit-only (recorded, never scored): `listed`, `shown`, `expanded`, `cited`.
 - `ScopeBinding` — visibility: `search_state` (`indexed`/`hidden`), `prompt_state` (`active`/`inactive`), `lifecycle`, `source`, `reason`. Latest per `(record_id, scope, owner_id)` wins; `fold_bindings(bindings)` applies that fold.
-- `ClosureRecord` — belief lifecycle: `kind` (`retract`/`supersede`/`reinterpreted`), mandatory `reason`, `replacement_ids` (required for supersede, optional otherwise). `reinterpreted` means the writer no longer reads its source this way (a note understood again): neither a correction nor a later fact; it leaves ranked retrieval like the others.
+- `ClosureRecord` — belief lifecycle: `kind` (`retract`/`supersede`/`reinterpreted`/`merged`; `abstractmemory.journal.CLOSURE_KINDS`), mandatory `reason`, `replacement_ids` (required for supersede, optional otherwise). `reinterpreted` means the writer no longer reads its source this way (a note understood again): neither a correction nor a later fact; `merged` means the memory was merged into another, named in `replacement_ids` (written by the graph's `close` op). Every kind leaves ranked retrieval.
 - `ReconstructionTrace` — one recall: fingerprint, searched scopes, candidates, selected/dropped, cues, budgets, admission labels, warnings.
 - `ActiveMemorySnapshot` — see seam types.
 - `ValenceEvent` — signed appraisals and standing markers (see valence below).
@@ -186,7 +306,7 @@ Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-p
 ### Bindings and closures
 
 - `bind(record_id, *, scope, owner_id, search_state, prompt_state="inactive", lifecycle="none", source="operator", reason=None, binding_id=None) -> ScopeBinding` — append a visibility event. A folded `hidden` binding removes the record from ranked retrieval in that scope pair only; re-binding `indexed` restores it. `prompt_state="active"` admits the record into the identity (self) component. Record-level bindings hide the digest and its edge assertions together. Direct `store.query` id lookups bypass folds by design.
-- `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede` | `reinterpreted`).
+- `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede` | `reinterpreted` | `merged`).
 - `close_record(record_id, *, reason, kind="retract", replacement_ids=()) -> list[str]` — close a whole record (digest and its edges) as one belief-revision act; closure ids are deterministic, so replays dedupe.
 
 ### Identity: spark, engram, self core, floors
@@ -340,7 +460,7 @@ Source: [`src/abstractmemory/recall_reads.py`](../src/abstractmemory/recall_read
 Source: [`src/abstractmemory/maintenance.py`](../src/abstractmemory/maintenance.py), [`sleep_cadence.py`](../src/abstractmemory/sleep_cadence.py), [`mind_mass.py`](../src/abstractmemory/mind_mass.py), [`redigestion.py`](../src/abstractmemory/redigestion.py), [`reembed.py`](../src/abstractmemory/reembed.py), [`doctoring.py`](../src/abstractmemory/doctoring.py), [`engine_manifest.py`](../src/abstractmemory/engine_manifest.py).
 
 - `maintenance_report(store, journal, *, scopes, as_of=None, scan_limit=None, tuning=SleepTuning()) -> dict` — pure phase-1 analysis: structure plus an attribute-level scan (near-duplicates, metadata gaps, suppressions). Deterministic; deposits nothing. Every policy number rides `tuning`.
-- `maintenance_due(store, journal, *, scopes, since_seq=None, min_new_records=12, min_signal=3) -> dict` — the deterministic cadence predicate. Due when enough new records formed, or when some new material exists and the fragmentation signal clears its floor. A store with zero new formations is never due. Late-local-time remains the host's clock.
+- `maintenance_due(store, journal, *, scopes, since_seq=None, min_new_records=12, min_signal=3) -> dict` — the deterministic cadence predicate. Due when enough new records formed, or when some new material exists and the fragmentation signal clears its floor. A store with zero new formations is never due. Late-local-time remains the host's clock. Bounded by a cursor (0058): for `SQLiteTripleStore` and `InMemoryTripleStore` the answer is folded from the store's `assertions_after` feed, per (store, journal, scopes) in the process, so a check reads only the rows written since the previous check and re-reads the journal's formation bindings only when the journal moved (a repeated check with nothing new costs well under a millisecond). Same answer as the full scan, which other stores (LanceDB) still use.
 - `last_maintenance_seq(store, journal, *, scopes) -> int` — journal seq of the newest sleep artifact's formation; `0` means this store has never slept.
 - `mind_mass_report(store, journal, *, scopes, days=30, bucket="day", embedder=None, now=None, vector_scan_limit=VECTOR_SCAN_LIMIT, wake_cue_kind="episode") -> dict` — formation cadence, journal mass, duplicate mass, embedding-space integrity, review backlog, and sleep recency, window-bounded. Warnings come from the closed `WARNING_WORDS` set.
 - `redigestion_candidates(system, *, scopes, limit=50, min_residue_chars=24, methods=MECHANICAL_DIGEST_METHODS) -> dict` — enumerate the labeled mechanical-digest debt, worst first. Pure read: listing a debt is not using the memories.

@@ -1,0 +1,620 @@
+"""The revision log (ADR 0003 decisions 6-7, "Validation"; contract §3): ops, idempotency, atomic rollback, history,
+window/closure agreement, the lossless change feed, replay, repair. Every test runs on real stores (tmp_path).
+
+Mutants (each applied by hand to src/abstractmemory/graph/graph.py, the named test watched go red, then reverted):
+- `_SQLiteBackend.transaction`: ROLLBACK replaced by COMMIT                     -> test_a_failing_op_rolls_back_the_whole_revision[sqlite*]
+- `_MemoryBackend.transaction`: `tx.rollback()` removed                         -> test_a_failing_op_rolls_back_the_whole_revision[memory]
+- `_SQLiteTx.write_closure`: `self.b.journal.append_closure(closure)` (the journal's own transaction) instead of
+  `_append_closure_on(self.cur, ...)`                                         -> test_a_failing_op_rolls_back_the_whole_revision[sqlite]
+  (red as "database is locked": the journal's own BEGIN IMMEDIATE waits on the store's open write transaction, which
+  is why the same-file closure MUST ride the store's cursor)
+- `apply_revision`: the in-transaction `revision_seq` idempotency check AND the pre-check removed
+                                                                               -> test_a_revision_is_idempotent_on_its_id[*]
+- `apply_revision`: the `close` branch's `tx.write_closure`/pending append removed -> test_close_writes_the_window_and_the_closure_together[*]
+- `_SQLiteTx.end_row`: UPDATE removed (returns True)                           -> test_close_writes_the_window_and_the_closure_together[sqlite*]
+- `apply_revision` close: only an OPEN window is ended (the pre-review rule)    -> test_a_close_ends_a_window_that_runs_past_it[*]
+- `apply_revision`: `closing_revision` skip removed (a second close writes a second closure)
+                                                                               -> test_a_memory_is_closed_once_and_a_bounded_window_is_kept[*]
+- `_SQLiteBackend.revisions_page`: `seq > ?` -> `seq >= ?`                     -> test_change_feed_is_lossless_under_a_concurrent_writer[sqlite]
+- `MemoryGraph.revisions`: next cursor = `str(position + n)`                   -> test_change_feed_is_lossless_under_a_concurrent_writer[*]
+- `replay_into`: returns after the first page                                  -> test_replay_into_an_empty_store_equals_the_original
+- `_SQLiteTx.insert_revision`: `recorded_at` stored as now                     -> test_replay_into_an_empty_store_equals_the_original
+- `repair`: `mark_journal_applied` removed                                    -> test_repair_appends_what_a_crash_left_behind[*]
+- `_closure_record`: `closure_id` = uuid4 (non-deterministic)                  -> test_repair_appends_what_a_crash_left_behind[*]
+- `apply_revision`: the "named before the op that asserts it" check removed   -> test_ops_apply_in_order
+"""
+from __future__ import annotations
+
+import threading
+import time
+import warnings
+from pathlib import Path
+
+import pytest
+
+from abstractmemory import InMemoryJournal, SQLiteJournal, TripleQuery
+from abstractmemory.folds import closure_exclusions
+from abstractmemory.graph import MAX_READ_LIMIT, MemoryGraph, ProvenanceRequired, Revision
+
+from graph_support import (
+    KINDS,
+    T,
+    art,
+    claim,
+    close,
+    home_state,
+    file_state,
+    narrow,
+    open_home,
+    prov,
+    rev,
+    step,
+    store_dump,
+)
+
+
+@pytest.fixture(params=KINDS)
+def home(request, tmp_path: Path):
+    h = open_home(tmp_path, request.param)
+    yield h
+    h.close()
+
+
+def _row(store, aid: str):
+    [row] = store.query(TripleQuery(assertion_ids=(aid,)))
+    return row
+
+
+def _seed(home) -> None:
+    """Two open claims and one asserted with a bounded window."""
+    home.graph.apply_revision(rev(
+        "r-seed",
+        claim("a-open", valid_from=T(1)),
+        claim("b-open", o="ex:globex", valid_from=T(2)),
+        claim("c-bounded", o="ex:initech", valid_from=T(1), valid_until=T(9)),
+        provenance=prov(step("run-1", 1), art("note-1", "run-1")),
+    ))
+
+
+def test_ops_apply_and_report(home) -> None:
+    _seed(home)
+    result = home.graph.apply_revision(rev(
+        "r-2",
+        claim("d-new", o="ex:umbrella", valid_from=T(6)),
+        close("a-open", T(6), kind="supersede", replacement_ids=["d-new"], reason="moved to Umbrella"),
+        narrow("c-bounded", T(4)),
+        cause="reinterpret", occurred_at=T(6),
+    ))
+    assert result.applied and result.seq == 2
+    assert result.assertion_ids == ["d-new"] and result.closed == ["a-open"] and result.narrowed == ["c-bounded"]
+    assert result.skipped == []
+    assert _row(home.store, "a-open").valid_until == T(6)
+    assert _row(home.store, "c-bounded").valid_until == T(4)
+    assert _row(home.store, "d-new").observed_at == T(6)  # the claim's observation time is the revision's
+    # Skips are reported, not silent: a re-assert, a second close, a narrow that would not move the window earlier.
+    again = home.graph.apply_revision(rev(
+        "r-3", claim("d-new", o="ex:umbrella", valid_from=T(6)), close("a-open", T(7)), narrow("c-bounded", T(5)),
+        cause="person"))
+    assert again.applied and again.assertion_ids == [] and again.closed == [] and again.narrowed == []
+    assert [s["op"] for s in again.skipped] == ["assert", "close", "narrow"]
+    assert _row(home.store, "c-bounded").valid_until == T(4)  # never widened
+
+
+def test_a_held_id_reasserted_as_a_different_claim_is_refused(home) -> None:
+    """Review M6: only an identical re-assert is "skipped"; a different claim under a held id would log a payload the
+    graph does not hold. Mutant: the identity check in apply_revision removed -> red."""
+    _seed(home)
+    before = home_state(home)
+    for changed in ({"o": "ex:globex"}, {"s": "ex:eve"}, {"valid_from": T(2)}, {"scope": "session"},
+                    {"owner_id": "entity:x"}):
+        kw = {"valid_from": T(1), **changed}
+        with pytest.raises(ValueError, match="already holds as a different claim"):
+            home.graph.apply_revision(rev("r-x", claim("x-new"), claim("a-open", **kw),
+                                          provenance=prov(step("run-2", 9))))
+        assert home_state(home) == before
+    # The same claim re-sent (other observed_at, a later end, another source) is a reported skip.
+    same = home.graph.apply_revision(rev("r-same", claim("a-open", valid_from=T(1), valid_until=T(12),
+                                                         observed_at=T(5)), provenance=prov(step("run-3", 1))))
+    assert same.applied and same.skipped[0]["op"] == "assert" and same.assertion_ids == []
+
+
+def test_ops_apply_in_order(home) -> None:
+    _seed(home)
+    before = home_state(home)
+    with pytest.raises(ValueError, match="before the op that asserts it"):
+        home.graph.apply_revision(rev("r-bad", close("x-1", T(3)), claim("x-1", valid_from=T(2))))
+    assert home_state(home) == before
+    ok = home.graph.apply_revision(rev("r-ok", claim("x-1", valid_from=T(2)), close("x-1", T(3))))
+    assert ok.closed == ["x-1"] and _row(home.store, "x-1").valid_until == T(3)
+
+
+def test_a_revision_is_idempotent_on_its_id(home) -> None:
+    _seed(home)
+    first = home.graph.apply_revision(rev("r-2", close("a-open", T(5)), claim("e-1", o="ex:e")))
+    before = home_state(home)
+    again = home.graph.apply_revision(rev("r-2", close("a-open", T(5)), claim("e-1", o="ex:e")))
+    assert (again.applied, again.seq) == (False, first.seq)
+    # Architect A5: a retried step learns what its revision did (read back from the log's history rows).
+    # Mutant: _already_applied returning empty lists -> red.
+    assert (again.assertion_ids, again.closed, again.recorded_at) == (first.assertion_ids, first.closed,
+                                                                     first.recorded_at) == (['e-1'], ['a-open'], first.recorded_at)
+    # Same id, different content: the first write wins (the id is the identity), nothing changes.
+    other = home.graph.apply_revision(rev("r-2", claim("e-2", o="ex:other")))
+    assert other.applied is False
+    assert home_state(home) == before
+    # A second graph over the same store sees the same log (the SQLite tables or the shared in-memory state).
+    assert MemoryGraph(home.store, home.journal).apply_revision(rev("r-2", claim("e-3"))).applied is False
+
+
+def test_a_failing_op_rolls_back_the_whole_revision(home) -> None:
+    _seed(home)
+    before = home_state(home)
+    n_closures = len(home.journal.closures(limit=0))
+    # assert + close (window + same-file journal closure) + history ... then a narrow of an OPEN window refuses.
+    with pytest.raises(ValueError, match="cannot widen or close an open window"):
+        home.graph.apply_revision(rev(
+            "r-fail",
+            claim("f-new", o="ex:new"),
+            close("a-open", T(5), kind="supersede", replacement_ids=["f-new"]),
+            narrow("b-open", T(3)),
+        ))
+    assert home_state(home) == before
+    assert len(home.journal.closures(limit=0)) == n_closures
+    assert _row(home.store, "a-open").valid_until is None
+    assert home.graph.history("f-new") == [] and home.graph.revisions()[0][-1].revision_id == "r-seed"
+    # An op naming an unknown assertion rolls back the same way.
+    with pytest.raises(ValueError, match="unknown assertion"):
+        home.graph.apply_revision(rev("r-fail-2", claim("g-new"), close("nope", T(5))))
+    assert home_state(home) == before
+    # The failed ids stay free: the same revision id applies once fixed.
+    assert home.graph.apply_revision(rev("r-fail", claim("f-new", o="ex:new"))).applied
+
+
+def test_history_shows_assert_narrow_close_with_revision_ids_and_causes(home) -> None:
+    _seed(home)
+    home.graph.apply_revision(rev("r-narrow", narrow("c-bounded", T(4)), cause="reinterpret", occurred_at=T(10)))
+    home.graph.apply_revision(rev("r-close", close("c-bounded", T(11), kind="retract", reason="never true"),
+                                  cause="person", occurred_at=T(11)))
+    history = home.graph.history("c-bounded")
+    assert [(h["event"], h["revision_id"], h["cause"]) for h in history] == [
+        ("asserted", "r-seed", "ingest"), ("narrowed", "r-narrow", "reinterpret"), ("closed", "r-close", "person"),
+    ]
+    assert history[0]["detail"]["sources"] == ["step:run-1#1", "artifact:note-1"]
+    assert history[1]["detail"]["previous_valid_until"] == T(9) and history[1]["detail"]["valid_until"] == T(4)
+    assert history[2]["detail"]["kind"] == "retract" and history[2]["detail"]["window_closed"] is False
+    assert history[2]["detail"]["row_valid_until"] == T(4)
+    assert [h["at"] for h in history] == sorted(h["at"] for h in history)  # record time order
+    assert home.graph.history("c-bounded", limit=1) == history[:1]
+    assert home.graph.history("never-written") == []
+
+
+def test_close_writes_the_window_and_the_closure_together(home) -> None:
+    _seed(home)
+    result = home.graph.apply_revision(rev(
+        "r-sup", claim("a-next", o="ex:umbrella", valid_from=T(6)),
+        close("a-open", T(6), kind="supersede", replacement_ids=["a-next"], reason="moved"),
+        cause="reinterpret", occurred_at=T(6)))
+    # Event time: TripleQuery(active_at=) sees the window.
+    active_after = {a.assertion_id for a in home.store.query(TripleQuery(active_at=T(7), limit=0))}
+    active_before = {a.assertion_id for a in home.store.query(TripleQuery(active_at=T(5), limit=0))}
+    assert "a-open" not in active_after and "a-open" in active_before and "a-next" in active_after
+    # Ranked recall folds the journal: the closure is there, with its cause and successor.
+    [closure] = home.journal.closures(assertion_id="a-open", limit=0)
+    assert closure.kind == "supersede" and closure.replacement_ids == ("a-next",)
+    assert closure.provenance["revision_id"] == "r-sup" and closure.provenance["cause"] == "reinterpret"
+    assert closure.actor == "abstractnote"
+    seq_now = max(c.seq for c in home.journal.closures(limit=0))
+    assert "a-open" in closure_exclusions(home.journal, seq_now)
+    # Agreement over the whole store: a memory the graph closed has a closed window AND a closure, and vice versa.
+    closed_ids = {c.assertion_id for c in home.journal.closures(limit=0)}
+    windows = {a.assertion_id: a.valid_until for a in home.store.query(TripleQuery(limit=0))}
+    assert closed_ids == {"a-open"} and windows["a-open"] == T(6) and windows["b-open"] is None
+    assert result.closed == ["a-open"]
+    if home.kind == "sqlite":  # one file, one transaction: nothing awaits repair
+        assert home.graph.repair() == 0
+
+
+def test_a_close_ends_a_window_that_runs_past_it(home) -> None:
+    """A claim asserted "valid until December" and retracted in March: ranked recall drops it (the closure), so
+    TripleQuery(active_at=June) must not return it either (ADR 0003 decision 7; review M1)."""
+    home.graph.apply_revision(rev("r-1", claim("dec", valid_from=T(1), valid_until=T(12))))
+    result = home.graph.apply_revision(rev("r-2", close("dec", T(3), kind="retract", reason="never true"),
+                                           occurred_at=T(3)))
+    assert result.closed == ["dec"]
+    assert _row(home.store, "dec").valid_until == T(3)
+    assert "dec" not in {a.assertion_id for a in home.store.query(TripleQuery(active_at=T(6), limit=0))}
+    assert "dec" in {a.assertion_id for a in home.store.query(TripleQuery(active_at=T(2), limit=0))}
+    assert "dec" in closure_exclusions(home.journal, max(c.seq for c in home.journal.closures(limit=0)))
+    [_, closed] = home.graph.history("dec")
+    assert closed["detail"]["window_closed"] is True
+    assert (closed["detail"]["previous_valid_until"], closed["detail"]["row_valid_until"]) == (T(12), T(3))
+
+
+def test_a_memory_is_closed_once_and_a_bounded_window_is_kept(home) -> None:
+    _seed(home)
+    first = home.graph.apply_revision(rev("r-c1", close("c-bounded", T(12), kind="retract")))
+    assert first.closed == ["c-bounded"]
+    assert _row(home.store, "c-bounded").valid_until == T(9)  # the claim's own bound is kept
+    second = home.graph.apply_revision(rev("r-c2", close("c-bounded", T(3), kind="supersede",
+                                                          replacement_ids=["a-open"])))
+    assert second.closed == [] and "r-c1" in second.skipped[0]["why"]
+    assert len(home.journal.closures(assertion_id="c-bounded", limit=0)) == 1
+
+
+@pytest.mark.parametrize("kind", ["sqlite", "memory"])
+def test_change_feed_is_lossless_under_a_concurrent_writer(tmp_path: Path, kind: str) -> None:
+    reader = open_home(tmp_path, kind)
+    # The second writer: its own store/connection on the same file (SQLite), or the same store object (memory).
+    if kind == "sqlite":
+        from abstractmemory import SQLiteTripleStore
+
+        writer_store = SQLiteTripleStore(reader.path)
+        writer = MemoryGraph(writer_store, SQLiteJournal(reader.path))
+    else:
+        writer_store, writer = reader.store, MemoryGraph(reader.store, reader.journal)
+    total = 120
+    written: list = []
+
+    def _write() -> None:
+        for i in range(total):
+            rid = f"rev-{i:04d}"
+            writer.apply_revision(rev(rid, claim(f"m-{i}", o=f"ex:o{i}"),
+                                      provenance=prov(step("run-w", i + 1))))
+            written.append(rid)
+            if i % 10 == 0:
+                time.sleep(0.001)
+
+    thread = threading.Thread(target=_write)
+    thread.start()
+    seen: list = []
+    cursor = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        page, cursor = reader.graph.revisions(after=cursor, limit=7)
+        seen.extend(r.revision_id for r in page)
+        if not page and not thread.is_alive() and len(seen) >= len(written):
+            break
+    thread.join()
+    page, cursor = reader.graph.revisions(after=cursor, limit=7)
+    seen.extend(r.revision_id for r in page)
+    assert seen == written == [f"rev-{i:04d}" for i in range(total)]
+    assert reader.graph.revisions(after=cursor) == ([], cursor)  # an idle cursor stays put
+    with pytest.raises(ValueError):
+        reader.graph.revisions(after="not-a-cursor")
+    # Review M9: a cursor beyond the head (another graph's, or invented) would skip every revision below it.
+    # Mutant: the head check in MemoryGraph.revisions removed -> red.
+    with pytest.raises(ValueError, match="beyond this log's head"):
+        reader.graph.revisions(after=str(total + 1))
+    assert reader.graph.revisions(after=str(total))[0] == []
+    if kind == "sqlite":
+        writer_store.close()
+    reader.close()
+
+
+def _rich_log(graph: MemoryGraph, n_bulk: int) -> None:
+    """A log with every op, derived memories, a digest record, and more revisions than one replay page."""
+    graph.apply_revision(rev(
+        "r-0", claim("a", valid_from=T(1)), claim("b", o="ex:globex", valid_from=T(1), valid_until=T(9)),
+        claim("note-digest", s="ex:note-1", p="dcterms:abstract", o="dana joined acme", attributes={"literal": True}),
+        provenance=prov(step("run-1", 1, "st-1"), art("note-1", "run-1")), summary="first note"))
+    graph.apply_revision(rev(
+        "r-1", claim("a2", o="ex:umbrella", valid_from=T(5)),
+        close("a", T(5), kind="supersede", replacement_ids=["a2"], ripple_source="note-digest", ripple_hops=1),
+        narrow("b", T(4)), cause="reinterpret", occurred_at=T(5), provenance=prov(step("run-2", 4))))
+    graph.apply_revision(rev(
+        "r-2", claim("insight", s="ex:dana", p="ex:careerPattern", o="ex:moves-often",
+                     provenance=prov(derived=["a", "a2", "ex:note-1"], actor="abstractmemory:sleep")),
+        cause="maintenance", provenance=prov(derived=["a2"], actor="abstractmemory:sleep")))
+    for i in range(n_bulk):
+        graph.apply_revision(rev(f"bulk-{i:04d}", claim(f"bulk-{i}", s=f"ex:s{i % 7}", o=f"ex:o{i}"),
+                                 provenance=prov(step("run-bulk", i + 1)), occurred_at=T(2, 1 + i % 27)))
+
+
+def _graph_dump(graph: MemoryGraph, ids) -> dict:
+    revs, cursor = [], None
+    while True:
+        page, cursor = graph.revisions(after=cursor, limit=MAX_READ_LIMIT)
+        if not page:
+            break
+        revs.extend(r.to_dict() for r in page)
+    return {
+        "rows": store_dump(graph.store),
+        "revisions": revs,
+        "history": {i: graph.history(i) for i in ids},
+        "sources": {i: [s.to_dict() for s in graph.sources_of(i)] for i in ids},
+        "direct": {i: [s.to_dict() for s in graph.sources_of(i, transitive=False)] for i in ids},
+        "derived": [graph.derived_from_source(k) for k in (
+            {"kind": "run", "run_id": "run-1"}, {"kind": "run", "run_id": "run-2"}, step("run-1", 1),
+            art("note-1"), {"kind": "run", "run_id": "run-bulk"})],
+    }
+
+
+def test_replay_into_an_empty_store_equals_the_original(tmp_path: Path) -> None:
+    original = open_home(tmp_path, "sqlite", "original")
+    _rich_log(original.graph, n_bulk=130)  # 133 revisions: more than one replay page (100)
+    target = open_home(tmp_path, "sqlite", "replayed")
+    assert original.graph.replay_into(target.graph) == 133
+    # The whole file: triples, FTS shadow tables, the four memg_* tables, the journal's closures and seq counter.
+    assert file_state(target.path) == file_state(original.path)
+    ids = ["a", "a2", "b", "note-digest", "insight", "ex:note-1", "bulk-0", "bulk-129"]
+    dump = _graph_dump(original.graph, ids)
+    assert _graph_dump(target.graph, ids) == dump
+    assert original.graph.replay_into(target.graph) == 0  # resumable: already-present ids are no-ops
+    # Across backends: the in-memory replay reads the same.
+    mem = open_home(tmp_path, "memory")
+    assert original.graph.replay_into(mem.graph) == 133
+    assert _graph_dump(mem.graph, ids) == dump
+    assert original.graph.replay_into(MemoryGraph(original.store)) == 0  # into itself: every id already there
+    for h in (original, target, mem):
+        h.close()
+
+
+def _crash_first_append(base):
+    """A real journal class whose first closure append dies (the process crash between the store commit and the
+    off-file journal append, ADR 0003 atomicity note)."""
+
+    class _Crashing(base):
+        crashes = 1
+
+        def append_closure(self, closure):
+            if self.crashes:
+                self.crashes -= 1
+                raise RuntimeError("simulated crash before the journal append")
+            return super().append_closure(closure)
+
+    return _Crashing
+
+
+_CrashingJournal = _crash_first_append(SQLiteJournal)
+
+
+@pytest.mark.parametrize("kind", ["sqlite-offfile", "memory"])
+def test_repair_appends_what_a_crash_left_behind(tmp_path: Path, kind: str) -> None:
+    home = open_home(tmp_path, kind)
+    _seed(home)
+    if kind == "memory":
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            journal = _crash_first_append(InMemoryJournal)()
+    else:
+        journal = _CrashingJournal(home.journal_path)
+    graph = MemoryGraph(home.store, journal)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        graph.apply_revision(rev("r-close", close("a-open", T(5)), close("b-open", T(5), kind="supersede",
+                                                                      replacement_ids=["a-open"])))
+    # The store transaction committed: windows closed, revision logged; the journal never heard of it.
+    assert _row(home.store, "a-open").valid_until == T(5)
+    assert [r.revision_id for r in graph.revisions()[0]] == ["r-seed", "r-close"]
+    assert journal.closures(limit=0) == []
+    assert graph.repair() == 1
+    closures = sorted(journal.closures(limit=0), key=lambda c: c.assertion_id)
+    assert [(c.assertion_id, c.kind) for c in closures] == [("a-open", "retract"), ("b-open", "supersede")]
+    assert closures[0].provenance["revision_id"] == "r-close"
+    assert graph.repair() == 0  # marked applied
+    # Idempotent even if the mark were lost: re-appending the same deterministic closure ids is a no-op.
+    from abstractmemory.graph.graph import _closure_record
+
+    replayed = graph.revisions()[0][1]
+    for op in replayed.ops:
+        journal.append_closure(_closure_record(replayed, op.payload))
+    assert len(journal.closures(limit=0)) == 2
+    journal.close()
+    home.close()
+
+
+def test_repair_without_a_journal_is_loud(tmp_path: Path) -> None:
+    home = open_home(tmp_path, "sqlite-offfile")
+    _seed(home)
+    journal = _CrashingJournal(home.journal_path)
+    with pytest.raises(RuntimeError):
+        MemoryGraph(home.store, journal).apply_revision(rev("r-x", close("a-open", T(5))))
+    with pytest.raises(RuntimeError, match="no journal is attached"):
+        MemoryGraph(home.store).repair()
+    journal.close()
+    home.close()
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, 2.5, None])
+def test_every_read_is_bounded(home, bad) -> None:
+    _seed(home)
+    for read in (lambda: home.graph.history("a-open", limit=bad),
+                 lambda: home.graph.sources_of("a-open", limit=bad),
+                 lambda: home.graph.derived_from_source(step("run-1", 1), limit=bad),
+                 lambda: home.graph.revisions(limit=bad),
+                 lambda: home.graph.repair(limit=bad)):
+        with pytest.raises(ValueError, match="bounded"):
+            read()
+
+
+def test_reads_honour_their_limit(home) -> None:
+    home.graph.apply_revision(rev("r-many", *[claim(f"m{i}", o=f"ex:o{i}") for i in range(12)],
+                                  provenance=prov(step("run-1", 1), step("run-1", 2), art("x", "run-1"))))
+    assert len(home.graph.derived_from_source(step("run-1", 1), limit=5)) == 5
+    assert home.graph.derived_from_source({"kind": "run", "run_id": "run-1"}, limit=5) == [f"m{i}" for i in range(5)]
+    assert len(home.graph.sources_of("m0", limit=2)) == 2
+    page, cursor = home.graph.revisions(limit=MAX_READ_LIMIT + 50)
+    assert len(page) == 1 and cursor == "1"
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Timestamps (adversarial review 2026-10-27, M2/M3). Mutants (applied by hand; each turned the named test red):
+# - `revisions._normalize_close`: valid_until kept as `_req_str` (no parsing)   -> test_a_window_end_must_be_a_timestamp
+# - `revisions.RevisionOp`: the assert payload's times not normalized          -> test_every_time_of_a_revision_is_normalized
+# - `apply_revision`: the valid_from inversion check removed                  -> test_a_close_or_narrow_never_inverts_a_window
+# - `SQLiteTripleStore._narrow_on` / `InMemoryTripleStore.narrow_assertion`: string compare restored
+#                                                                             -> test_narrow_compares_instants_not_strings
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def test_a_window_end_must_be_a_timestamp(home) -> None:
+    _seed(home)
+    home.graph.apply_revision(rev("r-nf", claim("no-from", o="ex:nf")))  # no valid_from: nothing else parses the end
+    before = home_state(home)
+    for bad in ("next tuesday", "2026-13-01", ""):
+        with pytest.raises(ValueError, match="timestamp"):
+            home.graph.apply_revision(rev("r-x", close("no-from", bad)))
+        with pytest.raises(ValueError, match="timestamp"):
+            home.graph.apply_revision(rev("r-x", claim("x-new"), close("a-open", bad)))
+        with pytest.raises(ValueError, match="timestamp"):
+            home.graph.apply_revision(rev("r-x", narrow("c-bounded", bad)))
+    with pytest.raises(ValueError, match="timestamp"):
+        home.graph.apply_revision(rev("r-x", claim("x-new", valid_from="soon")))
+    with pytest.raises(ValueError, match="timestamp"):
+        rev("r-x", claim("x-new"), occurred_at="yesterday")
+    assert home_state(home) == before
+
+
+def test_every_time_of_a_revision_is_normalized(home) -> None:
+    result = home.graph.apply_revision(rev(
+        "r-tz", claim("tz-1", valid_from="2026-06-01T02:00:00+02:00", valid_until="2026-09-01T00:00:00Z",
+                      observed_at="2026-05-31"),
+        occurred_at="2026-06-01T00:00:00Z", recorded_at="2026-06-02T12:30:00+02:00"))
+    assert result.applied
+    row = _row(home.store, "tz-1")
+    assert (row.valid_from, row.valid_until, row.observed_at) == (
+        "2026-06-01T00:00:00.000000+00:00", T(9), "2026-05-31T00:00:00.000000+00:00")
+    [logged] = home.graph.revisions()[0]
+    assert logged.occurred_at == T(6)  # (recorded_at is the store's: test_record_time_is_the_stores)
+    assert logged.ops[0].payload["valid_until"] == T(9)
+    assert Revision.from_dict({**logged.to_dict(), "recorded_at": "2026-06-02T12:30:00+02:00"}).recorded_at == \
+        "2026-06-02T10:30:00.000000+00:00"
+
+
+def test_record_time_is_the_stores(home) -> None:
+    """Review A3: a caller cannot backdate what this mind learned. A fresh apply stamps recorded_at with the store's
+    clock (the Revision's value is ignored); replay_into keeps the logged value (a replay is not a new record).
+    Mutant: the `if not replay` stamp in apply_revision removed (the caller's value kept) -> red."""
+    from abstractmemory.models import utc_now_iso_seconds
+
+    before = utc_now_iso_seconds()
+    result = home.graph.apply_revision(rev("r-back", claim("back-1"), recorded_at="2020-01-01T00:00:00+00:00"))
+    after = utc_now_iso_seconds()
+    [logged] = home.graph.revisions()[0]
+    assert before <= logged.recorded_at <= after and result.recorded_at == logged.recorded_at
+    assert home.graph.history("back-1")[0]["at"] == logged.recorded_at
+    # replay keeps the logged record time
+    target = MemoryGraph(__import__("abstractmemory").InMemoryTripleStore())
+    assert home.graph.replay_into(target) == 1
+    assert target.revisions()[0][0].recorded_at == logged.recorded_at
+    assert target.apply_revision(rev("r-old", claim("old-1"), recorded_at=T(1)), replay=True).recorded_at == T(1)
+
+
+def test_a_close_or_narrow_never_inverts_a_window(home) -> None:
+    home.graph.apply_revision(rev("r-1", claim("late", valid_from=T(6)), claim("late-b", o="ex:b", valid_from=T(6),
+                                                                              valid_until=T(9))))
+    before = home_state(home)
+    with pytest.raises(ValueError, match="window would invert"):
+        home.graph.apply_revision(rev("r-x", claim("x-new"), close("late", T(2))))
+    with pytest.raises(ValueError, match="window would invert"):
+        home.graph.apply_revision(rev("r-x", narrow("late-b", T(5))))
+    assert home_state(home) == before
+    # An empty window (end == start) is allowed: "it never held".
+    assert home.graph.apply_revision(rev("r-ok", close("late", T(6)))).closed == ["late"]
+
+
+@pytest.mark.parametrize("kind", ["sqlite", "memory"])
+def test_narrow_compares_instants_not_strings(tmp_path: Path, kind: str) -> None:
+    """'2026-05-31T23:00:00-02:00' sorts before '2026-06-01T00:00:00+00:00' but is the LATER instant (01:00 UTC):
+    a narrow to it would move the end later. The store compares instants (its public narrow_assertion too)."""
+    from abstractmemory import InMemoryTripleStore, SQLiteTripleStore, TripleAssertion
+
+    store = InMemoryTripleStore() if kind == "memory" else SQLiteTripleStore(tmp_path / "kg.sqlite3")
+    store.add([TripleAssertion(subject="ex:a", predicate="ex:p", object="ex:b", assertion_id="n1",
+                               valid_from="2026-01-01T00:00:00+00:00", valid_until="2026-06-01T00:00:00+00:00")])
+    assert store.narrow_assertion("n1", "2026-05-31T23:00:00-02:00") is False
+    assert store.narrow_assertion("n1", "2026-06-01T00:00:00Z") is False  # the same instant
+    assert _row(store, "n1").valid_until == "2026-06-01T00:00:00+00:00"
+    assert store.narrow_assertion("n1", "2026-05-31T23:00:00+00:00") is True
+    with pytest.raises(ValueError):
+        store.narrow_assertion("n1", "later")
+    store.close()
+
+
+def test_replay_reproduces_an_adoption(tmp_path: Path) -> None:
+    """Review M8: an import adopts a store row written outside the graph; replaying the log into an empty home
+    reproduces the adoption (history adopted + previous_provenance) and the whole file. The graph logs the op with
+    its `adoption` note. Mutants: the logged op without the note (insert_revision(rev, ...)) -> red; the replayed
+    history reading `adopted` from the live store only (`noted = None` unless live) -> red."""
+    from abstractmemory import TripleAssertion
+    from abstractmemory.graph import RevisionOp
+
+    src = open_home(tmp_path, "sqlite", "src")
+    src.store.add([TripleAssertion(subject="ex:dana", predicate="schema:knows", object="ex:eve", scope="global",
+                                   owner_id="abstractnote", observed_at=T(1), provenance={"source": "legacy"},
+                                   assertion_id="legacy-1")])
+    stored = _row(src.store, "legacy-1").to_dict()
+    stored.pop("provenance")
+    src.graph.apply_revision(rev("imp", RevisionOp("assert", stored), cause="import", provenance=prov(art("file-1"))))
+    src.graph.apply_revision(rev("r-close", close("legacy-1", T(4))))
+    [logged, _] = src.graph.revisions()[0]
+    assert logged.ops[0].payload["adoption"] == {"previous_provenance": {"source": "legacy"}}
+    dst = open_home(tmp_path, "sqlite", "dst")
+    assert src.graph.replay_into(dst.graph) == 2
+    assert dst.graph.history("legacy-1") == src.graph.history("legacy-1")
+    assert dst.graph.history("legacy-1")[0]["detail"]["previous_provenance"] == {"source": "legacy"}
+    assert file_state(dst.path) == file_state(src.path)
+    # The note is the graph's: an ingest may not carry one, and a live adoption may not contradict the stored row.
+    with pytest.raises(ValueError, match="adoption note"):
+        dst.graph.apply_revision(rev("r-x", RevisionOp("assert", {**stored, "assertion_id": "n2", "adoption": {
+            "previous_provenance": {}}})))
+    src.store.add([TripleAssertion(subject="ex:x", predicate="ex:p", object="ex:y", assertion_id="legacy-2",
+                                   provenance={"source": "legacy"})])
+    row2 = _row(src.store, "legacy-2").to_dict()
+    row2.pop("provenance")
+    with pytest.raises(ValueError, match="differs from the stored row"):
+        src.graph.apply_revision(rev("imp-2", RevisionOp("assert", {**row2, "adoption": {
+            "previous_provenance": {"source": "made-up"}}}), cause="import", provenance=prov(art("file-2"))))
+    for h in (src, dst):
+        h.close()
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Re-observation, not duplication (architect review E1). Mutants (each turned the named test red):
+# - `apply_revision`: `target = None` (no held-claim lookup)                 -> test_reasserting_a_held_open_claim_re_observes_it[*]
+# - `apply_revision`: re-observed rows inserted anyway (insert filter removed) -> test_reasserting_a_held_open_claim_re_observes_it[*]
+# - `apply_revision`: a later op's payload id not mapped to the held memory   -> test_reasserting_a_held_open_claim_re_observes_it[*]
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def test_reasserting_a_held_open_claim_re_observes_it(home) -> None:
+    from abstractmemory.graph import RevisionOp
+
+    def ops():  # no ids given: each revision derives its own deterministic ids (a re-run of the same workflow)
+        return (RevisionOp("assert", {"subject": "ex:alice", "predicate": "schema:knows", "object": "ex:bob"}),
+                RevisionOp("assert", {"subject": "ex:alice", "predicate": "schema:name", "object": "alice"}))
+
+    first = home.graph.apply_revision(rev("run-1-rev", *ops(), provenance=prov(step("run-1", 3))))
+    second = home.graph.apply_revision(rev("run-2-rev", *ops(), provenance=prov(step("run-2", 5))))
+    assert len(first.assertion_ids) == 2 and second.assertion_ids == []
+    assert second.re_observed == first.assertion_ids
+    assert [s["why"] for s in second.skipped] == ["re-observed", "re-observed"]
+    rows = home.store.query(TripleQuery(subject="ex:alice", limit=0))
+    assert len(rows) == 2  # one row per claim, not two
+    held = first.assertion_ids[0]
+    assert [s.key() for s in home.graph.sources_of(held)] == ["step:run-1#3", "step:run-2#5"]
+    assert home.graph.derived_from_source(step("run-2", 5)) == first.assertion_ids
+    assert [(h["event"], h["revision_id"]) for h in home.graph.history(held)] == [
+        ("asserted", "run-1-rev"), ("re-observed", "run-2-rev")]
+    # Inside one revision a duplicate claim re-observes the first; a later op naming the duplicate's id acts on
+    # the memory that holds the claim.
+    third = home.graph.apply_revision(rev(
+        "r-3", claim("dup-a", s="ex:carol"), claim("dup-b", s="ex:carol"), close("dup-b", T(5))))
+    assert third.assertion_ids == ["dup-a"] and third.re_observed == ["dup-a"] and third.closed == ["dup-a"]
+    assert len(home.store.query(TripleQuery(subject="ex:carol", limit=0))) == 1
+    # A closed claim asserted again is a new memory (it holds again); a bounded assert is its own claim.
+    again = home.graph.apply_revision(rev("r-4", claim("carol-again", s="ex:carol")))
+    bounded = home.graph.apply_revision(rev("r-5", RevisionOp("assert", {
+        "subject": "ex:alice", "predicate": "schema:knows", "object": "ex:bob", "valid_until": T(9)})))
+    assert again.assertion_ids == ["carol-again"] and len(bounded.assertion_ids) == 1 and bounded.re_observed == []
+
+
+def test_replay_reproduces_re_observations(tmp_path: Path) -> None:
+    src = open_home(tmp_path, "sqlite", "src")
+    for i, run in enumerate(("run-a", "run-b", "run-a2")):
+        src.graph.apply_revision(rev(f"r-{i}", claim(f"c-{i}", s="ex:same"), provenance=prov(step(run, i + 1))))
+    dst = open_home(tmp_path, "sqlite", "dst")
+    assert src.graph.replay_into(dst.graph) == 3
+    assert file_state(dst.path) == file_state(src.path)
+    assert len(dst.store.query(TripleQuery(subject="ex:same", limit=0))) == 1
+    for h in (src, dst):
+        h.close()

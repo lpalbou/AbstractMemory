@@ -221,8 +221,9 @@ class ScopeBinding:
         return _jsonify(asdict(self))
 
 
-#: The closure kinds a ClosureRecord accepts (``reinterpreted`` is additive, 0.3.2).
-CLOSURE_KINDS = frozenset({"retract", "supersede", "reinterpreted"})
+#: The closure kinds a ClosureRecord accepts (``reinterpreted`` is additive, 0.3.2; ``merged`` is additive with the
+#: revision log, ADR 0003 decision 7: the memory was merged into another, named in ``replacement_ids``).
+CLOSURE_KINDS = frozenset({"retract", "supersede", "reinterpreted", "merged"})
 
 
 @dataclass(frozen=True)
@@ -236,7 +237,7 @@ class ClosureRecord:
     """
 
     assertion_id: str
-    kind: str                        # retract | supersede | reinterpreted
+    kind: str                        # retract | supersede | reinterpreted | merged
     reason: str
     replacement_ids: Tuple[str, ...] = ()
     observed_at: str = field(default_factory=utc_now_iso)
@@ -251,7 +252,7 @@ class ClosureRecord:
         object.__setattr__(self, "assertion_id", self.assertion_id.strip())
         kind = str(self.kind or "").strip().lower()
         if kind not in CLOSURE_KINDS:
-            raise ValueError("ClosureRecord.kind must be 'retract', 'supersede' or 'reinterpreted'")
+            raise ValueError("ClosureRecord.kind must be 'retract', 'supersede', 'reinterpreted' or 'merged'")
         object.__setattr__(self, "kind", kind)
         if not (isinstance(self.reason, str) and self.reason.strip()):
             raise ValueError("ClosureRecord requires a non-empty reason")

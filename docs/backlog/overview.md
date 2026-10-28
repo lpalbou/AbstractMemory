@@ -9,8 +9,9 @@ inspect the current code first, then update the item if reality has changed.
 
 ## Current Status (reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 6 — `planned/knowledge_graph_convergence/` (0050-0055, added
-  2026-10-27, ADR 0002). Before that date every planned item had shipped
+- Planned: 9 — `planned/knowledge_graph_convergence/` (0050-0055, added
+  2026-10-27, ADR 0002; 0056-0058, ADR 0003; 0056 in progress, first slice
+  on `feat/memory-graph-provenance`). Before that date every planned item had shipped
   (moved to `completed/`) or was superseded (moved to `deprecated/`).
 - Proposed: 13 GENUINELY open (4 in `memory_system_v1` + 9 in
   `extension_wave`)
@@ -159,7 +160,7 @@ The 2026-07-20 reconciliation moved every earlier planned item to
 extension_wave 0037-0039) or `deprecated/` (001/003/006, each with the
 superseding pointer).
 
-### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0055)
+### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0058)
 
 Operator ruling 2026-10-27 ([ADR 0002](../adr/0002-abstractmemory-owns-the-memory-graph.md)); see the
 [track README](planned/knowledge_graph_convergence/README.md) for scope, reading order and prior art.
@@ -173,6 +174,9 @@ Consumer side: AbstractNote backlog 0033-0036.
 | [`0053_self_organisation_communities_consolidation_reflection.md`](planned/knowledge_graph_convergence/0053_self_organisation_communities_consolidation_reflection.md) | Medium | Communities, topics, document consolidation, reflection and insights, review list. |
 | [`0054_ripple_propagation_and_activation.md`](planned/knowledge_graph_convergence/0054_ripple_propagation_and_activation.md) | High | ADR 0001's process; absorbs AbstractNote's R6 prototype; promote `proposed/ripple_wave/0001` with it. |
 | [`0055_notes_and_diary_layer_for_consumers.md`](planned/knowledge_graph_convergence/0055_notes_and_diary_layer_for_consumers.md) | Medium | A note/diary abstraction over the graph for AbstractNote and AbstractEntity. |
+| [`0056_ledger_provenance_contract_and_revision_log.md`](planned/knowledge_graph_convergence/0056_ledger_provenance_contract_and_revision_log.md) | High | ADR 0003. In progress: `abstractmemory.graph` (SourceRef, Provenance, revisions, history, change feed, replay), `narrow_assertion`; 0.4.0. |
+| [`0057_one_mind_per_plane_sqlite_home.md`](planned/knowledge_graph_convergence/0057_one_mind_per_plane_sqlite_home.md) | High | ADR 0003 decision 3. Planned, unblocked: connectors behind `MemoryGraph` (S8 landed: protocol, conformance suite, LanceDB connector); next the plane import through `import` revisions and the gateway default (SQLite). |
+| [`0058_home_store_performance_indexes_vectors.md`](planned/knowledge_graph_convergence/0058_home_store_performance_indexes_vectors.md) | High | ADR 0003. Owner predicate, column projection, binary vectors, matrix cache. |
 
 ## Proposed Items
 

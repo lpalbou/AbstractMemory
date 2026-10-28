@@ -42,9 +42,29 @@ Semantic/vector support (mirrors the InMemory reference semantics exactly):
   the same file. An embedder failure aborts the add with zero rows written.
 - `query_text=...` requires the embedder (raises the same `ValueError` as
   InMemory — no keyword fallback); `query_vector=...` works directly.
-- Cosine ranking runs in Python over the SQL-filtered candidates (shared
-  `vector_scoring.py` — both stores rank identically). The scan is linear,
-  comfortable at single-home scale; ANN indexing is on the design backlog.
+- Vectors are stored as float32 little-endian BLOBs (4 bytes per
+  dimension; backlog 0058). A home written by an earlier version (JSON text
+  vectors) is upgraded in place when the store opens: rows above the
+  `vector_blob_high_water` cursor of the meta sidecar are rewritten in
+  bounded transactions, so the upgrade is idempotent and an interrupted one
+  resumes (about 5 s for 50k rows of 384-d vectors, once). Values float32
+  cannot hold are refused at write (`ValueError`) rather than clipped.
+- Cosine ranking returns exactly what the reference scan of
+  `vector_scoring.py` returns (same rows, same order, bit-identical scores;
+  both stores rank identically). With numpy installed
+  (`pip install "abstractmemory[fast]"`), the store serves it from an
+  in-process float32 matrix cache: built at a handle's first semantic query,
+  appended with the rows written since (by any handle or process), rebuilt
+  when `replace_vectors` or the upgrade rewrites the vectors
+  (`vector_generation` in the meta sidecar). A float32 pass selects the
+  candidates with a margin above its error bound and the candidates are
+  re-scored with the reference arithmetic. Memory: 4 bytes per dimension
+  per vectored row (about 77 MB for 50k rows of 384-d vectors).
+  `store.vector_engine` says which path serves: `"numpy-matrix-cache"` or
+  `"python-linear-scan"`. The Python scan serves (labelled once per handle
+  with a `#FALLBACK` warning) when numpy is absent or a stored vector cannot
+  be scored exactly by the matrix (mixed dimensions, non-finite values).
+  ANN indexing stays out of scope (LanceDB is the optional accelerator).
 - Rows added while no embedder was configured stay vectorless: vector
   queries skip them and layer-2 recall labels the degradation
   (`#FALLBACK`). The `reembed_store(...)` repair pass backfills them.
@@ -85,7 +105,22 @@ Stored columns:
 - `observed_at`, `valid_from`, `valid_until`, `confidence`
 - `provenance_json`, `attributes_json` (serialized dicts)
 - `text` (canonical text, kept inspectable)
-- `embedding` (JSON-encoded float list; NULL for vectorless rows)
+- `embedding` (float32 little-endian BLOB since 0.4.0; JSON text in homes
+  not yet upgraded; NULL for vectorless rows)
+
+Reads (backlog 0058):
+- Structured reads select the assertion columns only (never `embedding` or
+  `text`); `stored_vector(id)` and semantic queries read the vector.
+- The owner filter is an index-usable equality; partition reads ("latest N
+  in a (scope, owner)", as-of windows, per-pair scans) walk
+  `idx_<table>_scope_owner_observed` in query order; reads anchored on ids,
+  a subject or an object use their own index. `query_plan(q)` returns
+  SQLite's `EXPLAIN QUERY PLAN` lines for a query.
+- `assertions_after(cursor, *, scope=None, owner_id=None, limit=1000)` is a
+  bounded change feed in rowid order (`(rows, next_cursor)`); the
+  maintenance cadence folds it so a check reads only the rows written since
+  the previous one. `InMemoryTripleStore` offers the same feed over its
+  insertion order.
 
 ## LanceDBTripleStore
 
@@ -108,6 +143,8 @@ Persistence:
 - Data is stored under the provided `uri` (directory path).
 - Behavior is covered by the persistence test: [`tests/test_lancedb_triple_store.py`](../tests/test_lancedb_triple_store.py)
 
+As a graph home (`MemoryGraph(LanceDBTripleStore(...), journal)`, the LanceDB connector): the graph creates the triple table with an explicit schema (and adds missing nullable columns to a table `add` created from its first batch), keeps its revision log, history, provenance and derivation tables beside it, and writes each revision log-first so `repair()` can finish a crash-interrupted one. The journal lives elsewhere (a `SQLiteJournal` file). What it cannot promise, unlike SQLite: serialized writers across processes, and invisibility of a half-written revision before `repair()` ([`api.md`](api.md#connectors-abstractmemorygraphbackend), ADR 0003 decision 3).
+
 Stored columns (v0):
 - `assertion_id` (uuid)
 - `subject`, `predicate`, `object`, `scope`, `owner_id`
@@ -128,7 +165,7 @@ Canonicalization:
 
 Append-only:
 - There is no update/delete API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
-- The one in-place change: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer it.
+- The in-place window changes: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window), and `narrow_assertion(assertion_id, valid_until)`, which moves an already-closed window earlier and never widens it (`ValueError` for an open window or a value that is not a timestamp; `False` for an unknown id or a date at or after the current end, compared as instants). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer `close_assertion`, and its `narrow_assertion` raises `NotImplementedError` (backlog 0057). In a mind written through `abstractmemory.graph`, both happen as a revision's `close` / `narrow` op, which also records the cause (see [`api.md`](api.md#the-memory-graph-revisions-and-provenance)); a `SQLiteTripleStore` used as a graph home also holds the `memg_*` tables listed there.
 
 Timestamps are strings:
 - All stores compare `observed_at` / `valid_*` as strings.

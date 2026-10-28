@@ -134,13 +134,30 @@ class SQLiteJournal:
     def _ensure_schema(self) -> None:
         # Schema DDL lives with the row codecs (journal_sqlite_rows.ensure_schema):
         # table shapes and row mappings are one concern and drift together.
+        # OPENING A HOME IS A READ (architect C1): first in a DEFERRED transaction, where every statement on a
+        # complete schema (CREATE ... IF NOT EXISTS of existing objects, the conditional counter row and column
+        # probes) only reads, so a reader never waits behind a writer. Only when that attempt must write and
+        # cannot (another writer holds the lock, or committed under its snapshot) is it redone under BEGIN
+        # IMMEDIATE, the serialized creation path.
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                ensure_schema(cur, prefix_tables=self._schema_tables())
+                cur.execute("COMMIT")
+                return
+            except sqlite3.OperationalError:
+                cur.execute("ROLLBACK")
         with self._txn() as cur:
-            ensure_schema(cur, prefix_tables={
-                "events": self._t_events, "bindings": self._t_bindings,
-                "closures": self._t_closures, "traces": self._t_traces,
-                "snapshots": self._t_snapshots, "valence": self._t_valence,
-                "seq": self._t_seq, "counts": self._t_counts,
-            })
+            ensure_schema(cur, prefix_tables=self._schema_tables())
+
+    def _schema_tables(self) -> Dict[str, str]:
+        return {
+            "events": self._t_events, "bindings": self._t_bindings,
+            "closures": self._t_closures, "traces": self._t_traces,
+            "snapshots": self._t_snapshots, "valence": self._t_valence,
+            "seq": self._t_seq, "counts": self._t_counts,
+        }
 
     # -- write plumbing ---------------------------------------------------------
 
@@ -332,23 +349,32 @@ class SQLiteJournal:
     # -- closures -------------------------------------------------------------------
 
     def append_closure(self, closure: ClosureRecord) -> ClosureRecord:
+        with self._txn() as cur:
+            return self._append_closure_on(cur, closure)
+
+    def _append_closure_on(self, cur: sqlite3.Cursor, closure: ClosureRecord) -> ClosureRecord:
+        """append_closure's body on a CALLER-OWNED transaction. The caller's
+        cursor must be on a connection to THIS journal's file (the revision
+        apply of `abstractmemory.graph` runs it on the triple store's
+        connection when both share the home file, so the closure, the row's
+        window and the revision commit or roll back together). Seq
+        allocation is in-database, so a foreign connection is safe."""
         _require_instance(closure, ClosureRecord, "append_closure")
         [closure] = _sanitize_batch([closure])
         supplied = str(closure.closure_id or "").strip()
-        with self._txn() as cur:
-            if supplied:
-                row = self._find_by_id(cur, self._t_closures, "closure_id", supplied)
-                if row is not None:
-                    return row_to_closure(row)  # replay no-op: original record, original seq
-            enriched = _enrich_closure(closure, self._allocate_seqs(cur, 1))
-            self._insert(cur, self._t_closures, {
-                "seq": enriched.seq, "closure_id": enriched.closure_id,
-                "assertion_id": enriched.assertion_id, "kind": enriched.kind,
-                "reason": enriched.reason,
-                "replacement_ids_json": _json_dump(list(enriched.replacement_ids)),
-                "observed_at": enriched.observed_at, "actor": enriched.actor,
-                "provenance_json": _json_dump(enriched.provenance),
-            })
+        if supplied:
+            row = self._find_by_id(cur, self._t_closures, "closure_id", supplied)
+            if row is not None:
+                return row_to_closure(row)  # replay no-op: original record, original seq
+        enriched = _enrich_closure(closure, self._allocate_seqs(cur, 1))
+        self._insert(cur, self._t_closures, {
+            "seq": enriched.seq, "closure_id": enriched.closure_id,
+            "assertion_id": enriched.assertion_id, "kind": enriched.kind,
+            "reason": enriched.reason,
+            "replacement_ids_json": _json_dump(list(enriched.replacement_ids)),
+            "observed_at": enriched.observed_at, "actor": enriched.actor,
+            "provenance_json": _json_dump(enriched.provenance),
+        })
         return enriched
 
     def closures(

@@ -5,8 +5,9 @@
 Planned — operator ruling 2026-10-27 ([ADR 0002](../../../adr/0002-abstractmemory-owns-the-memory-graph.md)):
 AbstractMemory *is* the semantic temporal memory graph and owns all of its processing. Capabilities that
 AbstractNote built for itself over a parallel graph are to be generalised here, so every consumer
-(AbstractNote, AbstractEntity, assistants, agents) uses one graph. Not started; no code change is made by
-writing this track.
+(AbstractNote, AbstractEntity, assistants, agents) uses one graph. In progress: 0056 (the provenance contract and
+the revision log, `abstractmemory.graph`, 0.4.0) landed its first slice on `feat/memory-graph-provenance`
+(2026-10-27; see the item's Report). The other items have not started.
 
 ## Purpose
 
@@ -32,15 +33,28 @@ notes for itself) can drop their own copies.
   budget, reconsideration through an injected reader).
 - `0055_notes_and_diary_layer_for_consumers.md`: a notes/diary abstraction on top of the graph, shared by
   AbstractNote and AbstractEntity.
+- `0056_ledger_provenance_contract_and_revision_log.md` (ADR 0003): the typed mandatory provenance contract
+  (`SourceRef`, `Provenance`), the revision log with atomic ops and closure causes, `narrow_assertion`, `history`,
+  `sources_of`, `derived_from_source`, the change feed, replay. First slice (2026-10-27).
+- `0057_one_mind_per_plane_sqlite_home.md` (ADR 0003): one SQLite home per plane, LanceDB optional, the plane store
+  imported once through `import` revisions. Rewritten after the operator's decision: stores are connectors behind
+  `MemoryGraph`, SQLite the default; S8 (connector protocol, conformance suite, LanceDB connector) landed.
+- `0058_home_store_performance_indexes_vectors.md` (ADR 0003): owner predicate, column projection, binary vectors,
+  matrix cache, bounded maintenance; measured before/after.
 
 ## Reading order
 
+0056 (the provenance contract and the revision log; ADR 0003) and 0058 (the home store holds the load) first, then
 0051 (records everything else revises) → 0050 (identity, needs merges recorded as revisions) → 0052 (reads)
 → `proposed/ripple_wave/0001` (primitives) → 0054 (ripple) → 0053 (passes) → 0055 (consumer layer).
 `narrow_assertion` (in 0051 and ripple_wave/0001) can land first on its own: it removes AbstractNote's only
 private-table write.
 
 ## Governing ADRs
+
+- [ADR 0003](../../../adr/0003-one-graph-ledger-provenance-and-revisions.md): one graph with several minds; three
+  time axes; a revision is the unit of change; provenance to the ledger is mandatory and typed; hosts reach the
+  graph through the runtime facade.
 
 - [ADR 0001](../../../adr/0001-altered-memories-ripple.md): an altered memory ripples (owned here).
 - [ADR 0002](../../../adr/0002-abstractmemory-owns-the-memory-graph.md): AbstractMemory owns the graph and its
