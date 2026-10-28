@@ -85,3 +85,12 @@ its tests, not the code verbatim: AbstractNote's code is written against its own
 ## Consumer side
 
 AbstractNote backlog items 0033-0036 (its track `planned/memory_convergence/`) track the migration on its side; each is blocked on the items here.
+
+## Phase 2 open decisions (2026-10-28)
+
+Memory phase 2 (the notebook projection into the one graph) is tracked by AbstractNote 0033
+(`abstractnote/docs/backlog/planned/memory_convergence/0033_converge_onto_abstractmemory.md`, section "Phase 2
+open decisions"), which carries decisions 3, 4, 8, 10, 12, 13, 14 of the memory transition report verbatim.
+Three are this package's to implement once decided: 10 (`owner_id` = principal, `scope` = kind of memory; an
+`import` revision rewriting `owner_id` on existing planes), 13 (a mind persists its own ledger id) and 14 (a 0.3.3
+patch that refuses a `vector_encoding=float32-blob` home instead of returning zero vector hits).
