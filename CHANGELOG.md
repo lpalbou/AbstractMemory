@@ -5,6 +5,13 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
+## [0.4.1] - 2026-11-03
+
+### Changed
+
+- No change to the package's API or behavior. The knowledge-graph convergence backlog track now points at the
+  memory phase 2 open decisions (AbstractNote backlog 0033).
+
 ## [0.4.0] - 2026-10-27
 
 The memory graph ([ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md), backlogs 0056-0058):
