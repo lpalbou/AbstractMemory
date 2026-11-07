@@ -14,7 +14,7 @@ per-pass novelty gates already decide that — resolutions resolve once,
 candidates are fingerprint-idempotent, cards revise only on evidence
 change) emits one signal:
 
-    {kind, phase, act, fragment (<=200 chars, every word from the
+    {kind, phase, act, fragment (whole, every word from the
      touched records), touched [record ids],
      felt: {tone, weight, scarred, bonded} — READ from accumulated
      valence, never written}
@@ -53,9 +53,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .gradation import GradationConfig, compute_gradation
-from .text_tokens import truncation_meta
 
-__all__ = ["FRAGMENT_CAP", "SIGNAL_KINDS", "TOP_K_SIGNALS",
+__all__ = ["SIGNAL_KINDS", "TOP_K_SIGNALS",
            "compose_signals", "night_feelings", "signal"]
 
 SIGNAL_KINDS = frozenset(
@@ -68,33 +67,12 @@ SIGNAL_KINDS = frozenset(
 # vocabulary) and navigation_change became changed_navigation (changed_*
 # order-consistency inside the closed set).
 
-_FRAGMENT_CAP = 200
-_TOP_K_SIGNALS = 12  # bounded composition (C constraint 4; ~7KB ceiling)
+_TOP_K_SIGNALS = 12  # bounded composition: at most 12 WHOLE signals (C constraint 4; signals_omitted counts the rest)
 
 # Public names for the params/observability surface (entity dm#112 M5:
 # the blueprint's clickable cells resolve constants via WHITELISTED
 # imports — public names only, never underscores).
 TOP_K_SIGNALS = _TOP_K_SIGNALS
-FRAGMENT_CAP = _FRAGMENT_CAP
-
-
-def _bounded_fragment(fragment: Any) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """The signal's fragment bounded at FRAGMENT_CAP, with the cut counted.
-
-    Framework ADR-0026 §1: signals ride the dream stream into reports and
-    surfaces the entity reads, so an unmarked cut would read as the record's
-    own whole words — the fragment keeps a bare "…". The COUNTS stay out of
-    the string: `_FRAGMENT_CAP` is a documented bound that `replay` relies on
-    to serve the stream verbatim, and `consolidation` splices fragments into
-    the stored dream digest, where marker words would pollute the keyword and
-    embedding surface. `touched` always names the records quoted from.
-    #[WARNING:TRUNCATION] dream-signal fragment bounded at FRAGMENT_CAP
-    """
-    text = str(fragment or "").strip()
-    if len(text) <= _FRAGMENT_CAP:
-        return text, None
-    return (text[:_FRAGMENT_CAP - 1] + "…",
-            truncation_meta(_FRAGMENT_CAP - 1, len(text)))
 
 
 def night_feelings(
@@ -182,12 +160,13 @@ def signal(
 ) -> Dict[str, Any]:
     """One deterministic signal. fragment words must come from the
     touched records (caller's contract — every builder passes titles/
-    verdicts verbatim); the cap keeps the stream stream-shaped."""
+    verdicts verbatim). The fragment is stored WHOLE (root ADR 0054: stored
+    text is never cut); a reader shortens it at display time."""
     k = str(kind or "").strip()
     if k not in SIGNAL_KINDS:
         raise ValueError(
             f"signal kind must be one of {sorted(SIGNAL_KINDS)} (got {kind!r})")
-    text, fragment_truncation = _bounded_fragment(fragment)
+    text = str(fragment or "").strip()
     out: Dict[str, Any] = {
         "kind": k,
         "phase": str(phase or "").strip(),
@@ -195,8 +174,6 @@ def signal(
         "fragment": text,
         "touched": [str(t) for t in touched if str(t or "").strip()],
     }
-    if fragment_truncation:
-        out["fragment_truncation"] = fragment_truncation
     felt = _felt(feelings or {}, felt_targets)
     if felt is not None:
         out["felt"] = felt

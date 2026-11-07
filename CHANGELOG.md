@@ -57,6 +57,12 @@ A record's understanding can be rewritten in place, and every earlier reading is
 - `dream_pass` returns `signals` and `signals_omitted`, the same stream the dream record carries (empty on a quiet
   night).
 - `journal_cold_cut` copies the version family and the task queue.
+- Stored text is never cut (root ADR 0054): a world-model card quotes its evidence gists whole (was 150
+  characters), a dream signal's `fragment` is kept whole on the dream record and in its digest (was 200; signals no
+  longer carry `fragment_truncation`, and `dream_signals.FRAGMENT_CAP` is gone), and an assertion's
+  `original_context` renders whole in the canonical text (was 400). `CANONICAL_TEXT_VERSION` is 3: record digests
+  render as before; a plain assertion with a longer context keeps its earlier text and vector until
+  `reembed_store` re-derives it. Readers shorten text at display time.
 
 ### Deprecated
 

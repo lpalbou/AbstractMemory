@@ -187,8 +187,8 @@ def _display_block(assertion: Any, requested_id: str,
         block["visit_id"] = visit_id.strip()
     # Dream signal stream (entity's serving question, c3711 — the
     # graph_id lesson applied at the pen instead of the consumer): the
-    # night's signals are BOUNDED BY CONSTRUCTION (<=12, fragments <=200
-    # chars) and fragment words come from the touched records' titles
+    # night's signals are BOUNDED BY CONSTRUCTION (<=12 whole signals) and
+    # fragment words come from the touched records' titles
     # (act-frame for diary rows — private words never enter fragments),
     # so the display block carries the full stream verbatim. Consumers
     # fold from replay display blocks; making them fetch attributes

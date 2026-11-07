@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from .models import TripleAssertion
 
-CANONICAL_TEXT_VERSION = 2
-
-# Bound mirrored from the store implementations: canonical text is a
-# retrieval/preview surface, not archival storage — full context stays in
-# `attributes` and is never lost by this preview cap.
-_CONTEXT_PREVIEW_MAX = 400
+# v3 (root ADR 0054, 2026-11-08: stored text is never cut): an ordinary
+# assertion's `original_context` renders WHOLE (v2 cut it at 400 chars + "…").
+# The canonical text is stored (`text` column, keyword index, vector), so the
+# cut was a stored cut. Record digests render exactly as in v2; only plain
+# assertions carrying a context longer than 400 chars change, and rows written
+# before keep their v2 text and vector until `reembed_store` re-derives them.
+CANONICAL_TEXT_VERSION = 3
 
 # Preview title bound shared by handle titles (reconstruct) and snapshot
 # display rows (system): one constant so the two surfaces can never drift.
@@ -79,7 +80,7 @@ def canonical_text(a: TripleAssertion) -> str:
     v2: record digest assertions render "{title}\\n{digest}\\nkeywords: …" —
     clean prose, no graph-id/predicate tokens. Ordinary assertions render
     the v1 "s p o" surface form plus typed-term hints, extractor evidence,
-    and a bounded context preview.
+    and the whole context (v3).
     """
     attrs = a.attributes if isinstance(a.attributes, dict) else {}
     if is_record_digest(a):
@@ -106,9 +107,6 @@ def canonical_text(a: TripleAssertion) -> str:
 
     ctx = attrs.get("original_context")
     if isinstance(ctx, str) and ctx.strip():
-        ctx2 = ctx.strip()
-        if len(ctx2) > _CONTEXT_PREVIEW_MAX:
-            ctx2 = ctx2[:_CONTEXT_PREVIEW_MAX] + "…"  #[WARNING:TRUNCATION] bounded canonical-text context preview (full context remains in attributes)
-        parts.append(f"context: {ctx2}")
+        parts.append(f"context: {ctx.strip()}")
 
     return "\n".join(parts)

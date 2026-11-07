@@ -93,22 +93,22 @@ _MARKER_RE = re.compile(r"\[[^\[\]]{1,120}\]")
 # the consent-vocabulary rule); the AUTHORED layer above it arrives via
 # author_world_model() and is carried forward through evidence revisions as
 # the lead with a mechanical "since then" delta.
-_GIST_COUNT = 4          # newest evidence gists quoted on the floor
-_GIST_CHARS = 150        # per-gist bound  #[WARNING:TRUNCATION] gist preview bounded (sources carry the full text)
+_GIST_COUNT = 4          # newest evidence gists quoted on the floor (each WHOLE: root ADR 0054, no stored cut)
 _DELTA_GIST_COUNT = 3    # gists quoted in an authored card's delta line
 
 
 def _evidence_gist(record: Dict[str, Any]) -> str:
     """One readable line from an evidence record: title when it carries
-    meaning, else the digest's content residue (markers stripped)."""
+    meaning, else the digest's content residue (markers stripped). Whole:
+    the card stores it, and stored text is never cut (root ADR 0054); a
+    reader shortens it at display time."""
     residue = " ".join(_MARKER_RE.sub(" ", record.get("digest") or "").split())
     title = str(record.get("title") or "").strip()
     # Generic machine titles ("exchange: …", "session reflection: …") add
     # nothing a reader learns; prefer the residue for those.
     text = residue if (not title or title.startswith(("exchange:", "session reflection:",
                                                       "Diary entry", "Consolidated:"))) else f"{title} — {residue}"
-    text = text.strip() or title or "(no words survived the compression)"
-    return text[: _GIST_CHARS - 1] + "…" if len(text) > _GIST_CHARS else text
+    return text.strip() or title or "(no words survived the compression)"
 
 
 def _evidence_scan(

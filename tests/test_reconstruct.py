@@ -74,7 +74,7 @@ def test_canonical_text_matches_all_three_stores_byte_identical() -> None:
     # v2: clean record digests (title\ndigest\nkeywords); the stores now
     # IMPORT the shared function (aliases), so parity holds by construction —
     # the battery still guards against anyone re-introducing a private copy.
-    assert CANONICAL_TEXT_VERSION == 2
+    assert CANONICAL_TEXT_VERSION == 3
     battery = [
         _assertion("g-1", "alice", "works_at", "acme", 1),
         _assertion("g-2", "alice", "authored", "Report Q3", 2, literal=True),
@@ -92,8 +92,8 @@ def test_canonical_text_matches_all_three_stores_byte_identical() -> None:
         assert in_memory_canonical_text(a) == expected
         assert sqlite_canonical_text(a) == expected
         assert lancedb_canonical_text(a) == expected
-    # Truncation shape pinned: 400 chars + ellipsis, labeled behavior.
-    assert canonical_text(battery[3]).endswith("x" * 10 + "…")
+    # v3: the context renders whole (root ADR 0054: stored text is never cut).
+    assert canonical_text(battery[3]).endswith("context: " + "x" * 401)
 
 
 # --- channels ---------------------------------------------------------------

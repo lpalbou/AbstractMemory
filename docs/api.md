@@ -88,7 +88,7 @@ Keep one embedding model per store: vectors from different models are not compar
 
 ### Canonical text
 
-- `canonical_text(a) -> str` — the shared text rendering stores embed and index (`CANONICAL_TEXT_VERSION` names the current rendering, version 2). Changing this rendering invalidates stored vectors, so it must bump the version and ride a re-embed migration.
+- `canonical_text(a) -> str` — the shared text rendering stores embed and index (`CANONICAL_TEXT_VERSION` names the current rendering, version 3: an assertion's `original_context` renders whole). Changing this rendering invalidates stored vectors, so it must bump the version and ride a re-embed migration.
 - `token_estimate(text) -> int` — the package-wide token estimate (~4 chars/token) used by budgets and handles.
 
 ---
