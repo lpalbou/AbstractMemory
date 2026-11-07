@@ -128,7 +128,7 @@ Vectors are derived data: the pass re-embeds every stored text, swaps atomically
 ## 7. What the engine will never do
 
 - **Delete**: there is no delete surface. Forgetting is decay of retrieval strength + closure records + silencing — the substrate is lossless.
-- **Compact**: no rewriting, no summarizing-in-place. Degradation through compaction cannot originate here.
+- **Compact**: no summarizing-and-replacing. A record's digest may be rewritten in place (`rewrite_digest`), and then every earlier reading stays in the journal as a version you can read (`versions`) and restore (`revert_digest`); the verbatim is never touched.
 - **Strengthen on read**: your inspection deposits nothing. Only the entity's own committed use moves its trails.
 - **Mix embedding spaces**: the pin refuses wrong-space writes and reads; the only space change is the journaled reembed repair.
 

@@ -6,6 +6,8 @@ convergence track (backlog 0050-0058).
 Amended 2026-10-27 (operator rulings on `abstractframework/untracked/memory-transition/report.md`): decisions 2 and
 13, visibility is strict ownership (report decision 5); decision 3, one graph surface with stores as connectors
 behind it, SQLite the default connector (report decision 2).
+Amended 2026-11-08 (operator ruling 2026-11-07 rule 2, confirmed in the understanding-pass decisions; backlog 0059):
+decision 6a, a record's understanding is the one mutable cell, rewritten in place with every earlier reading kept.
 
 ## Context
 
@@ -111,6 +113,16 @@ change of understanding, can be reconstructed from the ledger.
    the operations applied together and atomically (assert, close, narrow, and, as the track lands them, entity and
    alias operations). Replaying the revision log into an empty store yields the same graph. A revision is
    idempotent on its id. The in-place `close_assertion` becomes a revision op (`close`) and is journaled with it.
+6a. **A record's understanding is the one mutable cell** (amendment 2026-11-08, backlog 0059). A formed record's
+   digest (its summary text, title and keywords; a card's text; a dream's narration beside its summary) may be
+   rewritten IN PLACE, and only through `rewrite_digest`, `author_world_model` and `narrate_dream`. The record keeps
+   its subject id, its digest assertion id (usage keys on it), its edges and every journal record; the previous
+   reading is appended to the journal's `versions` family with its author, reader, ledger sources and cause, so the
+   as-recorded axis stays answerable ("what did this mind hold at R" reads the version current at R). The verbatim
+   is never touched. The keyword entry and the vector are replaced in the same transaction as the row, so recall
+   never serves words the row no longer holds. Where a home holds the graph tables, a rewrite becomes a revision op
+   (`rewrite`) logged like `close` and `narrow`; entity homes today hold no graph tables, so the version row is the
+   record of the change.
 7. **Closures carry their cause and their successor.** A closed window records `kind`
    (`retract | supersede | reinterpreted | narrowed | merged`), the `revision_id` that closed it, the replacement
    ids ("superseded by ..."), and for a ripple the source memory and hop count (ADR 0001). The window on the row and
@@ -244,7 +256,8 @@ change of understanding, can be reconstructed from the ledger.
   per plane, LanceDB optional, import of the existing plane store),
   [0058](../backlog/planned/knowledge_graph_convergence/0058_home_store_performance_indexes_vectors.md)
   (indexes, column projection, binary vectors and the matrix cache).
-- Track: [knowledge_graph_convergence/](../backlog/planned/knowledge_graph_convergence/README.md) (0050-0058);
+- Decision 6a: [0059](../backlog/planned/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md).
+- Track: [knowledge_graph_convergence/](../backlog/planned/knowledge_graph_convergence/README.md) (0050-0061);
   [ripple_wave/0001](../backlog/proposed/ripple_wave/0001_change_records_and_ripple_primitives.md).
 - Consumers: AbstractNote backlog 0033-0037 (its track `planned/memory_convergence/`); AbstractRuntime ADR 0009 and
   its memory facade item; AbstractGateway memory routes item; AbstractEntity `docs/backlog` memory provenance item.

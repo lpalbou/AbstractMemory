@@ -571,6 +571,9 @@ def dream_pass(
         # carries, filtered out of tonight's dream content.
         "carried_suppressed": 0,
         "dream_record_id": None, "created": False, "skipped_reason": None,
+        # The night's signal stream (set when a dream forms; a quiet or
+        # restful night composes none).
+        "signals": [], "signals_omitted": 0,
     }
     min_sources = 1 if continuation_only else 2
     if salience < int(salience_floor) or len(sources) < min_sources:
@@ -871,6 +874,11 @@ def dream_pass(
                                  idempotency_key=key)
     out["dream_record_id"] = gid
     out["created"] = not existed
+    # The stream the record carries, returned too (backlog 0059: the night
+    # voice read `signals` from this result and found nothing — the key only
+    # existed on the stored record's attributes).
+    out["signals"] = signals
+    out["signals_omitted"] = int(signal_stats.get("omitted") or 0)
     return out
 
 

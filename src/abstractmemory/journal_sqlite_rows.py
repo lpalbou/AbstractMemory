@@ -15,7 +15,14 @@ import sqlite3
 import warnings
 from typing import Any, Dict, Mapping, Tuple
 
-from .journal import ClosureRecord, MemoryEvent, ReconstructionTrace, ScopeBinding, ValenceEvent
+from .journal import (
+    ClosureRecord,
+    MemoryEvent,
+    ReconstructionTrace,
+    ScopeBinding,
+    UnderstandingVersion,
+    ValenceEvent,
+)
 from .seam import ActiveMemorySnapshot, _jsonify
 
 __all__ = [
@@ -131,6 +138,24 @@ def ensure_schema(cur: sqlite3.Cursor, *, prefix_tables: Mapping[str, str]) -> N
         f"CREATE INDEX IF NOT EXISTS idx_{ev}_pair ON {ev}(pair_ids_json) "
         "WHERE kind = 'co_selected'"
     )
+    # Understanding versions (backlog 0059): every reading a record has had, the original (version 0) included.
+    # One row per (record, field, version); the seq is on the journal's one axis, so the opt-in replay family
+    # "revision" interleaves with the six families exactly.
+    vs = t.get("versions")
+    if vs:
+        cur.execute(
+            f"""CREATE TABLE IF NOT EXISTS {vs} (
+              seq INTEGER PRIMARY KEY, version_id TEXT NOT NULL, record_id TEXT NOT NULL,
+              assertion_id TEXT NOT NULL, version INTEGER NOT NULL, field TEXT NOT NULL,
+              text TEXT NOT NULL, title TEXT NOT NULL, keywords_json TEXT NOT NULL,
+              digest_method TEXT NOT NULL, author_json TEXT NOT NULL, reader_json TEXT NOT NULL,
+              sources_json TEXT NOT NULL, derived_from_json TEXT NOT NULL, cause_json TEXT NOT NULL,
+              magnitude_json TEXT NOT NULL, task_id TEXT NOT NULL, scope TEXT NOT NULL,
+              owner_id TEXT NOT NULL, understood_at TEXT NOT NULL, observed_at TEXT NOT NULL)"""
+        )
+        cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{vs}_version_id ON {vs}(version_id)")
+        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{vs}_record ON {vs}(record_id, field, version)")
+        cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{vs}_assertion ON {vs}(assertion_id)")
 
 
 def json_dump(value: Any) -> str:
@@ -260,6 +285,32 @@ def row_to_valence(r: sqlite3.Row) -> ValenceEvent:
         observed_at=str(r["observed_at"]),
         provenance=dict(_json_load(r["provenance_json"], {})),
         event_id=str(r["event_id"]),
+        seq=int(r["seq"]),
+    )
+
+
+def row_to_version(r: sqlite3.Row) -> UnderstandingVersion:
+    return UnderstandingVersion(
+        record_id=str(r["record_id"]),
+        assertion_id=str(r["assertion_id"]),
+        version=int(r["version"]),
+        field=str(r["field"]),
+        text=str(r["text"]),
+        scope=str(r["scope"]),
+        owner_id=str(r["owner_id"]),
+        title=str(r["title"]),
+        keywords=_str_tuple(r["keywords_json"]),
+        digest_method=str(r["digest_method"]),
+        author=dict(_json_load(r["author_json"], {})),
+        reader=dict(_json_load(r["reader_json"], {})),
+        sources=_dict_tuple(r["sources_json"]),
+        derived_from=_str_tuple(r["derived_from_json"]),
+        cause=dict(_json_load(r["cause_json"], {})),
+        magnitude=dict(_json_load(r["magnitude_json"], {})),
+        task_id=str(r["task_id"]),
+        understood_at=str(r["understood_at"]),
+        observed_at=str(r["observed_at"]),
+        version_id=str(r["version_id"]),
         seq=int(r["seq"]),
     )
 

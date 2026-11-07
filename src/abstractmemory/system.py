@@ -74,6 +74,7 @@ from .selection import (
 from .spreading import SpreadParams
 from .store import TripleQuery, TripleStore
 from .system_access import AccessOps
+from .system_understanding import UnderstandingOps
 from .system_valence import ValenceOps
 
 __all__ = ["MemorySystem"]
@@ -92,13 +93,14 @@ _ABLATIONS = frozenset({"recency_embedding", "recency"})
 _RESERVED_PAYLOAD_TIERS = frozenset({"summary", "compact"})
 
 
-class MemorySystem(ValenceOps, AccessOps):
+class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
     """Layer-2 memory system: remember, reconstruct, commit, focus — over
     injected layer-1 parts. See the module docstring for the contracts.
     Lifecycle: `close()` releases the JOURNAL only; the store is caller-owned
     (layer 1 stays independently usable — 0024 layering decision). Mixins
     (600-line rule): ValenceOps = appraise/heal_scar/break_bond/gradation;
-    AccessOps = access_counts + self_records (folded identity core)."""
+    AccessOps = access_counts + self_records (folded identity core);
+    UnderstandingOps = in-place rewrites with versions (0059)."""
 
     def __init__(
         self, *, store: TripleStore, journal: MemoryJournal,

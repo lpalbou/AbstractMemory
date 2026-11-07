@@ -353,6 +353,9 @@ def safe_cut_seqs(
 _COPY_TABLES_FULL = (
     "memj_bindings", "memj_closures", "memj_valence",
     "memj_traces", "memj_snapshots", "memj_selected_counts", "memj_seq",
+    # Understanding versions (0059): every earlier reading of a record. A
+    # home written before them has no such table (_copy_table skips it).
+    "memj_versions",
 )
 
 
@@ -513,13 +516,14 @@ def journal_cold_cut(
             # snapshot, keep the invariant explicit — the counter must be at
             # least the highest surviving row seq, or the rebuilt journal's
             # first append collides.
+            seq_tables = ["memj_events", "memj_bindings", "memj_closures", "memj_traces",
+                          "memj_snapshots", "memj_valence"]
+            if dst.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memj_versions'").fetchone():
+                seq_tables.append("memj_versions")  # 0059: version rows share the seq axis
             max_row_seq = dst.execute(
-                "SELECT MAX(m) FROM (SELECT MAX(seq) AS m FROM memj_events "
-                "UNION ALL SELECT MAX(seq) FROM memj_bindings "
-                "UNION ALL SELECT MAX(seq) FROM memj_closures "
-                "UNION ALL SELECT MAX(seq) FROM memj_traces "
-                "UNION ALL SELECT MAX(seq) FROM memj_snapshots "
-                "UNION ALL SELECT MAX(seq) FROM memj_valence)").fetchone()[0] or 0
+                "SELECT MAX(m) FROM ("
+                + " UNION ALL ".join(f"SELECT MAX(seq) AS m FROM {t}" for t in seq_tables)
+                + ")").fetchone()[0] or 0
             dst.execute(
                 "UPDATE memj_seq SET value = ? WHERE value < ?",
                 (int(max_row_seq), int(max_row_seq)))

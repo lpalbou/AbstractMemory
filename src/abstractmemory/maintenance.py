@@ -717,7 +717,8 @@ def sleep_pass(
                            "vectorless_pairs": 0, "trail_associated": [],
                            "context_associated": [], "template_suppressed": 0,
                            "carried_suppressed": 0,
-                           "dream_record_id": None, "created": False})
+                           "dream_record_id": None, "created": False,
+                           "signals": [], "signals_omitted": 0})
 
     def _cancelled_mining(after: str) -> Dict[str, Any]:
         return _cancelled("mine_candidates_pass", after,

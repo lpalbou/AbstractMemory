@@ -1000,6 +1000,56 @@ class SQLiteTripleStore:
         )
         return int(cur.rowcount or 0) > 0
 
+    def _row_for_rewrite(self, cur: sqlite3.Cursor, assertion_id: str) -> Optional[sqlite3.Row]:
+        """The row the in-place rewrite reads INSIDE its transaction (compare-and-set input)."""
+        return cur.execute(
+            f"SELECT rowid AS _rowid, {', '.join(_ASSERTION_COLUMNS)}, text, embedding IS NOT NULL AS _vectored "
+            f"FROM {self._table} WHERE assertion_id = ?", (str(assertion_id),)).fetchone()
+
+    def _rewrite_row_on(
+        self, cur: sqlite3.Cursor, row: sqlite3.Row, assertion: TripleAssertion, *,
+        vector: Optional[List[float]], write_vector: bool,
+    ) -> None:
+        """THE ONE MUTABLE CELL (backlog 0059, operator ruling 2026-11-07): replace a record's digest row in place on
+        a caller-owned transaction — `object`, `attributes_json`, the canonical `text`, its keyword (FTS5) entry and,
+        when `write_vector`, its embedding. Terms, ids, provenance and validity are untouched, and no row is added,
+        so usage (keyed on the assertion id), edges and journal events stay byte-identical.
+
+        Keyword index: the external-content FTS5 entry is replaced (the `delete` command with the OLD indexed text,
+        then the new text under the same rowid) only for a row the index holds (at or below `fts_high_water`, not an
+        edge or bookkeeping row: the `_sync_fts_index` rule). Vector: a written vector bumps `vector_generation`, so
+        every handle's matrix (in any process) rebuilds before its next semantic query."""
+        rowid = int(row["_rowid"])
+        text = _canonical_text(assertion)
+        attrs_old = {}
+        try:
+            attrs_old = json.loads(row["attributes_json"]) if row["attributes_json"] else {}
+        except (TypeError, ValueError):
+            attrs_old = {}
+        indexed = (
+            getattr(self, "_fts_supported", False)
+            and rowid <= self._meta_cursor(cur, "fts_high_water")
+            and not (isinstance(attrs_old, dict) and (attrs_old.get("record_edge") or attrs_old.get("bookkeeping")))
+        )
+        if indexed:
+            cur.execute(
+                f"INSERT INTO {self._table}_fts ({self._table}_fts, rowid, text) VALUES ('delete', ?, ?)",
+                (rowid, str(row["text"] if row["text"] is not None else "")))
+        params: List[Any] = [
+            assertion.object,
+            json.dumps(assertion.attributes, ensure_ascii=False, separators=(",", ":")),
+            text,
+        ]
+        sql = f"UPDATE {self._table} SET object = ?, attributes_json = ?, text = ?"
+        if write_vector:
+            sql += ", embedding = ?"
+            params.append(encode_vector(vector) if vector is not None else None)
+        cur.execute(sql + " WHERE rowid = ?", (*params, rowid))
+        if indexed:
+            cur.execute(f"INSERT INTO {self._table}_fts (rowid, text) VALUES (?, ?)", (rowid, text))
+        if write_vector:
+            self._bump_vector_generation(cur)
+
     def replace_vectors(
         self, vectors: dict, pin: dict, *,
         expected_row_count: int, embedder: Optional[TextEmbedder] = None,

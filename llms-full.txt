@@ -165,7 +165,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 ## Design principles
 
-- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted/merged); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless.
+- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted/merged); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless. The one mutable cell is a record's understanding: `rewrite_digest` rewrites a digest in place and keeps every earlier reading as a version.
 - **Reads are pure**: reconstruction, inspection, replay, and the entity card deposit nothing. `commit_selection` is the only strengthening path.
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.
@@ -439,7 +439,7 @@ There is no delete surface anywhere in the package:
 - Visibility is a `ScopeBinding` fold (latest per record/scope/owner wins): `hidden` removes a record from ranked retrieval in that scope pair only; re-binding `indexed` restores it.
 - Forgetting is decay of retrieval strength plus closures and silencing. Storage never decays; only the temporal-access signal does. The global access count (`selected_count`) never decays at all.
 
-There is no compaction and no rewriting-in-place. Degradation through summarize-and-replace cannot originate in this package.
+A record's understanding is the one mutable cell. `rewrite_digest` replaces a record's digest (its summary text, title and keywords) in place: the record keeps its graph id, its digest assertion id, its edges, its usage counts and every journal record, and the previous reading stays in the journal as a version with its author, model, sources and cause (`versions`, `revert_digest`). `author_world_model` does the same for a card's text, and `narrate_dream` adds a narration beside a dream's summary. The verbatim behind a record is never touched, and nothing is compacted or summarized-and-replaced.
 
 ## Determinism and honesty
 
@@ -548,7 +548,7 @@ Conventions the engine enforces and reads:
 
 ## Sleep and dreams: consolidation without invention
 
-`dream_pass(system, scopes=..., owner_id=...)` is deterministic maintenance — zero LLM calls, no invented narratives:
+`dream_pass(system, scopes=..., owner_id=...)` is deterministic maintenance — zero LLM calls, no invented narratives (a host may later add a narration beside the dream, see [understanding](#understanding-a-reading-can-change-its-history-stays)):
 
 - `structural_report` computes the graph's shape: connected components over **semantic authored relations only** (`COMPONENT_RELATIONS`: summarizes, from_session, reflected_in, continues, derived_from, answers, supports, part_of). Mechanical co-presence edges (`CONTEXT_RELATIONS`: written_amid, mentions) and unknown predicates never define components — they count as "already associated", and unknown predicates are named in the report.
 - Bridge proposals are cross-component pairs sharing weak signals (shared facets, shared participants, or stored-vector similarity). Pairs already associated by use (warm co-use trails) or by context edges are excluded and counted.
@@ -564,6 +564,18 @@ One full night (`sleep_pass`) runs FOUR sub-phases in canonical order — **reso
 - `consolidation_pass(system, scopes=..., owner_id=...)` is the tending write: at most N (default 2) low-risk duplicate-title groups become **inactive, review-gated** `kind="summary"` candidates with `summarizes` edges to every source — idempotent by source set, sources byte-untouched, nothing merged or removed while asleep. Maintenance candidates are excluded from the next pass's inputs (tending never re-tends its own output).
 - `maintenance_due(store, journal, scopes=...)` is the deterministic cadence predicate ("enough new records, or new material plus standing fragmentation"); when to sleep — late local time, the sleep window — stays the host's clock.
 - `sleep_pass(system, scopes=..., owner_id=..., should_continue=...)` runs one full night. **Graceful cancellation** (the one-active-phase ruling: entity phases — visit/work/personal/sleep — are mutually exclusive, and entering one properly ends sleep's processes): the host wires its yield signal as the zero-arg `should_continue` callable, checked at sub-phase boundaries only — the sub-phase that started finishes its writes (never torn), later sub-phases skip with a named reason, and the result carries `cancelled_after`. A cancelled night is a valid night: every sub-phase is idempotent, so the next sleep resumes where this one stopped.
+
+## Understanding: a reading can change, its history stays
+
+Most records are formed with mechanical words: an episode's digest is an extract of the exchange, a session summary a floor, a card a briefing assembled from its evidence, a dream a template naming two records. Understanding them in better words is a later act, done by a model the host runs:
+
+- `rewrite_digest` replaces a record's digest in place. The record keeps its ids, its edges, its usage counts and its journal; recall finds the new words through the keyword index and the vector, and no longer the old ones. The previous reading is kept as a version with its author (`entity-mind`, `capability-model`, `operator`, `mechanical`), the model that wrote it, the ledger step of the call and the cause.
+- `author_world_model` does the same for a card's text while its evidence stands; new evidence still forms a new revision of the card.
+- `narrate_dream` adds the entity's narration beside a dream's mechanical summary; the summary and the night's signals stay as they were.
+- `versions` reads every reading of a record, `revert_digest` restores one as a new version, and `current_of` follows a superseded record to its live replacement.
+- The entity's own acts — diary entries, values, purposes, traits, interests and realizations — are never rewritten by these verbs.
+
+The replay stream shows a rewrite only to a consumer that asks for the `revision` family; every display block carries the current reading's provenance (`digest_method`, `digest_version`, `authored_by`, `reader`, `understood_at`), so a viewer can say who understood a memory, with which model, and when.
 
 ## Observability: the replay stream and the identity card
 
@@ -671,7 +683,7 @@ Vector results carry retrieval metadata in `attributes["_retrieval"]` (`score`, 
 
 `add(assertions) -> list[str]` (returns assertion ids), `query(q) -> list[TripleAssertion]`, `close()`.
 
-`InMemoryTripleStore` and `SQLiteTripleStore` also expose `close_assertion(assertion_id, valid_until) -> bool`: the one in-place change the stores allow. It sets `valid_until` on an assertion whose window is still open and touches nothing else (terms, provenance, attributes, the keyword index and the stored vector stay as written). It returns `True` when a row changed and `False` for an unknown id or a window that is already closed, so a replay is harmless; an empty `assertion_id` or `valid_until` raises `ValueError`. Use it when a later fact supersedes an earlier one and `TripleQuery(active_at=...)` must stop returning the old row from that moment on. The layer-2 `close_assertions` (below) is a different operation: it appends a closure record and leaves the row's window as written. In a mind written through [`MemoryGraph`](#the-memory-graph-revisions-and-provenance), a window is closed by a revision's `close` op, which writes the window and the closure together; a direct `close_assertion` call bypasses the revision log.
+`InMemoryTripleStore` and `SQLiteTripleStore` also expose `close_assertion(assertion_id, valid_until) -> bool`: the one in-place window change the stores allow (a record's digest is rewritten in place only through the layer-2 [understanding verbs](#understanding-in-place-rewrites-and-versions)). It sets `valid_until` on an assertion whose window is still open and touches nothing else (terms, provenance, attributes, the keyword index and the stored vector stay as written). It returns `True` when a row changed and `False` for an unknown id or a window that is already closed, so a replay is harmless; an empty `assertion_id` or `valid_until` raises `ValueError`. Use it when a later fact supersedes an earlier one and `TripleQuery(active_at=...)` must stop returning the old row from that moment on. The layer-2 `close_assertions` (below) is a different operation: it appends a closure record and leaves the row's window as written. In a mind written through [`MemoryGraph`](#the-memory-graph-revisions-and-provenance), a window is closed by a revision's `close` op, which writes the window and the closure together; a direct `close_assertion` call bypasses the revision log.
 
 The same two stores expose `narrow_assertion(assertion_id, valid_until) -> bool`: it moves an already-closed window **earlier** (a later, retrospective note dates the end before the recorded one). `True` when the row's `valid_until` was later and is now `valid_until`; `False` for an unknown id or a window already at or before that date (compared as instants, so mixed UTC offsets cannot move an end later; a value that is not a timestamp raises `ValueError`) (a replay, or a note that would widen it, changes nothing); `ValueError` for an open window (closing is `close_assertion`'s job) or an empty argument. Only `valid_until` moves, and the journal is not written: the revision that carries the `narrow` op records it. `LanceDBTripleStore.narrow_assertion` raises `NotImplementedError` (backlog 0057).
 
@@ -865,6 +877,7 @@ Record families (all append-only, all `seq`-stamped by the journal):
 - `ReconstructionTrace` — one recall: fingerprint, searched scopes, candidates, selected/dropped, cues, budgets, admission labels, warnings.
 - `ActiveMemorySnapshot` — see seam types.
 - `ValenceEvent` — signed appraisals and standing markers (see valence below).
+- `UnderstandingVersion` — one reading of a record (see [understanding](#understanding-in-place-rewrites-and-versions)): `record_id`, `assertion_id`, `version`, `field` (`digest` | `card` | `narration`), `text`, `title`, `keywords`, `digest_method`, `author`, `reader`, `sources`, `derived_from`, `cause`, `magnitude`, `task_id`, `understood_at`, `version_id` (deterministic), `seq`. Read with `versions(record_id=, assertion_id=, field=, until_seq=, limit=0)` (oldest first) and `revision_records(since_seq=, until_seq=)` (the replay family `revision`).
 
 Write-side idempotency (all backends): a caller-supplied id (`event_id`, `binding_id`, `closure_id`, `trace_id`, `snapshot_id`) makes replays no-ops returning the original record — at-least-once delivery never double-writes. The `MemoryJournal` protocol also exposes readers (`events`, `bindings`, `closures`, `traces`, `snapshots`, `valence_events`, `replay_records`) and the global counters `selected_count(record_id)` / `pair_selected_count((a, b))` (both accept `until_seq`).
 
@@ -915,6 +928,40 @@ Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-p
 - `close_assertions(assertion_ids, *, kind, replacement_ids=(), reason) -> list[str]` — append one closure per assertion (`retract` | `supersede` | `reinterpreted` | `merged`).
 - `close_record(record_id, *, reason, kind="retract", replacement_ids=()) -> list[str]` — close a whole record (digest and its edges) as one belief-revision act; closure ids are deterministic, so replays dedupe.
 
+### Understanding: in-place rewrites and versions
+
+Source: [`src/abstractmemory/understanding.py`](src/abstractmemory/understanding.py). A record's understanding (its digest, a card's text, a dream's narration) can be rewritten in place. The record keeps its graph id, its digest assertion id (usage keys on it), its edges and every journal record; the previous reading stays in the journal as an `UnderstandingVersion`. Version 0 is the original text, captured at the first rewrite. The verbatim behind a record is never touched, rewriting deposits nothing, and the engine never invents or edits the words it is given. All verbs are on `MemorySystem` and also exported as module functions taking the system first.
+
+- `rewrite_digest(record_id, *, text, author, cause, expected_version, reader=None, sources=(), derived_from=(), title=None, keywords=None, digest_method="authored-v1", magnitude=None, task_id=None, understood_at=None) -> dict` — replace a record's digest (and optionally its title and keywords) in place. `record_id` is the graph id or the digest assertion id. `expected_version` is a compare-and-set on the record's `digest_version` (0 for a record never rewritten). On the SQLite home one transaction appends the version rows, updates the row, replaces its keyword-index entry and writes its new vector; the vector is computed first, outside the transaction, with the store's pinned embedder.
+- `narrate_dream(dream_id, *, text, author, expected_version=0, reader=None, sources=(), cause="formation", task_id=None, understood_at=None) -> dict` — store a narration beside a dream's mechanical summary (`attributes.narration`, `narration_version`, `narration_provenance`). The digest, the signals, the keyword index and the vector are untouched. Versioned under field `narration`; the first narration is version 1.
+- `revert_digest(record_id, to_version, *, expected_version, by=None, reason=None, field=None) -> dict` — restore an earlier reading as a NEW version (cause `revert`, `reverted_to`; nothing is erased). The restored reading keeps the author and reader of the words it restores; `by` (`{kind, id}`, default the operator) is recorded in the cause.
+- `versions(record_id, *, field=None) -> list[dict]` — every reading, oldest first, each with `current: bool`. `field` defaults to the record's own (`digest`, or `card` for a world-model card); pass `field="narration"` for a dream's narrations. A record never rewritten returns `[]`.
+- `current_of(record_id) -> dict` — follow supersede and merge closures to the live record: `{record_id, graph_id, current_id, current_assertion_id, hops, chain, closed}` (`closed` names a retract/reinterpreted end).
+- `record_understanding(record_id) -> dict` — the record read a host serves: `{record_id, graph_id, assertion_id, kind, title, digest, keywords, payload_ref, observed_at, closed, current_id}` plus the provenance fields below; dreams add `narration`, `narration_by`, `narration_reader`, `narrated_at` and `signals`. Diary records raise `ValueError` (the book is their door).
+- `understanding_fields(assertion, *, version_count=None, replaced_by=None) -> dict` — the pure provenance read the replay display blocks use: `digest_method`, `digest_version`, `version_count`, `authored_by`, `reader`, `understood_at`, `cause`; cards `target`, `target_type`, `card_revision`, `source_count`; dreams `narrated`, `narration_version`; `replaced_by`. Unknown values are absent, never guessed.
+
+Provenance arguments (validated; a bad value raises `ValueError`):
+
+- `author = {"kind": ..., "id": ...}`, `kind` in `AUTHOR_KINDS`: `entity-mind` (the entity's own model), `capability-model` (a model the host names for this capability), `operator`, `mechanical`. A model author (`entity-mind`, `capability-model`) must also pass `reader = {"provider", "model", "thinking"}` and at least one ledger `SourceRef` dict in `sources` (the step of its call, ADR 0003). Readings this package did not see written (version 0 of an unlabelled record, a legacy label passed to `author_world_model`) carry author kind `unrecorded`.
+- `cause` is one of `REWRITE_CAUSES` (`formation`, `backfill`, `ripple`, `evidence`, `operator`, `revert`), or a dict `{"cause": ..., ...}` whose extra keys (`task_id`, `ripple_id`, `seed_id`, `hops`, ...) are kept verbatim.
+
+Every verb returns `{applied, outcome, reason, record_id, assertion_id, field, version, ...}`. `outcome="applied"` adds `previous_version`, `version_id`, `seq`, `captured_original`, `vector_rewritten`. `outcome="unchanged"` (byte-identical text) writes nothing and is safe to retry. `outcome="refused"` writes nothing and names its `reason`:
+
+| Reason | When |
+| --- | --- |
+| `unknown_record` | no formed record with that id |
+| `protected_kind` | `UNDERSTANDING_PROTECTED_KINDS`: diary, value, purpose, trait, interest, realization (the entity's own acts) |
+| `use_narrate_dream` / `use_author_world_model` | a dream's digest stays its summary; a card is authored through `author_world_model` |
+| `not_a_dream` | `narrate_dream` on another kind |
+| `closed` | the record is retracted or superseded (`replaced_by` names its replacement) |
+| `consolidation_record` | a ripple's `summary_role: re-understanding` record, unless the cause is `operator` |
+| `empty_text` | blank text |
+| `stale` | `expected_version` is not the record's current version (another writer moved it) |
+| `embedder_unavailable` | the store's embedder failed, or the record is vectored and the store has no embedder |
+| `unknown_version` | `revert_digest` to a version the record never had |
+
+Backends: the in-memory pair and a SQLite store whose `SQLiteJournal` shares its file (the entity-home deployment). A SQLite store with a journal elsewhere raises `ValueError`; `LanceDBTripleStore` raises `NotImplementedError`.
+
 ### Identity: spark, engram, self core, floors
 
 - `DEFAULT_SPARK_TEMPLATE` — the canonical six-key spark (`name`, `origin`, `values`, `purposes`, `traits`, `honesty`); its values include the framework-level core value `shared_vulnerability` (`SHARED_VULNERABILITY_STATEMENT`).
@@ -957,7 +1004,7 @@ Two reads serve feelings without depositing any ([`feelings_reads.py`](src/abstr
 Source: [`src/abstractmemory/consolidation.py`](src/abstractmemory/consolidation.py). Deterministic maintenance — no LLM calls; all pure reads except the single dream record a pass may form.
 
 - `structural_report(store, journal, *, scopes, as_of=None) -> dict` — pure structural analysis: connected components, isolated records, duplicate titles, facet coverage, adjacency. Components are computed over `COMPONENT_RELATIONS` edges only (semantic authored relations: `summarizes`, `from_session`, `reflected_in`, `continues`, `derived_from`, `answers`, `supports`, `part_of`). `CONTEXT_RELATIONS` (`written_amid`, `mentions`) and unknown predicates never define components; their pairs are reported as `context_pairs` (already-associated), unknown predicates are named in `unknown_relations`, and co-use trails are reported separately as `trail_pairs` — habit, never adjacency.
-- `dream_pass(system, *, scopes, owner_id, salience_floor=2, max_sources=8, embedder_similarity_floor=0.35, report_only=False, as_of=None) -> dict` — the night's DREAM sub-phase: report → cross-component bridge proposals (≥ 2 shared facets, participant + facet, or stored-vector cosine ≥ floor) and single-facet questions → at most ONE `kind="dream"` record (review-gated, `interpretation_required`, weak `mentions` edges to sources, idempotent by report fingerprint). Pairs already associated by trails or context edges are excluded and counted (`trail_associated`, `context_associated`). A quiet night forms nothing and says why. Unresolved dreams chain via `parent_dream_ids`.
+- `dream_pass(system, *, scopes, owner_id, salience_floor=2, max_sources=8, embedder_similarity_floor=0.35, report_only=False, as_of=None) -> dict` — the night's DREAM sub-phase: report → cross-component bridge proposals (≥ 2 shared facets, participant + facet, or stored-vector cosine ≥ floor) and single-facet questions → at most ONE `kind="dream"` record (review-gated, `interpretation_required`, weak `mentions` edges to sources, idempotent by report fingerprint). Pairs already associated by trails or context edges are excluded and counted (`trail_associated`, `context_associated`). A quiet night forms nothing and says why. Unresolved dreams chain via `parent_dream_ids`. The result carries the night's `signals` and `signals_omitted` (the same stream the dream record rests with; empty on a quiet night). A narration is added beside the dream's summary with `narrate_dream`.
 - `unresolved_dreams(store, *, scope, owner_id, journal=None, limit=100) -> list` — standing dreams with `continuation_state="unresolved"`, oldest first.
 - `sleep_pass(system, *, scopes, owner_id, ..., should_continue=None) -> dict` (in `maintenance.py`) — ONE FULL NIGHT in canonical order: `resolution` (`resolve_dreams_pass` — the day answers the night) → `maintenance` (`consolidation_pass` tending) → `world_models` (`world_model_pass` orientation cards) → `dream` (`dream_pass`). The result names its sub-phases (`phases` tuple) and carries each sub-phase's self-describing dict. **Graceful cancellation** (one-active-phase ruling): `should_continue` is a zero-arg host callable checked at sub-phase boundaries — the running sub-phase completes (never torn), later ones skip with `skipped_reason="cancelled: …"` and the night carries `cancelled_after`; cancelled shapes mirror the real pass shapes key-for-key. A cancelled night is valid: idempotent sub-phases mean the next sleep resumes the work.
 
@@ -969,9 +1016,10 @@ Sleep proposes; waking evidence disposes: the passes write no load-bearing edges
 
 Yields verbatim journal records as envelopes in strict seq order: `{stream, stream_version, seq, family, observed_at, scope, owner_id, trace_id, turn_id, run_id, payload, display?}`. One shape serves history scrub and live tail (poll with your last seen seq as `since_seq`; it is exclusive, `until_seq` inclusive, `None` = high-water at call time).
 
-- Families: `event`, `binding`, `closure`, `trace`, `snapshot`, `valence`. `family="host"` is reserved for host-authored markers (accepted by the filter, never emitted by this package).
+- Families: `event`, `binding`, `closure`, `trace`, `snapshot`, `valence` (the default). `family="host"` is reserved for host-authored markers (accepted by the filter, never emitted by this package). The opt-in family `revision` (`OPT_IN_FAMILIES`) is emitted only when you name it: one envelope per understanding version (payload = the `UnderstandingVersion`, `run_id` lifted from its first ledger source), so a rewrite adds nothing to the default stream.
 - Correlation keys (`trace_id`, `turn_id`, `run_id`) are always present, null when absent.
 - Enrichment resolves `{record_id, kind, title, token_estimate}` from the store (both members for `co_selected` pairs) and `graph_id` for formed records — absent when unresolvable, never fabricated. Diary display blocks arrive `{"redacted": "diary", "graph_id": ...}`: topology visible, content sealed.
+- Formed non-diary records also carry the current reading's provenance (`understanding_fields`): `digest_method`, `digest_version` (0 = never rewritten), `version_count`, `authored_by` (`{kind, id}`), `reader` (`{provider, model, thinking}`, when a model wrote it), `understood_at`, `cause`; cards add `target`, `target_type`, `card_revision`, `source_count`; dreams add `narrated`, `narration_version`; a superseded record adds `replaced_by`. `binding` and `revision` envelopes also carry the current `digest` text.
 - Under family filters or redaction, seq gaps are expected and carry no meaning. The stream is an observability surface — not a payload export, not a second source of truth, not a checkpoint format.
 
 ### Entity identity card
@@ -1013,7 +1061,7 @@ Source: [`src/abstractmemory/world_model.py`](src/abstractmemory/world_model.py)
 
 - `current_world_models(store, *, scope, owner_id, journal=None) -> dict` — target → the CURRENT (closure-folded, highest-revision) card. `journal=None` is the layer-1 read with no fold.
 - `standing_world_models(store, *, scope, owner_id, journal=None) -> dict` — target → ALL standing card assertions, revision ascending. More than one per target means an interrupted revision; the sleep pass repairs it.
-- `author_world_model(system, *, target, text, scope, owner_id, author="entity-reflection") -> dict` — replace a card's words with AUTHORED prose. The engine never invents text: this applies words authored elsewhere through the same append-only revision chain the sleep pass uses.
+- `author_world_model(system, *, target, text, scope, owner_id, author="entity-reflection", in_place=True, reader=None, sources=(), cause="formation", expected_version=None, expected_fingerprint=None, task_id=None) -> dict` — replace a card's words with AUTHORED prose. The engine never invents text. By default the card is rewritten in place: it keeps its id, revision, evidence and usage, and the previous text is kept as a version (field `card`). `author` is `{kind, id}` (see [understanding](#understanding-in-place-rewrites-and-versions)) or a label string (recorded as author kind `unrecorded`). `expected_fingerprint` is the evidence the author read: when the card's evidence changed since, the call raises `ValueError`. `in_place=False` forms revision N+1 and supersedes the prior card instead. Returns `{target, card_id, revision, applied, digest_method, in_place, version?}`; byte-identical text returns `applied=False`.
 - `world_model_update(system, *, scopes, owner_id, targets, scan_limit=400, tuning=SleepTuning()) -> dict` — the per-turn incremental update: revise the named targets' cards from a bounded newest-window evidence scan. Eventual-consistent by contract — the sleep pass normalizes over the full evidence.
 - `alias_map(store, *, scope, owner_id, journal=None) -> dict` — alias → primary target, read from current cards. Derived state; the cards are the record.
 - `alias_candidates(by_target, *, existing=None, overlap_floor=ALIAS_OVERLAP_FLOOR) -> list` — merge PROPOSALS from evidence overlap. Report data only; nothing forms.
@@ -1070,7 +1118,7 @@ Source: [`src/abstractmemory/maintenance.py`](src/abstractmemory/maintenance.py)
 - `last_maintenance_seq(store, journal, *, scopes) -> int` — journal seq of the newest sleep artifact's formation; `0` means this store has never slept.
 - `mind_mass_report(store, journal, *, scopes, days=30, bucket="day", embedder=None, now=None, vector_scan_limit=VECTOR_SCAN_LIMIT, wake_cue_kind="episode") -> dict` — formation cadence, journal mass, duplicate mass, embedding-space integrity, review backlog, and sleep recency, window-bounded. Warnings come from the closed `WARNING_WORDS` set.
 - `redigestion_candidates(system, *, scopes, limit=50, min_residue_chars=24, methods=MECHANICAL_DIGEST_METHODS) -> dict` — enumerate the labeled mechanical-digest debt, worst first. Pure read: listing a debt is not using the memories.
-- `apply_redigestion(system, entries, *, actor, digest_method="entity-authored", turn_id=None) -> dict` — apply authored digests to labeled-mechanical records.
+- `apply_redigestion(system, entries, *, actor, digest_method="entity-authored", turn_id=None) -> dict` — deprecated (emits `DeprecationWarning`): forms a NEW record per entry and supersedes the old one, so the new record starts with zero usage. Use `rewrite_digest`, which rewrites in place.
 - `RedigestionCandidate` — one labeled-mechanical record awaiting authored words, including `poverty` and `content_residue`.
 - `reembed_store(system, *, embedder, owner_id, model_id=None, marker_scope="life", reason=..., batch_size=64) -> dict` — re-derive the whole vector index and swap atomically, pin written LAST. `reembed_home` is the same call under the name the operator guide uses.
 - `read_embedding_pin(path, *, table_name="triples") -> dict | None` — a pure peek at a store file's embedding pin without opening the store. Raises `ValueError` if `table_name` is not a plain SQL identifier.
@@ -1093,6 +1141,10 @@ Closed vocabularies (frozensets) and declared tunables. Constructing a tuning ob
 | `CONSOLIDATION_PROTECTED_KINDS` | never machine-consolidated |
 | `REDIGESTION_PROTECTED_KINDS` | never machine-redigested |
 | `MECHANICAL_DIGEST_METHODS` | digest methods that count as debt |
+| `AUTHOR_KINDS` | `mechanical`, `entity-mind`, `capability-model`, `operator` — who may author a reading |
+| `REWRITE_CAUSES` | `formation`, `backfill`, `ripple`, `evidence`, `operator`, `revert` |
+| `UNDERSTANDING_PROTECTED_KINDS` | never rewritten in place: diary, value, purpose, trait, interest, realization |
+| `OPT_IN_FAMILIES` | replay families emitted only on request: `revision` |
 | `DISPOSAL_RELATIONS` | relations `confirm_relation` may create |
 | `KIND_RANKS` | ordering rank per kind (identity first, derived artifacts last) |
 | `WARNING_WORDS` | the closed warning vocabulary of `mind_mass_report` |
@@ -1280,7 +1332,8 @@ Canonicalization:
 - `TripleQuery` canonicalizes the same fields for exact matching.
 
 Append-only:
-- There is no update/delete API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
+- There is no delete API and no general update API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
+- The one mutable cell is a formed record's digest row: the layer-2 `rewrite_digest` (and `author_world_model`, `narrate_dream`) replaces its `object`, reserved attributes, canonical text, keyword entry and vector in place, in one transaction with the journal's version row (in-memory and SQLite stores; the SQLite journal must share the store's file). `LanceDBTripleStore` refuses with `NotImplementedError` (backlog 0059).
 - The in-place window changes: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window), and `narrow_assertion(assertion_id, valid_until)`, which moves an already-closed window earlier and never widens it (`ValueError` for an open window or a value that is not a timestamp; `False` for an unknown id or a date at or after the current end, compared as instants). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer `close_assertion`, and its `narrow_assertion` raises `NotImplementedError` (backlog 0057). In a mind written through `abstractmemory.graph`, both happen as a revision's `close` / `narrow` op, which also records the cause (see [`api.md`](docs/api.md#the-memory-graph-revisions-and-provenance)); a `SQLiteTripleStore` used as a graph home also holds the `memg_*` tables listed there.
 
 Timestamps are strings:
@@ -1440,7 +1493,7 @@ Vectors are derived data: the pass re-embeds every stored text, swaps atomically
 ## 7. What the engine will never do
 
 - **Delete**: there is no delete surface. Forgetting is decay of retrieval strength + closure records + silencing — the substrate is lossless.
-- **Compact**: no rewriting, no summarizing-in-place. Degradation through compaction cannot originate here.
+- **Compact**: no summarizing-and-replacing. A record's digest may be rewritten in place (`rewrite_digest`), and then every earlier reading stays in the journal as a version you can read (`versions`) and restore (`revert_digest`); the verbatim is never touched.
 - **Strengthen on read**: your inspection deposits nothing. Only the entity's own committed use moves its trails.
 - **Mix embedding spaces**: the pin refuses wrong-space writes and reads; the only space change is the journaled reembed repair.
 
@@ -1511,10 +1564,11 @@ Canonicalization (trim + lowercase) is part of the matching contract: it prevent
 
 ## Does AbstractMemory support updates or deletes?
 
-There is no update or delete API, by design:
+There is no delete API, and one bounded update, by design:
 
 - At layer 1, represent changes by adding a new assertion with fresh provenance. When the new assertion supersedes an earlier one, `close_assertion(assertion_id, valid_until)` (in-memory and SQLite stores) closes the earlier validity window in place, so `TripleQuery(active_at=...)` stops returning it from that moment; nothing else about the row changes. `narrow_assertion(assertion_id, valid_until)` moves an already-closed window earlier and never widens it. A mind written through `abstractmemory.graph` makes both changes as operations of a `Revision`, with a cause and a history.
 - At layer 2, belief revision is a closure record (`close_record` / `close_assertions`: retract, supersede with replacements, or reinterpreted when the source is read differently) — the old record leaves ranked retrieval but stays in the store and in history. Visibility can also be withdrawn per scope with a `hidden` binding and restored with `indexed`.
+- A record's understanding can be rewritten in place: `rewrite_digest` replaces its digest (and optionally title and keywords) while the record keeps its ids, edges, usage and journal; every earlier reading is kept as a version (`versions`, `revert_digest`). Cards are authored the same way through `author_world_model`; dreams gain a narration through `narrate_dream`. The verbatim is never touched.
 - Forgetting is decay of retrieval strength plus closures and silencing. The substrate is lossless; there is no compaction.
 
 ## What do `scope` and `owner_id` mean?

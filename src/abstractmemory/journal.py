@@ -404,6 +404,72 @@ class ValenceEvent:
         return _jsonify(asdict(self))
 
 
+#: The understood fields a version row may hold (backlog 0059): a record's digest, a world-model card's text, a
+#: dream's narration. The digest and the card text are the record's `object`; the narration is an attribute beside
+#: the dream's mechanical summary.
+VERSION_FIELDS = frozenset({"digest", "card", "narration"})
+
+
+@dataclass(frozen=True)
+class UnderstandingVersion:
+    """One reading of a record, kept when the record is understood again IN PLACE (backlog 0059; operator ruling
+    2026-11-07, DESIGN §4). Version 0 is the original text, captured at the first rewrite; every later version is a
+    rewrite. The record keeps its graph id, its digest assertion id, its edges, its usage and its journal events: the
+    version rows are the only trace a rewrite leaves in the journal, and the replay stream shows them only to a
+    consumer that asks for the opt-in family ``revision``.
+
+    ``author`` = {kind, id} (kind in `understanding.AUTHOR_KINDS`), ``reader`` = {provider, model, thinking} (the model
+    that wrote the words, absent for mechanical and operator text), ``sources`` = ADR 0003 `SourceRef` dicts (the
+    ledger step of the call), ``cause`` = {cause, task_id?, ripple_id?, seed_id?, hops?, reverted_to?}.
+    ``understood_at`` is when this reading was formed (version 0: the record's formation time); ``observed_at`` is the
+    journal write time, like every journal family."""
+
+    record_id: str                   # graph id (ex:<kind>-...)
+    assertion_id: str                # the digest assertion id (usage keys on it; never changes)
+    version: int
+    field: str                       # digest | card | narration
+    text: str
+    scope: str
+    owner_id: str = ""
+    title: str = ""
+    keywords: Tuple[str, ...] = ()
+    digest_method: str = ""
+    author: Dict[str, Any] = field(default_factory=dict)
+    reader: Dict[str, Any] = field(default_factory=dict)
+    sources: Tuple[Dict[str, Any], ...] = ()
+    derived_from: Tuple[str, ...] = ()
+    cause: Dict[str, Any] = field(default_factory=dict)
+    magnitude: Dict[str, Any] = field(default_factory=dict)
+    task_id: str = ""
+    understood_at: str = ""
+    observed_at: str = field(default_factory=utc_now_iso)
+    version_id: str = ""             # deterministic: understanding.version_id_for(record_id, field, version)
+    seq: int = -1                    # journal-assigned
+
+    def __post_init__(self) -> None:
+        for name in ("record_id", "assertion_id", "scope"):
+            value = getattr(self, name)
+            if not (isinstance(value, str) and value.strip()):
+                raise ValueError(f"UnderstandingVersion requires a non-empty {name}")
+            object.__setattr__(self, name, value.strip())
+        object.__setattr__(self, "scope", self.scope.lower())
+        if self.field not in VERSION_FIELDS:
+            raise ValueError(f"UnderstandingVersion.field must be one of {sorted(VERSION_FIELDS)} (got {self.field!r})")
+        if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 0:
+            raise ValueError(f"UnderstandingVersion.version must be a non-negative int (got {self.version!r})")
+        if not isinstance(self.text, str):
+            raise ValueError("UnderstandingVersion.text must be a string")
+        object.__setattr__(self, "owner_id", str(self.owner_id or "").strip())
+        object.__setattr__(self, "keywords", tuple(str(k) for k in (self.keywords or ()) if str(k or "").strip()))
+        object.__setattr__(self, "derived_from", tuple(str(d) for d in (self.derived_from or ()) if str(d or "").strip()))
+        object.__setattr__(self, "sources", tuple(dict(s) for s in (self.sources or ())))
+        for name in ("author", "reader", "cause", "magnitude"):
+            object.__setattr__(self, name, dict(getattr(self, name) or {}))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return _jsonify(asdict(self))
+
+
 class MemoryJournal(Protocol):
     """Append-only journal protocol (0017). Implementations must assign
     monotonically increasing `seq` (per journal instance, across ALL record
@@ -484,6 +550,10 @@ class MemoryJournal(Protocol):
     #   family ∈ {event, binding, closure, trace, snapshot, valence}.
     #   since_seq exclusive, until_seq inclusive (None = high-water).
     #   The replay/observability stream's substrate (a2a 0005).
+
+    # Understanding versions (backlog 0059, additive; both shipped backends implement them, a journal without them
+    # refuses `rewrite_digest` loudly): `append_version`, `versions(record_id=..., field=..., until_seq=...)`
+    # (oldest first), `revision_records(since_seq=..., until_seq=...)` (the opt-in replay family "revision").
 
     def selected_count(self, record_id: str, *, until_seq: Optional[int] = None) -> int: ...
     # ^ THE GLOBAL access count (maintainer's model): never decays.

@@ -806,17 +806,38 @@ def world_model_update(
 def author_world_model(
     system: Any, *, target: str, text: str,
     scope: str, owner_id: str,
-    author: str = "entity-reflection",
+    author: Any = "entity-reflection",
+    in_place: bool = True,
+    reader: Optional[Dict[str, Any]] = None,
+    sources: Sequence[Dict[str, Any]] = (),
+    cause: Any = "formation",
+    expected_version: Optional[int] = None,
+    expected_fingerprint: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Replace a card's words with AUTHORED prose (the distillation layer
     the mechanical floor awaits). The engine never invents text — this verb
     takes words authored elsewhere (the entity's reflection call, or an
-    operator/host LLM pass) and applies them through the same append-only
-    revision chain world_model_pass uses: new card (revision N+1, refines →
-    prior, derived_from + evidence bookkeeping CARRIED — provenance answers
-    "why do I think that" regardless of who wrote the prose), prior closed
-    kind="supersede". Cards are excluded from apply_redigestion by rail;
-    this is their one authoring door.
+    operator/host LLM pass). Cards are excluded from apply_redigestion and
+    from rewrite_digest by rail; this is their one authoring door.
+
+    IN PLACE (the default since backlog 0059, operator ruling 2026-11-07):
+    the authoring changes the WORDS, not the world, so the card keeps its id,
+    revision, evidence fingerprint, edges and usage; its text becomes the
+    authored lead and the previous text is kept as a version (field `card`,
+    `versions()`). `author` is {kind, id} (understanding.AUTHOR_KINDS; a
+    model author also passes `reader` and `sources`), or a legacy label
+    string, recorded as author kind "unrecorded" with that label as id.
+    `expected_version` is the compare-and-set on the card's digest_version
+    (None = the version read now). `expected_fingerprint` is the evidence the
+    author read: when the card's evidence changed since, the authoring is
+    refused (`ValueError` "evidence changed") — world_model_pass has formed a
+    newer revision and owes it its own authoring. Changed evidence still
+    forms revision N+1 through world_model_pass, as before.
+
+    `in_place=False` keeps the pre-0059 path: a new card (revision N+1,
+    refines → prior, derived_from + evidence bookkeeping CARRIED), prior
+    closed kind="supersede".
 
     Refusals are loud: no standing card (run world_model_pass first — an
     authored card without evidence lineage would be assertion, not
@@ -862,6 +883,34 @@ def author_world_model(
                  if isinstance(a.attributes, dict)
                  and a.attributes.get("record_edge")
                  and a.predicate == "derived_from"]
+    if expected_fingerprint is not None and str(expected_fingerprint) != str(
+            attrs.get("evidence_fingerprint") or ""):
+        raise ValueError(
+            f"evidence changed for {target_n!r} since the author read it: the "
+            "current card stands on other evidence (world_model_pass formed a "
+            "newer revision, which carries its own authoring task)")
+    if isinstance(author, dict):
+        author_d = dict(author)
+        label = str(author_d.get("id") or author_d.get("kind") or "").strip() or "unknown"
+    else:
+        label = str(author or "").strip() or "unknown"
+        author_d = {"kind": "unrecorded", "id": label}
+    if in_place:
+        from .understanding import author_card_in_place
+
+        result = author_card_in_place(
+            system, current, text=words, author=author_d, reader=reader,
+            sources=sources, cause=cause, expected_version=expected_version,
+            authored_by=label, known_ids=known, task_id=task_id)
+        if result.get("outcome") == "refused":
+            raise ValueError(
+                f"card authoring for {target_n!r} refused ({result.get('reason')}): "
+                f"{result.get('detail')}")
+        return {"target": target_n, "card_id": current.subject,
+                "revision": _revision_of(current), "applied": bool(result.get("applied")),
+                "digest_method": "authored-card-v1", "in_place": True,
+                "version": result.get("version")}
+    author = label
     revision = _revision_of(current) + 1
     display = target_n.split(":", 1)[1] if ":" in target_n else target_n
     edges: List[Tuple[str, str]] = [
@@ -905,4 +954,4 @@ def author_world_model(
             current.subject, kind="supersede", replacement_ids=[gid],
             reason=f"world-model authored revision {revision} for {target_n}")
     return {"target": target_n, "card_id": gid, "revision": revision,
-            "digest_method": "authored-card-v1"}
+            "digest_method": "authored-card-v1", "applied": True, "in_place": False}

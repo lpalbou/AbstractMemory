@@ -41,6 +41,9 @@ notes for itself) can drop their own copies.
   `MemoryGraph`, SQLite the default; S8 (connector protocol, conformance suite, LanceDB connector) landed.
 - `0058_home_store_performance_indexes_vectors.md` (ADR 0003): owner predicate, column projection, binary vectors,
   matrix cache, bounded maintenance; measured before/after.
+- `0059_record_understanding_rewrites_in_place_with_versions.md` (ADR 0003 decision 6a, the understanding pass): a
+  record's digest, a card's text and a dream's narration rewritten in place, every earlier reading kept as a version;
+  engine half implemented.
 
 ## Reading order
 

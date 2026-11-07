@@ -360,3 +360,24 @@ def test_cold_cut_compaction_history_appends_across_chained_cuts(home) -> None:
     con.close()
     assert isinstance(history, list) and len(history) == 2
     assert [h["archive_ref"] for h in history] == ["archive://first", "archive://second"]
+
+
+def test_cold_cut_keeps_understanding_versions(home) -> None:
+    """Backlog 0059: the versions family travels through a cold cut (it is not
+    event mass) and its seqs stay under the rebuilt counter."""
+    system, db, tmp = home
+    _loop, distinct = _seed_loop_life(system)
+    out = system.rewrite_digest(distinct, text="Ada and I surveyed the harbor wall; three cracks.",
+                                author={"kind": "operator", "id": "laurent"}, cause="operator",
+                                expected_version=0)
+    assert out["applied"] is True
+    before = [v.to_dict() for v in system.journal.versions(record_id=distinct)]
+    system.close()
+    dst = str(tmp / "memory.rebuilt.sqlite3")
+    journal_cold_cut(db, dst, archive_ref="archive://test")
+    rebuilt = MemorySystem(store=SQLiteTripleStore(dst), journal=SQLiteJournal(dst))
+    try:
+        assert [v.to_dict() for v in rebuilt.journal.versions(record_id=distinct)] == before
+        assert rebuilt.current_seq() >= max(v["seq"] for v in before)
+    finally:
+        rebuilt.close()

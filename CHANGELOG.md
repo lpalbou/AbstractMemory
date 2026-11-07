@@ -5,6 +5,44 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
+## [Unreleased]
+
+A record's understanding can be rewritten in place, and every earlier reading is kept (backlog 0059;
+[ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md) decision 6a).
+
+### Added
+
+- **`rewrite_digest`** (on `MemorySystem` and as a module function): replaces a record's digest, title and keywords
+  in place. The record keeps its graph id, digest assertion id, edges, usage counts and journal; its keyword entry
+  and vector are replaced in the same transaction. A compare-and-set on `digest_version` (`expected_version`)
+  refuses a stale writer. Provenance is recorded per reading: `author` (`AUTHOR_KINDS`: `entity-mind`,
+  `capability-model`, `operator`, `mechanical`), `reader` (`{provider, model, thinking}`), `sources` (ADR 0003
+  `SourceRef` dicts; mandatory for a model author), `cause` (`REWRITE_CAUSES`). Refusals are named results
+  (`stale`, `protected_kind`, `empty_text`, `embedder_unavailable`, `closed`, ...) and write nothing.
+- **`narrate_dream`**: a narration beside a dream's mechanical summary (`attributes.narration`), versioned; the
+  digest, the signals, the keyword index and the vector are untouched.
+- **`revert_digest`**, **`versions`**, **`current_of`**, **`record_understanding`**, **`understanding_fields`**.
+- **The journal's version family** `UnderstandingVersion` (`{prefix}versions`, on the journal's seq axis; version 0
+  is the original, captured at the first rewrite), with `versions(...)` and `revision_records(...)` on both journal
+  backends.
+- **Replay**: the opt-in family `revision` (`OPT_IN_FAMILIES`; the default six families are unchanged). Display
+  blocks of formed records carry `digest_method`, `digest_version`, `version_count`, `authored_by`, `reader`,
+  `understood_at`, `cause`; cards add `target`, `target_type`, `card_revision`, `source_count`; dreams `narrated`,
+  `narration_version`; superseded records `replaced_by`. Binding and revision envelopes carry the digest text.
+
+### Changed
+
+- `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is
+  kept as a version). It accepts `author` as `{kind, id}` with `reader` / `sources`, and `expected_fingerprint`
+  (refused when the card's evidence changed since). `in_place=False` keeps the revision-N+1 path.
+- `dream_pass` returns `signals` and `signals_omitted`, the same stream the dream record carries (empty on a quiet
+  night).
+- `journal_cold_cut` copies the version family.
+
+### Deprecated
+
+- `apply_redigestion` (emits `DeprecationWarning`): it forms a new record with zero usage. Use `rewrite_digest`.
+
 ## [0.4.0] - 2026-10-27
 
 The memory graph ([ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md), backlogs 0056-0058):

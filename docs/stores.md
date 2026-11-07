@@ -164,7 +164,8 @@ Canonicalization:
 - `TripleQuery` canonicalizes the same fields for exact matching.
 
 Append-only:
-- There is no update/delete API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
+- There is no delete API and no general update API. Represent changes by adding a new `TripleAssertion` with updated fields and fresh provenance.
+- The one mutable cell is a formed record's digest row: the layer-2 `rewrite_digest` (and `author_world_model`, `narrate_dream`) replaces its `object`, reserved attributes, canonical text, keyword entry and vector in place, in one transaction with the journal's version row (in-memory and SQLite stores; the SQLite journal must share the store's file). `LanceDBTripleStore` refuses with `NotImplementedError` (backlog 0059).
 - The in-place window changes: `InMemoryTripleStore` and `SQLiteTripleStore` offer `close_assertion(assertion_id, valid_until)`, which sets `valid_until` on an assertion whose window is still open (`True` when a row changed; `False` for an unknown id or an already closed window), and `narrow_assertion(assertion_id, valid_until)`, which moves an already-closed window earlier and never widens it (`ValueError` for an open window or a value that is not a timestamp; `False` for an unknown id or a date at or after the current end, compared as instants). Every other column, the keyword index and the stored vector stay as written. `LanceDBTripleStore` does not offer `close_assertion`, and its `narrow_assertion` raises `NotImplementedError` (backlog 0057). In a mind written through `abstractmemory.graph`, both happen as a revision's `close` / `narrow` op, which also records the cause (see [`api.md`](api.md#the-memory-graph-revisions-and-provenance)); a `SQLiteTripleStore` used as a graph home also holds the `memg_*` tables listed there.
 
 Timestamps are strings:

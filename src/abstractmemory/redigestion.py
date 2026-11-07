@@ -24,6 +24,14 @@ WHAT THIS MODULE IS — machinery, never an author:
   This module never invents text: an entry whose new digest is empty or
   byte-identical to the old one is refused by rail.
 
+SUPERSEDED RULING (operator, 2026-11-07, rule 2; backlog 0059): rewrites
+now happen IN PLACE — `understanding.rewrite_digest` keeps the record's id,
+edges, usage and journal, and keeps every earlier reading as a version. That
+is the path the runtime calls. `apply_redigestion` below is kept for existing
+callers and DEPRECATED (it warns): it still mints a new record with zero
+usage, the behaviour the ruling retired. The "never edit-in-place" rule
+quoted next is the pre-ruling design, kept as history.
+
 MECHANICS (append-only, the supersede vocabulary — never edit-in-place):
 one NEW record per entry (same kind, same payload_ref, same participants;
 outgoing authored edges COPIED so topology survives the repair — the
@@ -261,7 +269,16 @@ def apply_redigestion(
     is reported): unknown record; protected kind; unlabeled/authored
     method (not in `methods` semantics — the label is the consent
     marker); empty or byte-identical digest.
+
+    DEPRECATED (backlog 0059): use `rewrite_digest`, which rewrites in place
+    and keeps usage, edges and the journal; this verb warns once per call site.
     """
+    import warnings
+
+    warnings.warn(
+        "apply_redigestion is deprecated (backlog 0059): it mints a new record with zero usage; "
+        "rewrite_digest rewrites in place and keeps every earlier reading as a version",
+        DeprecationWarning, stacklevel=2)
     author = str(actor or "").strip()
     if not author:
         raise ValueError("apply_redigestion requires a non-empty actor (who authored these words?)")

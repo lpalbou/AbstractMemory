@@ -69,7 +69,7 @@ Conventions the engine enforces and reads:
 
 ## Sleep and dreams: consolidation without invention
 
-`dream_pass(system, scopes=..., owner_id=...)` is deterministic maintenance — zero LLM calls, no invented narratives:
+`dream_pass(system, scopes=..., owner_id=...)` is deterministic maintenance — zero LLM calls, no invented narratives (a host may later add a narration beside the dream, see [understanding](#understanding-a-reading-can-change-its-history-stays)):
 
 - `structural_report` computes the graph's shape: connected components over **semantic authored relations only** (`COMPONENT_RELATIONS`: summarizes, from_session, reflected_in, continues, derived_from, answers, supports, part_of). Mechanical co-presence edges (`CONTEXT_RELATIONS`: written_amid, mentions) and unknown predicates never define components — they count as "already associated", and unknown predicates are named in the report.
 - Bridge proposals are cross-component pairs sharing weak signals (shared facets, shared participants, or stored-vector similarity). Pairs already associated by use (warm co-use trails) or by context edges are excluded and counted.
@@ -85,6 +85,18 @@ One full night (`sleep_pass`) runs FOUR sub-phases in canonical order — **reso
 - `consolidation_pass(system, scopes=..., owner_id=...)` is the tending write: at most N (default 2) low-risk duplicate-title groups become **inactive, review-gated** `kind="summary"` candidates with `summarizes` edges to every source — idempotent by source set, sources byte-untouched, nothing merged or removed while asleep. Maintenance candidates are excluded from the next pass's inputs (tending never re-tends its own output).
 - `maintenance_due(store, journal, scopes=...)` is the deterministic cadence predicate ("enough new records, or new material plus standing fragmentation"); when to sleep — late local time, the sleep window — stays the host's clock.
 - `sleep_pass(system, scopes=..., owner_id=..., should_continue=...)` runs one full night. **Graceful cancellation** (the one-active-phase ruling: entity phases — visit/work/personal/sleep — are mutually exclusive, and entering one properly ends sleep's processes): the host wires its yield signal as the zero-arg `should_continue` callable, checked at sub-phase boundaries only — the sub-phase that started finishes its writes (never torn), later sub-phases skip with a named reason, and the result carries `cancelled_after`. A cancelled night is a valid night: every sub-phase is idempotent, so the next sleep resumes where this one stopped.
+
+## Understanding: a reading can change, its history stays
+
+Most records are formed with mechanical words: an episode's digest is an extract of the exchange, a session summary a floor, a card a briefing assembled from its evidence, a dream a template naming two records. Understanding them in better words is a later act, done by a model the host runs:
+
+- `rewrite_digest` replaces a record's digest in place. The record keeps its ids, its edges, its usage counts and its journal; recall finds the new words through the keyword index and the vector, and no longer the old ones. The previous reading is kept as a version with its author (`entity-mind`, `capability-model`, `operator`, `mechanical`), the model that wrote it, the ledger step of the call and the cause.
+- `author_world_model` does the same for a card's text while its evidence stands; new evidence still forms a new revision of the card.
+- `narrate_dream` adds the entity's narration beside a dream's mechanical summary; the summary and the night's signals stay as they were.
+- `versions` reads every reading of a record, `revert_digest` restores one as a new version, and `current_of` follows a superseded record to its live replacement.
+- The entity's own acts — diary entries, values, purposes, traits, interests and realizations — are never rewritten by these verbs.
+
+The replay stream shows a rewrite only to a consumer that asks for the `revision` family; every display block carries the current reading's provenance (`digest_method`, `digest_version`, `authored_by`, `reader`, `understood_at`), so a viewer can say who understood a memory, with which model, and when.
 
 ## Observability: the replay stream and the identity card
 

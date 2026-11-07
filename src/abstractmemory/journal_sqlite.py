@@ -50,6 +50,7 @@ from .journal import (
     MemoryEvent,
     ReconstructionTrace,
     ScopeBinding,
+    UnderstandingVersion,
     ValenceEvent,
     fold_bindings,
 )
@@ -76,6 +77,7 @@ from .journal_sqlite_rows import (
     row_to_snapshot,
     row_to_trace,
     row_to_valence,
+    row_to_version,
 )
 from .seam import ActiveMemorySnapshot
 
@@ -103,6 +105,7 @@ class SQLiteJournal:
         self._t_closures, self._t_traces = f"{prefix}closures", f"{prefix}traces"
         self._t_snapshots, self._t_valence = f"{prefix}snapshots", f"{prefix}valence"
         self._t_seq, self._t_counts = f"{prefix}seq", f"{prefix}selected_counts"
+        self._t_versions = f"{prefix}versions"
 
         self._lock = threading.RLock()
         # isolation_level=None -> autocommit + explicit BEGIN/COMMIT in _txn
@@ -157,6 +160,7 @@ class SQLiteJournal:
             "closures": self._t_closures, "traces": self._t_traces,
             "snapshots": self._t_snapshots, "valence": self._t_valence,
             "seq": self._t_seq, "counts": self._t_counts,
+            "versions": self._t_versions,
         }
 
     # -- write plumbing ---------------------------------------------------------
@@ -536,6 +540,73 @@ class SQLiteJournal:
         rows = self._select_rows(self._t_valence, where, params, order="DESC",
                                  limit=_effective_limit(limit, 512))
         return [row_to_valence(r) for r in rows]
+
+    # -- understanding versions (backlog 0059) ----------------------------------------
+
+    def append_version(self, version: UnderstandingVersion) -> UnderstandingVersion:
+        """Append one version row in its own transaction (stores that cannot share this file's transaction)."""
+        _require_instance(version, UnderstandingVersion, "append_version")
+        with self._txn() as cur:
+            return self._append_version_on(cur, version)
+
+    def _append_version_on(self, cur: sqlite3.Cursor, version: UnderstandingVersion) -> UnderstandingVersion:
+        """`append_version` on a caller-owned transaction of THIS file (the in-place rewrite runs it on the store's
+        connection, so the row, its keyword entry, its vector and the version commit together). A supplied
+        version_id already present is a replay: the original row is returned and nothing is written."""
+        supplied = str(version.version_id or "").strip()
+        if not supplied:
+            raise ValueError("UnderstandingVersion.version_id must be set (deterministic per record, field, version)")
+        row = self._find_by_id(cur, self._t_versions, "version_id", supplied)
+        if row is not None:
+            return row_to_version(row)
+        from dataclasses import replace as _replace
+
+        stored = _replace(version, seq=self._allocate_seqs(cur, 1))
+        self._insert(cur, self._t_versions, {
+            "seq": stored.seq, "version_id": stored.version_id, "record_id": stored.record_id,
+            "assertion_id": stored.assertion_id, "version": stored.version, "field": stored.field,
+            "text": stored.text, "title": stored.title, "keywords_json": _json_dump(list(stored.keywords)),
+            "digest_method": stored.digest_method, "author_json": _json_dump(stored.author),
+            "reader_json": _json_dump(stored.reader), "sources_json": _json_dump(list(stored.sources)),
+            "derived_from_json": _json_dump(list(stored.derived_from)), "cause_json": _json_dump(stored.cause),
+            "magnitude_json": _json_dump(stored.magnitude), "task_id": stored.task_id, "scope": stored.scope,
+            "owner_id": stored.owner_id, "understood_at": stored.understood_at, "observed_at": stored.observed_at,
+        })
+        return stored
+
+    def versions(
+        self, *, record_id: Optional[str] = None, assertion_id: Optional[str] = None,
+        field: Optional[str] = None, until_seq: Optional[int] = None, limit: int = 0,
+    ) -> List[UnderstandingVersion]:
+        """Version rows, OLDEST first (version order within a record). `limit` <= 0 = all (a record has few)."""
+        where: List[str] = []
+        params: List[Any] = []
+        if record_id is not None:
+            where.append("record_id = ?")
+            params.append(str(record_id).strip())
+        if assertion_id is not None:
+            where.append("assertion_id = ?")
+            params.append(str(assertion_id).strip())
+        if field is not None:
+            where.append("field = ?")
+            params.append(str(field).strip())
+        if until_seq is not None:
+            where.append("seq <= ?")
+            params.append(int(until_seq))
+        rows = self._select_rows(self._t_versions, where, params, order="ASC",
+                                 limit=int(limit) if int(limit) > 0 else None)
+        return [row_to_version(r) for r in rows]
+
+    def revision_records(self, *, since_seq: int = 0, until_seq: Optional[int] = None):
+        """The opt-in replay family "revision": version rows in seq order (since exclusive, until inclusive)."""
+        with self._lock:
+            hi = int(until_seq) if until_seq is not None else self.current_seq()
+            rows = self._conn.cursor().execute(
+                f"SELECT * FROM {self._t_versions} WHERE seq > ? AND seq <= ? ORDER BY seq ASC",
+                (int(since_seq), hi),
+            ).fetchall()
+        for r in rows:
+            yield "revision", row_to_version(r)
 
     # -- replay stream (a2a 0005) ------------------------------------------------
 

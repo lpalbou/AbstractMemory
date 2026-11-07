@@ -36,6 +36,7 @@ from .journal import (
     MemoryEvent,
     ReconstructionTrace,
     ScopeBinding,
+    UnderstandingVersion,
     ValenceEvent,
     fold_bindings,
 )
@@ -156,6 +157,9 @@ class InMemoryJournal:
         # _selected_counts for records, cumulative co_selected count per
         # canonical pair — never decays, rebuildable from events.
         self._pair_counts: dict[tuple, int] = {}
+        # Understanding versions (backlog 0059): every reading of a record, the original included.
+        self._versions: List[UnderstandingVersion] = []
+        self._versions_by_id: dict[str, UnderstandingVersion] = {}
         # Volatility must be loud: as_of replay anchors (seq) and the whole
         # attention substrate vanish on process exit. Display is deduped per
         # call site by the standard warnings filter ("once per process").
@@ -443,6 +447,51 @@ class InMemoryJournal:
                 if max_n is not None and len(out) >= max_n:
                     break
             return out
+
+    # -- understanding versions (backlog 0059) ---------------------------------
+
+    def append_version(self, version: UnderstandingVersion) -> UnderstandingVersion:
+        """Append one version row (SQLiteJournal parity: a supplied version_id already present is a replay that
+        returns the original row and writes nothing)."""
+        _require_instance(version, UnderstandingVersion, "append_version")
+        supplied = str(version.version_id or "").strip()
+        if not supplied:
+            raise ValueError("UnderstandingVersion.version_id must be set (deterministic per record, field, version)")
+        with self._lock:
+            existing = self._versions_by_id.get(supplied)
+            if existing is not None:
+                return copy.deepcopy(existing)
+            self._seq += 1
+            stored = replace(copy.deepcopy(version), seq=self._seq)
+            self._versions.append(stored)
+            self._versions_by_id[supplied] = stored
+            return copy.deepcopy(stored)
+
+    def versions(
+        self, *, record_id: Optional[str] = None, assertion_id: Optional[str] = None,
+        field: Optional[str] = None, until_seq: Optional[int] = None, limit: int = 0,
+    ) -> List[UnderstandingVersion]:
+        """Version rows, OLDEST first (SQLiteJournal parity). `limit` <= 0 = all."""
+        with self._lock:
+            out = [
+                v for v in self._versions
+                if (record_id is None or v.record_id == str(record_id).strip())
+                and (assertion_id is None or v.assertion_id == str(assertion_id).strip())
+                and (field is None or v.field == str(field).strip())
+                and (until_seq is None or v.seq <= int(until_seq))
+            ]
+            if int(limit) > 0:
+                out = out[: int(limit)]
+            return copy.deepcopy(out)
+
+    def revision_records(self, *, since_seq: int = 0, until_seq: Optional[int] = None):
+        """The opt-in replay family "revision": version rows in seq order (since exclusive, until inclusive)."""
+        lo = int(since_seq)
+        with self._lock:
+            hi = int(until_seq) if until_seq is not None else self._seq
+            rows = [v for v in self._versions if lo < v.seq <= hi]
+        for v in rows:
+            yield "revision", copy.deepcopy(v)
 
     # -- replay stream (a2a 0005) --------------------------------------------
 

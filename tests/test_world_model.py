@@ -483,21 +483,29 @@ def test_author_world_model_replaces_words_and_keeps_provenance(system) -> None:
         text="Ada is the archivist I built the index with; steady, precise, "
              "kind under pressure. I trust her reading of the stacks.",
         scope=SCOPE, owner_id=OWNER, author="entity-reflection")
-    assert authored["revision"] == 2
+    # IN PLACE (backlog 0059 default): the words changed, not the world —
+    # same card id, same revision; the floor text is kept as version 0.
+    assert authored["revision"] == 1 and authored["in_place"] is True
+    assert authored["card_id"] == floor_id
     card = resolve_digest_assertion(system.store, authored["card_id"])
     assert str(card.object).startswith("Ada is the archivist")
     assert card.attributes["digest_method"] == "authored-card-v1"
+    assert card.attributes["authored_by"] == "entity-reflection"
+    history = system.versions(floor_id)
+    assert [v["version"] for v in history] == [0, 1]
+    assert history[0]["digest_method"] == "mechanical-card-v2"
+    assert history[1]["author"] == {"kind": "unrecorded", "id": "entity-reflection"}
     # Provenance carried: derived_from edges to the ORIGINAL evidence.
     from abstractmemory import TripleQuery
     edges = [a for a in system.store.query(TripleQuery(subject=card.subject, limit=0))
              if isinstance(a.attributes, dict) and a.attributes.get("record_edge")]
     linked = {a.object for a in edges if a.predicate == "derived_from"}
     assert linked == set(ids)
-    assert any(a.predicate == "refines" and a.object == floor_id for a in edges)
-    # Current-wins: only the authored card stands.
+    # Current-wins: the one card stands (nothing was closed).
     current = current_world_models(system.store, scope=SCOPE, owner_id=OWNER,
                                    journal=system.journal)["person:ada"]
     assert current.subject == authored["card_id"]
+    assert not system.journal.closures(assertion_id=card.assertion_id, limit=1)
     # Idempotent re-apply of the SAME words reads as SUCCESS-ALREADY-CURRENT
     # (adversary finding 10: a crash-retry of an authoring that landed must
     # not be indistinguishable from a caller error), applies nothing.
@@ -505,7 +513,34 @@ def test_author_world_model_replaces_words_and_keeps_provenance(system) -> None:
                                text=str(card.object), scope=SCOPE, owner_id=OWNER)
     assert again["applied"] is False
     assert again["card_id"] == authored["card_id"]
-    assert again["revision"] == 2
+    assert again["revision"] == 1
+    # The author read evidence that has since changed: refused, nothing written.
+    with pytest.raises(ValueError, match="evidence changed"):
+        author_world_model(system, target="person:ada", text="other words",
+                           scope=SCOPE, owner_id=OWNER, expected_fingerprint="0" * 64)
+
+
+def test_author_world_model_legacy_chain_mints_revision_n_plus_one(system) -> None:
+    """`in_place=False` keeps the pre-0059 path: revision N+1, refines ->
+    prior, prior closed kind=supersede, evidence lineage carried."""
+    ids = _seed_ada(system)
+    out = world_model_pass(system, scopes=SCOPES, owner_id=OWNER, tuning=TUNING)
+    floor_id = out["formed"][0]["card_id"]
+    authored = author_world_model(
+        system, target="person:ada", text="Ada, the archivist, in my words.",
+        scope=SCOPE, owner_id=OWNER, author="entity-reflection", in_place=False)
+    assert authored["revision"] == 2 and authored["in_place"] is False
+    assert authored["card_id"] != floor_id
+    from abstractmemory import TripleQuery
+    card = resolve_digest_assertion(system.store, authored["card_id"])
+    edges = [a for a in system.store.query(TripleQuery(subject=card.subject, limit=0))
+             if isinstance(a.attributes, dict) and a.attributes.get("record_edge")]
+    assert {a.object for a in edges if a.predicate == "derived_from"} == set(ids)
+    assert any(a.predicate == "refines" and a.object == floor_id for a in edges)
+    current = current_world_models(system.store, scope=SCOPE, owner_id=OWNER,
+                                   journal=system.journal)["person:ada"]
+    assert current.subject == authored["card_id"]
+    assert system.current_of(floor_id)["current_id"] == authored["card_id"]
 
 
 def test_authored_lead_survives_new_evidence_with_one_delta(system) -> None:

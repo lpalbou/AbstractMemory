@@ -141,6 +141,13 @@ class LanceDBTripleStore:
         `close_assertion`); the one home store of ADR 0003 is SQLite."""
         raise NotImplementedError("narrow_assertion: LanceDB store; see backlog 0057")
 
+    def rewrite_digest_in_place(self, *args: Any, **kwargs: Any) -> None:
+        """Not supported: the in-place understanding rewrite (backlog 0059) needs one transaction over the row, its
+        keyword entry, its vector and the journal's version row; the home store of ADR 0003 is SQLite."""
+        raise NotImplementedError(
+            "rewrite_digest: the LanceDB store cannot rewrite a record in place (backlog 0059); "
+            "use a SQLite home (ADR 0003 decision 3)")
+
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
         rows: list[dict[str, Any]] = []
         ids: List[str] = []

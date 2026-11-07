@@ -32,6 +32,20 @@ BINDING envelopes of formed records also carry display.edges =
 display-only additive per the frozen-v1 rules — the view draws "known"
 links distinct from lit usage trails; diary-redacted blocks never carry
 edges).
+
+UNDERSTANDING (backlog 0059, additive under the frozen-v1 rules): a record's
+digest is now the one mutable cell (rewritten in place, every earlier reading
+kept as a version). Display blocks of formed non-diary records carry the
+current reading's provenance (`understanding.understanding_fields`:
+digest_method, digest_version, version_count, authored_by, reader,
+understood_at; cards: target, target_type, card_revision, source_count;
+dreams: narrated, narration_version; replaced_by for a superseded record);
+BINDING envelopes also carry the current `digest` text (one per formation,
+the edges precedent). A rewrite mints no record and appends no row to the six
+families: its version row is shown only to a consumer that asks for the
+OPT-IN family "revision" (`OPT_IN_FAMILIES`; `families=None` keeps the six),
+whose envelopes carry the version verbatim as payload, its digest text in
+the display block, and the run id of its first ledger source.
 """
 
 from __future__ import annotations
@@ -42,6 +56,7 @@ from .canonical_text import handle_digest, token_estimate
 from .records import resolve_digest_assertion
 
 __all__ = [
+    "OPT_IN_FAMILIES",
     "REPLAY_FAMILIES",
     "REPLAY_STREAM",
     "REPLAY_STREAM_VERSION",
@@ -55,6 +70,8 @@ REPLAY_FAMILIES = ("event", "binding", "closure", "trace", "snapshot", "valence"
 # Reserved in stream v1 for gateway-authored transport markers; memory never
 # emits it (see module docstring).
 RESERVED_FAMILIES = frozenset({"host"})
+# Emitted only when asked for by name (backlog 0059): the understanding versions.
+OPT_IN_FAMILIES = ("revision",)
 
 
 def _lift_scope_owner(family: str, record: Any, journal: Any, store: Any,
@@ -65,7 +82,7 @@ def _lift_scope_owner(family: str, record: Any, journal: Any, store: Any,
     minimally (flagged in 0005): snapshots and closures carry NO scope
     fields in their payloads — snapshots lift through their TRACE, closures
     through their ASSERTION (store lookup); ("", "") when unresolvable."""
-    if family in ("event", "binding", "valence"):
+    if family in ("event", "binding", "valence", "revision"):
         return record.scope, record.owner_id
     if family == "closure":
         a = (memo.resolve(record.assertion_id) if memo is not None
@@ -100,13 +117,18 @@ def _lift_correlation(family: str, record: Any) -> tuple:
 
     if family in ("trace", "snapshot"):
         return record.trace_id or None, None, None
+    if family == "revision":
+        run = next((str(src.get("run_id")) for src in (record.sources or ())
+                    if isinstance(src, dict) and src.get("run_id")), None)
+        return None, None, run
     if family in ("event", "valence"):
         return record.trace_id or None, _key("turn_id"), _key("run_id")
     # binding | closure: correlation rides provenance only.
     return _key("trace_id"), _key("turn_id"), _key("run_id")
 
 
-def _display_block(assertion: Any, requested_id: str) -> Dict[str, Any]:
+def _display_block(assertion: Any, requested_id: str,
+                   memo: Optional["_ExportMemo"] = None) -> Dict[str, Any]:
     attrs = assertion.attributes if isinstance(assertion.attributes, dict) else {}
     # graph_id (0005 observer delta, additive): a formed-graph row's SUBJECT
     # is a record graph id — digest rows (record_kind) AND edge rows
@@ -173,25 +195,63 @@ def _display_block(assertion: Any, requested_id: str) -> Dict[str, Any]:
     # through a second door would re-create the title-parsing era.
     if attrs.get("record_kind") == "dream" and isinstance(attrs.get("signals"), list):
         block["signals"] = attrs["signals"]
+    if attrs.get("record_kind"):
+        # The current reading's provenance (backlog 0059, additive): the badge
+        # an app shows ("Summary by <mind> (<model>), <date>" or "Extract
+        # (mechanical)") without inferring it from the text's shape.
+        from .understanding import understanding_fields
+
+        count = memo.version_count(assertion) if memo is not None else None
+        replaced = memo.replaced_by(assertion) if memo is not None else None
+        block.update(understanding_fields(assertion, version_count=count, replaced_by=replaced))
     return block
 
 
 class _ExportMemo:
     """Per-export resolve/edges caches (entity's c2394 profiling: the N+1
     resolve_digest_assertion + per-binding edge query were ~45% of stream
-    generation on a lived home). Records are IMMUTABLE and journal rows
-    only ever reference records that already exist at their seq, so a
-    per-export memo is exactly correct — and it additionally gives one
-    export ONE consistent edge snapshot. Scoped to a single export_replay
-    call (never module-global): size is bounded by the home's distinct
-    record count, and a fresh export always sees the current store."""
+    generation on a lived home). Journal rows only ever reference records
+    that already exist at their seq, and a record's only mutable cell (its
+    digest, backlog 0059) is read once per export, so a per-export memo is
+    exactly correct and gives one export ONE consistent snapshot of
+    records, edges, version counts and replacements. Scoped to a single
+    export_replay call (never module-global): size is bounded by the home's
+    distinct record count, and a fresh export always sees the current store."""
 
-    __slots__ = ("store", "resolved", "edges")
+    __slots__ = ("store", "journal", "resolved", "edges", "counts", "replacements")
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, journal: Any = None) -> None:
         self.store = store
+        self.journal = journal
         self.resolved: Dict[str, Any] = {}
         self.edges: Dict[str, Any] = {}
+        self.counts: Dict[str, int] = {}
+        self.replacements: Dict[str, Any] = {}
+
+    def version_count(self, a: Any) -> Optional[int]:
+        """How many readings the record has had (0 = never rewritten); None when the journal keeps no versions."""
+        key = str(a.subject)
+        if key not in self.counts:
+            reader = getattr(self.journal, "versions", None)
+            if not callable(reader):
+                return None
+            kind = str((a.attributes or {}).get("record_kind") or "")
+            field = "card" if kind == "world_model" else "digest"
+            self.counts[key] = len(reader(record_id=key, field=field))
+        return self.counts[key]
+
+    def replaced_by(self, a: Any) -> Any:
+        """The graph ids that replaced this record (its newest supersede/merge closure), or None."""
+        aid = str(a.assertion_id or "")
+        if aid not in self.replacements:
+            found = None
+            if self.journal is not None and aid:
+                for c in self.journal.closures(assertion_id=aid, limit=0):
+                    if c.kind in ("supersede", "merged") and c.replacement_ids:
+                        found = list(c.replacement_ids)
+                        break
+            self.replacements[aid] = found
+        return self.replacements[aid]
 
     def resolve(self, rid: str) -> Any:
         if rid in self.resolved:
@@ -231,7 +291,7 @@ def _enrich(family: str, record: Any, store: Any,
             for rid in record.pair_ids:
                 a = resolve(rid)
                 if a is not None:
-                    members.append(_display_block(a, rid))
+                    members.append(_display_block(a, rid, memo))
             return {"pair": members} if members else None
         rid = record.record_id
     elif family == "binding":
@@ -240,6 +300,8 @@ def _enrich(family: str, record: Any, store: Any,
         rid = record.assertion_id
     elif family == "valence":
         rid = record.target_id  # free identity strings usually unresolvable
+    elif family == "revision":
+        rid = record.record_id
     else:
         return None  # traces/snapshots: payload already carries display truth
     if not rid:
@@ -247,7 +309,12 @@ def _enrich(family: str, record: Any, store: Any,
     a = resolve(rid)
     if a is None:
         return None
-    block = _display_block(a, rid)
+    block = _display_block(a, rid, memo)
+    if family in ("binding", "revision") and "redacted" not in block:
+        # The current words ride the formation envelope (one per record, the
+        # edges precedent) and the rewrite envelope; usage envelopes stay
+        # digest-free (they are the stream's bulk).
+        block["digest"] = handle_digest(a)
     if family == "binding":
         # Display-only, additive (0007 ask 2): a formed record's binding
         # envelope carries its FORMATION-TIME edges so the view can draw
@@ -308,11 +375,13 @@ def export_replay(
     # Reserved families are ACCEPTED (they yield nothing from memory — the
     # gateway interleaves them transport-side); unknown names still raise.
     unknown = [f for f in wanted_families
-               if f not in REPLAY_FAMILIES and f not in RESERVED_FAMILIES]
+               if f not in REPLAY_FAMILIES and f not in RESERVED_FAMILIES
+               and f not in OPT_IN_FAMILIES]
     if unknown:
         raise ValueError(
             f"unknown replay families {unknown} "
-            f"(valid: {list(REPLAY_FAMILIES)}; reserved: {sorted(RESERVED_FAMILIES)})"
+            f"(valid: {list(REPLAY_FAMILIES)}; opt-in: {list(OPT_IN_FAMILIES)}; "
+            f"reserved: {sorted(RESERVED_FAMILIES)})"
         )
     family_set = frozenset(wanted_families)
     scope_f = str(scope or "").strip().lower() or None
@@ -321,9 +390,19 @@ def export_replay(
     # Per-export memo (entity c2394: N+1 resolves were ~45% of generation
     # on a lived home) — one resolve/edge-query per distinct record per
     # export, exactly correct over immutable records (_ExportMemo doc).
-    memo = _ExportMemo(store)
+    memo = _ExportMemo(store, journal)
 
-    for family, record in journal.replay_records(since_seq=int(since_seq), until_seq=hi):
+    records: Any = journal.replay_records(since_seq=int(since_seq), until_seq=hi)
+    if "revision" in family_set:
+        revisions = getattr(journal, "revision_records", None)
+        if not callable(revisions):
+            raise ValueError("the replay family 'revision' needs a journal with understanding versions (0059)")
+        import heapq
+
+        records = heapq.merge(records, revisions(since_seq=int(since_seq), until_seq=hi),
+                              key=lambda item: item[1].seq)
+
+    for family, record in records:
         if family not in family_set:
             continue
         lifted_scope, lifted_owner = _lift_scope_owner(family, record, journal, store, memo)

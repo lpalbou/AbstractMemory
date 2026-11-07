@@ -191,6 +191,35 @@ class InMemoryTripleStore:
                 return True
         return False
 
+    def _rewrite_row(
+        self, assertion_id: str, assertion: TripleAssertion, *,
+        vector: Optional[List[float]], write_vector: bool,
+    ) -> bool:
+        """The in-place digest rewrite (backlog 0059; SQLite parity of `_rewrite_row_on`): the row keeps its
+        position and id; `object`/`attributes` change and, when `write_vector`, the vector. The caller holds the
+        store lock (it re-reads the row for its compare-and-set under the same lock). False for an unknown id."""
+        rid = str(assertion_id or "").strip()
+        for row in self._rows:
+            if row.get("assertion_id") != rid:
+                continue
+            row["assertion"] = assertion
+            if write_vector:
+                if vector is None:
+                    row.pop(self._vector_column, None)
+                else:
+                    row[self._vector_column] = [float(x) for x in vector]
+            return True
+        return False
+
+    def _stored_row(self, assertion_id: str) -> Optional[TripleAssertion]:
+        """The stored assertion (with its id) for one row, under the caller's lock; None when unknown."""
+        rid = str(assertion_id or "").strip()
+        for row in self._rows:
+            if row.get("assertion_id") == rid:
+                a = row.get("assertion")
+                return _result_copy(a, rid) if isinstance(a, TripleAssertion) else None
+        return None
+
     def close(self) -> None:
         return None
 

@@ -66,7 +66,7 @@ There is no delete surface anywhere in the package:
 - Visibility is a `ScopeBinding` fold (latest per record/scope/owner wins): `hidden` removes a record from ranked retrieval in that scope pair only; re-binding `indexed` restores it.
 - Forgetting is decay of retrieval strength plus closures and silencing. Storage never decays; only the temporal-access signal does. The global access count (`selected_count`) never decays at all.
 
-There is no compaction and no rewriting-in-place. Degradation through summarize-and-replace cannot originate in this package.
+A record's understanding is the one mutable cell. `rewrite_digest` replaces a record's digest (its summary text, title and keywords) in place: the record keeps its graph id, its digest assertion id, its edges, its usage counts and every journal record, and the previous reading stays in the journal as a version with its author, model, sources and cause (`versions`, `revert_digest`). `author_world_model` does the same for a card's text, and `narrate_dream` adds a narration beside a dream's summary. The verbatim behind a record is never touched, and nothing is compacted or summarized-and-replaced.
 
 ## Determinism and honesty
 
