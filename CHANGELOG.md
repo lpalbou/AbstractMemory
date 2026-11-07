@@ -30,6 +30,17 @@ A record's understanding can be rewritten in place, and every earlier reading is
   `understood_at`, `cause`; cards add `target`, `target_type`, `card_revision`, `source_count`; dreams `narrated`,
   `narration_version`; superseded records `replaced_by`. Binding and revision envelopes carry the digest text.
 
+- **The memory task queue** (backlog 0060): `MemorySystem(task_queue=True)` keeps `memq_tasks` / `memq_log` /
+  `memq_windows` in the home's file. Formation enqueues `digest.rewrite` for labelled-mechanical records,
+  `world_model_pass` enqueues `card.author`, `dream_pass` enqueues `dream.narrate`. `system.tasks`
+  (`MemoryTaskQueue`): `enqueue`, `select_for_window(budget_seconds, sensitivity)` (activation-driven: the ADR 0001
+  logistic gate over each task's strength, strongest first, bounded by the wall-time budget and a hard cap, every
+  live task selected or left out with a reason), `claim` / `ack` / `release` (leases, attempts, defer without
+  spending an attempt), `left_out`. `understanding_debt`, `enqueue_debt` (the backfill, dry-run by default) and
+  `task_packet` on `MemorySystem`. The understanding verbs accept `task_id=` and settle the task in their own
+  transaction. `activation_gate.py` holds the gate and every threshold with its calibration.
+- `maintenance_due(..., tasks=)` reports pending memory tasks and is due when ripple or night-only work is pending.
+
 ### Changed
 
 - `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is
@@ -37,7 +48,7 @@ A record's understanding can be rewritten in place, and every earlier reading is
   (refused when the card's evidence changed since). `in_place=False` keeps the revision-N+1 path.
 - `dream_pass` returns `signals` and `signals_omitted`, the same stream the dream record carries (empty on a quiet
   night).
-- `journal_cold_cut` copies the version family.
+- `journal_cold_cut` copies the version family and the task queue.
 
 ### Deprecated
 

@@ -874,6 +874,12 @@ def dream_pass(
                                  idempotency_key=key)
     out["dream_record_id"] = gid
     out["created"] = not existed
+    if not existed and getattr(system, "tasks", None) is not None:
+        # A formed dream owes a narration (0060), strength from its salience.
+        from .memory_tasks import enqueue_dream
+
+        enqueue_dream(system, gid, scope=scopes[0][0], owner_id=owner_id, salience=salience,
+                      salience_high=tuning.salience_high)
     # The stream the record carries, returned too (backlog 0059: the night
     # voice read `signals` from this result and found nothing — the key only
     # existed on the stored record's attributes).

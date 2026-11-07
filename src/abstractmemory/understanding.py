@@ -254,6 +254,23 @@ def _backend(system: Any) -> str:
     raise NotImplementedError(f"rewrite_digest: {type(store).__name__} cannot rewrite a record in place (backlog 0059)")
 
 
+def _queue_for(system: Any, kind_backend: str) -> Any:
+    """The home's task queue: the system's own, or (SQLite) the file's when another process created it."""
+    queue = getattr(system, "tasks", None)
+    if queue is not None or kind_backend != "sqlite":
+        return queue
+    store = system.store
+    prefix = "memq_" if store._table == "triples" else f"memq_{store._table}_"
+    with store._lock:
+        found = store._conn.cursor().execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (f"{prefix}tasks",)).fetchone()
+    if found is None:
+        return None
+    from .memory_tasks import MemoryTaskQueue
+
+    return MemoryTaskQueue(store)
+
+
 def _embed(store: Any, text: str, had_vector: bool) -> Tuple[Optional[Dict[str, Any]], Optional[List[float]], bool]:
     """(refusal, vector, write_vector). The store's own embedder, outside any transaction (store.add parity)."""
     from .embedding_pin import check_add_dimension
@@ -316,6 +333,18 @@ def _apply(
     v_new = version(a, target_new)
     v_zero = _version_zero(a, field) if current == 0 and field != "narration" else None
     written: List[UnderstandingVersion] = []
+    queue = _queue_for(system, kind_backend)
+    if queue is not None:
+        # The task queue (0060) settles in the same transaction: the named task is acked, stale tasks superseded.
+        def _settle(cur: Any) -> None:
+            queue.on_rewrite(cur, record_id=str(a.subject), field=field, version=target_new,
+                             task_id=v_new.task_id or None,
+                             result={"version": target_new, "version_id": v_new.version_id,
+                                     "seq": written[-1].seq if written else None, "field": field,
+                                     "author_kind": v_new.author.get("kind"),
+                                     "model": v_new.reader.get("model")})
+
+        hooks = (*hooks, _settle)
 
     if kind_backend == "sqlite":
         with store._lock:

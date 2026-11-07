@@ -15,7 +15,8 @@ __all__ = ["UnderstandingOps"]
 
 
 class UnderstandingOps:
-    """rewrite_digest / narrate_dream / revert_digest / versions / current_of / record_understanding."""
+    """rewrite_digest / narrate_dream / revert_digest / versions / current_of / record_understanding, and the
+    queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
 
     def rewrite_digest(
         self, record_id: str, *, text: str, author: Mapping[str, Any],
@@ -62,3 +63,26 @@ class UnderstandingOps:
     def record_understanding(self, record_id: str) -> Dict[str, Any]:
         """The record read the gateway serves (understanding.record_understanding)."""
         return _u.record_understanding(self, record_id)
+
+    # -- the memory task queue (0060; the queue object itself is `self.tasks`) --------------------------------
+
+    def understanding_debt(self, *, scopes: Sequence[Any], methods: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+        """What is still in mechanical words, and the queue's state (memory_tasks.understanding_debt)."""
+        from .memory_tasks import understanding_debt
+
+        return understanding_debt(self, scopes=scopes, methods=methods)
+
+    def enqueue_debt(self, *, scopes: Sequence[Any], cause: str = "backfill", priority: int = 90,
+                     dry_run: bool = True, methods: Optional[Sequence[str]] = None,
+                     kinds: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+        """The backfill: a task per un-queued debt record, dry-run by default (memory_tasks.enqueue_debt)."""
+        from .memory_tasks import enqueue_debt
+
+        return enqueue_debt(self, scopes=scopes, cause=cause, priority=priority, dry_run=dry_run,
+                            methods=methods, kinds=kinds)
+
+    def task_packet(self, task_id: str, *, token_budget: int = 56_000) -> Dict[str, Any]:
+        """Everything a reader needs for one task, items whole within a token budget (memory_tasks.task_packet)."""
+        from .memory_tasks import task_packet
+
+        return task_packet(self, task_id, token_budget=token_budget)

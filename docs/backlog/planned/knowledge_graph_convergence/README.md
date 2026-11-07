@@ -44,6 +44,8 @@ notes for itself) can drop their own copies.
 - `0059_record_understanding_rewrites_in_place_with_versions.md` (ADR 0003 decision 6a, the understanding pass): a
   record's digest, a card's text and a dream's narration rewritten in place, every earlier reading kept as a version;
   engine half implemented.
+- `0060_memory_task_queue.md`: the persistent queue of memory tasks, activation-driven window selection (operator
+  decision 3), debt and backfill; engine half implemented.
 
 ## Reading order
 
@@ -70,8 +72,9 @@ In: generic memory-graph capabilities, public API, both store backends where app
 consumer-shaped client passes through the public API alone.
 
 Out:
-- The durable work queue (leases, retries, priorities) AbstractNote built in `store/queue.py`: generic
-  infrastructure for AbstractRuntime/AbstractGateway, not memory.
+- A generic durable work queue: infrastructure for AbstractRuntime/AbstractGateway. The queue of MEMORY tasks
+  (what a home still owes in understanding) is memory's (operator ruling 2026-11-07: "a higher-level queue of
+  memory tasks inside AbstractMemory"; item 0060).
 - Gateway routes and HTTP shapes: AbstractGateway's.
 - Note capture, file importers (Markdown, Claude sessions, agora), prompt wording for one kind of input, and
   application views: the consumer's (ADR 0002 decision 6).

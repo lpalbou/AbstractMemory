@@ -9,10 +9,10 @@ inspect the current code first, then update the item if reality has changed.
 
 ## Current Status (reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 10 — `planned/knowledge_graph_convergence/` (0050-0055, added
+- Planned: 11 — `planned/knowledge_graph_convergence/` (0050-0055, added
   2026-10-27, ADR 0002; 0056-0058, ADR 0003; 0056 in progress, first slice
   on `feat/memory-graph-provenance`; 0059 added 2026-11-08, the understanding
-  pass, engine half implemented). Before that date every planned item had shipped
+  pass, engine half implemented; 0060 the memory task queue). Before that date every planned item had shipped
   (moved to `completed/`) or was superseded (moved to `deprecated/`).
 - Proposed: 13 GENUINELY open (4 in `memory_system_v1` + 9 in
   `extension_wave`)
@@ -161,7 +161,7 @@ The 2026-07-20 reconciliation moved every earlier planned item to
 extension_wave 0037-0039) or `deprecated/` (001/003/006, each with the
 superseding pointer).
 
-### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0059)
+### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0060)
 
 Operator ruling 2026-10-27 ([ADR 0002](../adr/0002-abstractmemory-owns-the-memory-graph.md)); see the
 [track README](planned/knowledge_graph_convergence/README.md) for scope, reading order and prior art.
@@ -179,6 +179,7 @@ Consumer side: AbstractNote backlog 0033-0036.
 | [`0057_one_mind_per_plane_sqlite_home.md`](planned/knowledge_graph_convergence/0057_one_mind_per_plane_sqlite_home.md) | High | ADR 0003 decision 3. Planned, unblocked: connectors behind `MemoryGraph` (S8 landed: protocol, conformance suite, LanceDB connector); next the plane import through `import` revisions and the gateway default (SQLite). |
 | [`0058_home_store_performance_indexes_vectors.md`](planned/knowledge_graph_convergence/0058_home_store_performance_indexes_vectors.md) | High | ADR 0003. Owner predicate, column projection, binary vectors, matrix cache. |
 | [`0059_record_understanding_rewrites_in_place_with_versions.md`](planned/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md) | P1 | ADR 0003 decision 6a. `rewrite_digest` / `narrate_dream` / `revert_digest` / `versions`, cards in place, `dream_pass` signals, replay provenance. Engine half implemented 2026-11-08; awaits ship review. |
+| [`0060_memory_task_queue.md`](planned/knowledge_graph_convergence/0060_memory_task_queue.md) | P1 | The persistent queue of memory tasks; `select_for_window(budget_seconds, sensitivity)` gates each task's strength through ADR 0001's logistic; debt, backfill, packet. Engine half implemented 2026-11-08. |
 
 ## Proposed Items
 

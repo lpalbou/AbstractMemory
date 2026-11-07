@@ -356,6 +356,8 @@ _COPY_TABLES_FULL = (
     # Understanding versions (0059): every earlier reading of a record. A
     # home written before them has no such table (_copy_table skips it).
     "memj_versions",
+    # The memory task queue and the ripple (0060/0061): owed understanding is state, not event mass.
+    "memq_tasks", "memq_log", "memq_windows", "memq_ripples", "memq_ripple_gates",
 )
 
 

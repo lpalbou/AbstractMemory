@@ -381,3 +381,23 @@ def test_cold_cut_keeps_understanding_versions(home) -> None:
         assert rebuilt.current_seq() >= max(v["seq"] for v in before)
     finally:
         rebuilt.close()
+
+
+def test_cold_cut_keeps_the_memory_task_queue(tmp_path) -> None:
+    """Backlog 0060: pending understanding survives a cold cut."""
+    db = str(tmp_path / "memory.sqlite3")
+    system = MemorySystem(store=SQLiteTripleStore(db), journal=SQLiteJournal(db), task_queue=True)
+    _loop, distinct = _seed_loop_life(system)
+    system.remember_many([MemoryRecordInput(kind="episode", title="exchange: owed", digest="User: hi. Castor: ok.",
+                                            attributes={"digest_method": "mechanical-v2"})],
+                         scope=SCOPE, owner_id=OWNER, idempotency_key="owed")
+    before = system.tasks.tasks()
+    assert before
+    system.close()
+    dst = str(tmp_path / "memory.rebuilt.sqlite3")
+    journal_cold_cut(db, dst, archive_ref="archive://test")
+    rebuilt = MemorySystem(store=SQLiteTripleStore(dst), journal=SQLiteJournal(dst), task_queue=True)
+    try:
+        assert rebuilt.tasks.tasks() == before
+    finally:
+        rebuilt.close()

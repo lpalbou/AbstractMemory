@@ -96,6 +96,8 @@ Most records are formed with mechanical words: an episode's digest is an extract
 - `versions` reads every reading of a record, `revert_digest` restores one as a new version, and `current_of` follows a superseded record to its live replacement.
 - The entity's own acts — diary entries, values, purposes, traits, interests and realizations — are never rewritten by these verbs.
 
+What still needs understanding is a persistent queue in the home (`MemorySystem(task_queue=True)`): memory enqueues a task wherever a mechanical record, card or dream forms, and the host drains it in its own windows. How much runs is driven by activation, never by a count: each task carries the strength of what caused it (a memory just formed is a full change; an old memory in the backfill weighs by how much it is used; a ripple hands on a decaying impact), the strength passes through the logistic gate of ADR 0001, and `select_for_window(budget_seconds, sensitivity)` returns the tasks above the floor, strongest first, until the window's time runs out, and says what it left out. The host's sensitivity setting moves the gate; a hard cap is only a safety bound.
+
 The replay stream shows a rewrite only to a consumer that asks for the `revision` family; every display block carries the current reading's provenance (`digest_method`, `digest_version`, `authored_by`, `reader`, `understood_at`), so a viewer can say who understood a memory, with which model, and when.
 
 ## Observability: the replay stream and the identity card

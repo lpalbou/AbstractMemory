@@ -131,6 +131,14 @@ from .redigestion import (
 )
 from .render_order import stable_render_order
 from .replay import OPT_IN_FAMILIES, export_replay
+from .memory_tasks import (
+    TASK_KINDS,
+    WINDOWS,
+    MemoryTaskQueue,
+    enqueue_debt,
+    task_packet,
+    understanding_debt,
+)
 from .understanding import (
     AUTHOR_KINDS,
     REWRITE_CAUSES,
@@ -239,6 +247,7 @@ __all__ = [
     "MemoryJournal",
     "MemoryRecordInput",
     "MemorySystem",
+    "MemoryTaskQueue",
     "OPT_IN_FAMILIES",
     "ORIGIN_DOMINANCE_FLOOR",
     "ORIGIN_MIN_COUNTED",
@@ -270,6 +279,7 @@ __all__ = [
     "SourceRef",
     "SpreadParams",
     "Stimulus",
+    "TASK_KINDS",
     "TextEmbedder",
     "TripleAssertion",
     "TripleQuery",
@@ -279,6 +289,7 @@ __all__ = [
     "VECTOR_SCAN_LIMIT",
     "ValenceEvent",
     "WARNING_WORDS",
+    "WINDOWS",
     "absence_diagnosis",
     "alias_candidates",
     "alias_map",
@@ -305,6 +316,7 @@ __all__ = [
     "enact_realization",
     "engine_manifest",
     "engram",
+    "enqueue_debt",
     "entity_card",
     "entity_recall_budget",
     "expand_by_concepts",
@@ -352,8 +364,10 @@ __all__ = [
     "standing_world_models",
     "stimulus_feelings",
     "structural_report",
+    "task_packet",
     "token_estimate",
     "triggered_commitments",
+    "understanding_debt",
     "understanding_fields",
     "unresolved_dreams",
     "verify_cold_cut",

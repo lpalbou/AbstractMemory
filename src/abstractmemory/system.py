@@ -112,6 +112,7 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
         clock: Optional[Callable[[], str]] = None,
         broad_scopes: Optional[Iterable[str]] = None,
         ablation: Optional[str] = None,
+        task_queue: bool = False,
     ) -> None:
         if store is None or journal is None:
             raise ValueError("MemorySystem requires both a store and a journal (layer-1 substrate)")
@@ -154,6 +155,12 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
                 "'recency_embedding' (Arm B: no activation/spreading), "
                 "'recency' (pure recency baseline: channels disabled too)")
         self._ablation = normalized_ablation
+        # The memory task queue (backlog 0060): opted in per home (entity homes); other consumers are unchanged.
+        self._task_queue = None
+        if task_queue:
+            from .memory_tasks import MemoryTaskQueue
+
+            self._task_queue = MemoryTaskQueue(store)
 
     # -- layer-1 passthroughs (unchanged surface; part of the frozen protocol) --
 
@@ -168,6 +175,12 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
     def journal(self) -> MemoryJournal:
         """The layer-1 journal handle (read-only property; see `store`)."""
         return self._journal
+
+    @property
+    def tasks(self) -> Any:
+        """The home's memory task queue (`memory_tasks.MemoryTaskQueue`), or None when the home did not opt in
+        (`MemorySystem(task_queue=True)`)."""
+        return self._task_queue
 
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
         """Layer-1 write passthrough (the seam keeps MEMORY_KG_* effects working)."""
@@ -199,7 +212,13 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
             records, scope=scope, owner_id=owner_id,
             idempotency_key=idempotency_key, turn_id=turn_id,
         )
-        return _apply_formation_plan(self._store, self._journal, plan)
+        ids = _apply_formation_plan(self._store, self._journal, plan)
+        if self._task_queue is not None:
+            # Opted-in homes owe understanding for every labelled-mechanical record they form (0060).
+            from .memory_tasks import enqueue_formed
+
+            enqueue_formed(self, plan, scope=str(scope).strip().lower(), owner_id=owner_id)
+        return ids
 
     def remember(
         self, record: MemoryRecordInput, *, scope: str, owner_id: str,

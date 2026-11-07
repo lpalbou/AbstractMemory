@@ -264,6 +264,7 @@ def maintenance_due(
     store: Any, journal: Any, *,
     scopes: Sequence[Tuple[str, str]], since_seq: Optional[int] = None,
     min_new_records: int = 12, min_signal: int = 3,
+    tasks: Any = None,
 ) -> Dict[str, Any]:
     """Deterministic cadence predicate (fork 770: "enough new nodes +
     fragmentation"; late-local-time stays the HOST's clock). Due when enough
@@ -275,16 +276,46 @@ def maintenance_due(
     Bounded by a cursor (0058): a check reads the store rows written since
     the previous check of the same (store, journal, scopes), and re-reads the
     journal's formation bindings only when the journal moved. Same answer as
-    the full scan."""
+    the full scan.
+
+    `tasks` (the home's `MemoryTaskQueue`, backlog 0060): pending memory
+    tasks are reported (`pending_tasks` {kind: n}); pending ripple work and
+    pending night-only work (dream narrations, ripple consolidations) make
+    a sleep due (ADR 0001 decision 9: pending ripples are work due, never
+    suppressed to keep a young system quiet). Digest and card rewrites run
+    in any window and are reported without making a night due."""
     fold = _fold_for(store, journal, scopes)
     if fold is None:
-        return _maintenance_due_scan(
+        answer = _maintenance_due_scan(
             store, journal, scopes=scopes, since_seq=since_seq,
             min_new_records=min_new_records, min_signal=min_signal)
-    with fold.lock:
-        fold.catch_up(store)
-        fold.sync_journal(journal)
-        anchor = int(since_seq) if since_seq is not None else fold.derived_anchor(journal)
-        duplicates, isolated = fold.structural_counts()
-        new_formed = _new_formed(fold.remember_seqs, anchor)
-    return _answer(anchor, new_formed, duplicates, isolated, min_new_records, min_signal)
+    else:
+        with fold.lock:
+            fold.catch_up(store)
+            fold.sync_journal(journal)
+            anchor = int(since_seq) if since_seq is not None else fold.derived_anchor(journal)
+            duplicates, isolated = fold.structural_counts()
+            new_formed = _new_formed(fold.remember_seqs, anchor)
+        answer = _answer(anchor, new_formed, duplicates, isolated, min_new_records, min_signal)
+    if tasks is not None:
+        _with_tasks(answer, tasks, scopes)
+    return answer
+
+
+#: Task kinds whose pending work makes a sleep due (ADR 0001 decision 9 + night-only kinds).
+_DUE_TASK_KINDS = ("ripple.reconsider", "ripple.consolidate", "dream.narrate")
+
+
+def _with_tasks(answer: Dict[str, Any], tasks: Any, scopes: Sequence[Tuple[str, str]]) -> None:
+    wanted = {(str(s).strip().lower(), str(o or "").strip()) for s, o in scopes}
+    pending: Dict[str, int] = {}
+    for t in tasks.tasks(status=("pending", "deferred", "leased")):
+        if (t["scope"], t["owner_id"]) in wanted:
+            pending[t["kind"]] = pending.get(t["kind"], 0) + 1
+    answer["pending_tasks"] = pending
+    due_work = {k: n for k, n in pending.items() if k in _DUE_TASK_KINDS}
+    if due_work:
+        answer["due"] = True
+        answer["reasons"].append(
+            "pending memory work only a sleep runs or ADR 0001 counts as due: "
+            + ", ".join(f"{n} {k}" for k, n in sorted(due_work.items())))

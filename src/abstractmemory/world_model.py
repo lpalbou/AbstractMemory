@@ -653,6 +653,21 @@ def world_model_pass(
                 [card], scope=scopes[0][0], owner_id=owner, idempotency_key=key)
             verdict["card_id"] = gid
             verdict["formed"] = not existed
+            if getattr(system, "tasks", None) is not None:
+                # A card still (partly) in mechanical words owes an authoring (0060). Its strength: a new or
+                # never-authored card is a full change; a +delta revision is the share of evidence that is new.
+                from .activation_gate import FORMATION_STRENGTH
+                from .memory_tasks import enqueue_card
+
+                if digest_method == "authored-card-v1+delta":
+                    baseline = set(extra_attrs.get("authored_known_ids") or ())
+                    fresh = sum(1 for r in rows if r["record_id"] not in baseline)
+                    strength = min(1.0, max(0.1, fresh / max(1, len(rows))))
+                else:
+                    strength = FORMATION_STRENGTH
+                enqueue_card(system, gid, scope=scopes[0][0], owner_id=owner, fingerprint=fingerprint,
+                             revision=revision, strength=strength,
+                             prior_id=prior.subject if prior is not None else None)
             if prior is not None and prior.subject != gid:
                 # Append-only revision: the old card leaves recall through
                 # the normal closure fold; its history stays. Close
