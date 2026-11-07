@@ -131,6 +131,15 @@ from .redigestion import (
 )
 from .render_order import stable_render_order
 from .replay import OPT_IN_FAMILIES, export_replay
+from .ripple import (
+    form_consolidation,
+    refresh_ripples,
+    revert_ripple,
+    ripple,
+    ripples,
+    seed_ripple,
+    settle_reconsideration,
+)
 from .memory_tasks import (
     TASK_KINDS,
     WINDOWS,
@@ -325,6 +334,7 @@ __all__ = [
     "familiarity",
     "feelings_about",
     "fold_bindings",
+    "form_consolidation",
     "identity_card",
     "identity_review_pass",
     "journal_cold_cut",
@@ -352,11 +362,17 @@ __all__ = [
     "redigestion_candidates",
     "reembed_home",
     "reembed_store",
+    "refresh_ripples",
     "reject_candidate",
     "resolve_dreams_pass",
     "resolve_questions_pass",
     "revert_digest",
+    "revert_ripple",
     "rewrite_digest",
+    "ripple",
+    "ripples",
+    "seed_ripple",
+    "settle_reconsideration",
     "situate",
     "situate_prompt_block",
     "sleep_pass",

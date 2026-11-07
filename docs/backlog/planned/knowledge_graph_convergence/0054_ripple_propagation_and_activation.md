@@ -15,7 +15,11 @@ The ripple was first prototyped inside AbstractNote. The operator ruled (2026-10
 AbstractMemory so every consumer, AbstractEntity first, has memories that revise what leaned on them.
 
 ## Current code reality
-- AbstractMemory: none of the process exists. The primitives are planned in
+- 2026-11-08: the first slice landed as [0061](0061_ripple_v1_over_the_task_queue.md) (the logistic gate and its
+  constants in `activation_gate.py`; propagation, the unchanged settle, budget and `left_out`, gate decisions on
+  record, sleep consolidation in `ripple.py`, over the 0060 task queue). What remains here: mass, refractory across
+  passes, edge learning, closures caused by a ripple, the calibration on the entity homes' reader.
+- Before 0061: none of the process existed. The primitives are planned in
   `proposed/ripple_wave/0001_change_records_and_ripple_primitives.md` (change records with magnitude, closure
   causes, `narrow_assertion`, ripple-aware `maintenance_due`, the bound read).
 - AbstractNote (prototype to absorb, not to keep): ADR 0008 and its lane R6 (2026-10-20/21: calibrated thresholds,

@@ -40,6 +40,14 @@ A record's understanding can be rewritten in place, and every earlier reading is
   `task_packet` on `MemorySystem`. The understanding verbs accept `task_id=` and settle the task in their own
   transaction. `activation_gate.py` holds the gate and every threshold with its calibration.
 - `maintenance_due(..., tasks=)` reports pending memory tasks and is due when ripple or night-only work is pending.
+- **Ripple v1** (backlog 0061, [ADR 0001](docs/adr/0001-altered-memories-ripple.md)): `seed_ripple` (the entity's
+  revise election, or a rewrite whose reader reported `revised` / `overturned`; surprise kept as words),
+  `settle_reconsideration`, `form_consolidation` (night only), `refresh_ripples`, `revert_ripple`, reads `ripples` /
+  `ripple`. Candidates by relation, by the cards built on a memory and by vector similarity; potential = impact x
+  reliance x 0.5, accumulated per ripple, gated by the logistic (floor 0.1); at most 2 hops and 20 reconsiderations
+  per ripple and per window, each memory once per ripple; protected kinds never reconsidered; every gate decision
+  stored with its potential (`memq_ripples`, `memq_ripple_gates`).
+- `rewrite_digest` results carry `cosine_distance` between the old and new vectors when both exist.
 
 ### Changed
 

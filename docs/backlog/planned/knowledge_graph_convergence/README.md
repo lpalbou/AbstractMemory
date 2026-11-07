@@ -46,6 +46,7 @@ notes for itself) can drop their own copies.
   engine half implemented.
 - `0060_memory_task_queue.md`: the persistent queue of memory tasks, activation-driven window selection (operator
   decision 3), debt and backfill; engine half implemented.
+- `0061_ripple_v1_over_the_task_queue.md` (ADR 0001): ripple v1, the first slice of 0054; engine half implemented.
 
 ## Reading order
 

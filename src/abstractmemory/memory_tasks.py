@@ -1014,7 +1014,11 @@ def task_packet(system: Any, task_id: str, *, token_budget: int = 56_000) -> Dic
     elif t["kind"] == "dream.narrate":
         fill("mentions", [e.object for e in edges if e.predicate == "mentions"])
     elif t["kind"] in ("ripple.reconsider", "ripple.consolidate"):
-        out["ripple"] = {"ripple_id": t["ripple_id"], "hop": t["hop"], "cause": t["cause"]}
+        from .ripple import ripple_context
+
+        out["ripple"] = ripple_context(system, t)
+        if t["kind"] == "ripple.consolidate":
+            fill("changed", [c["record_id"] for c in out["ripple"].get("changed", [])])
     out["token_estimate"] = used
     out["left_out"] = left_out
     return out

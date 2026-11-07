@@ -323,13 +323,18 @@ def _apply(
                         version=current, **base)
     vector: Optional[List[float]] = None
     write_vector = False
+    distance: Optional[float] = None
     text = canonical_text(planned)
     if field != "narration":
-        had_vector = store.stored_vector(aid) is not None
-        refusal, vector, write_vector = _embed(store, text, had_vector)
+        old_vector = store.stored_vector(aid)
+        refusal, vector, write_vector = _embed(store, text, old_vector is not None)
         if refusal is not None:
             refusal.update(base)
             return refusal
+        if old_vector is not None and vector is not None and len(old_vector) == len(vector):
+            from .vector_scoring import cosine
+
+            distance = round(1.0 - float(cosine(old_vector, vector)), 6)
     v_new = version(a, target_new)
     v_zero = _version_zero(a, field) if current == 0 and field != "narration" else None
     written: List[UnderstandingVersion] = []
@@ -342,7 +347,7 @@ def _apply(
                              result={"version": target_new, "version_id": v_new.version_id,
                                      "seq": written[-1].seq if written else None, "field": field,
                                      "author_kind": v_new.author.get("kind"),
-                                     "model": v_new.reader.get("model")})
+                                     "model": v_new.reader.get("model"), "cosine_distance": distance})
 
         hooks = (*hooks, _settle)
 
@@ -408,7 +413,8 @@ def _apply(
                 hook(None)
     result = {"applied": True, "outcome": "applied", "reason": None, "version": target_new,
               "previous_version": current, "version_id": written[-1].version_id, "seq": written[-1].seq,
-              "captured_original": v_zero is not None, "vector_rewritten": write_vector, **base}
+              "captured_original": v_zero is not None, "vector_rewritten": write_vector,
+              "cosine_distance": distance, **base}
     for fn in after:
         fn(result)
     return result

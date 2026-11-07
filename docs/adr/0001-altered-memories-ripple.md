@@ -2,7 +2,10 @@
 
 Status: Accepted (operator ruling, 2026-10-21; activation model confirmed with the operator the same day).
 Amended 2026-10-27 (operator ruling): the ripple is AbstractMemory's process end to end, not a consumer's
-(ADR 0002). Aspirational: AbstractMemory does not implement it yet; AbstractNote holds a prototype
+(ADR 0002). Implemented in part (2026-11-08, backlog 0061, ripple v1): propagation over the memory task queue
+with the logistic gate of decision 7, the floor, decay, hops, budget, refractory-per-ripple, every gate decision on
+record, the no-write unchanged settle, sleep consolidation; mass, edge learning and closures caused by a ripple
+remain planned (backlog 0054). Before 0061: AbstractMemory did not implement it; AbstractNote holds a prototype
 (its ADR 0008 propagation lane) that is to be absorbed here, not kept as the implementation.
 
 ## Context
@@ -132,6 +135,8 @@ asks "given that A changed this much, what must be reconsidered about B and E?".
 - Proposed: [ripple_wave/0001_change_records_and_ripple_primitives.md](../backlog/proposed/ripple_wave/0001_change_records_and_ripple_primitives.md)
   (the AbstractMemory primitives: change records with magnitude, closure causes, `maintenance_due` counting pending
   ripples, `narrow_assertion`).
+- Implemented (v1): [knowledge_graph_convergence/0061_ripple_v1_over_the_task_queue.md](../backlog/planned/knowledge_graph_convergence/0061_ripple_v1_over_the_task_queue.md)
+  (the gate and its constants in `activation_gate.py`; propagation, settle and consolidation in `ripple.py`).
 - Planned: [knowledge_graph_convergence/0054_ripple_propagation_and_activation.md](../backlog/planned/knowledge_graph_convergence/0054_ripple_propagation_and_activation.md)
   (the propagation, activation and reconsideration process in AbstractMemory).
 - Prototype to absorb, not to keep: AbstractNote ADR 0008 and its propagation lane (R6, 2026-10-20/21: calibrated

@@ -17,6 +17,12 @@ primitives are its first step, and the process itself is planned in
 `planned/knowledge_graph_convergence/0054_ripple_propagation_and_activation.md`. AbstractNote's lane R6 (its ADR 0008)
 is a prototype to absorb.
 
+## Status note (2026-11-08)
+Partly absorbed: `narrow_assertion` shipped in 0.4.0; a meaning change now leaves a version row with its magnitude
+(`UnderstandingVersion.magnitude`, backlog 0059); `maintenance_due(tasks=)` counts pending ripple work as due and
+`seed_ripple(dry_run=True)` is the bound read (backlog 0060/0061). Still open: structured closure causes for closures
+made by a ripple (v1 closes nothing) and change records for type and relationship changes.
+
 ## Current code reality
 `close_assertion` (0.3.1) and the closure kind `reinterpreted` (0.3.2) exist; closures carry `reason` text but no
 structured cause; there is no change record and no magnitude; `maintenance_due` counts new records and fragments only;

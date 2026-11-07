@@ -81,6 +81,68 @@ class UnderstandingOps:
         return enqueue_debt(self, scopes=scopes, cause=cause, priority=priority, dry_run=dry_run,
                             methods=methods, kinds=kinds)
 
+    # -- the ripple (0061) ---------------------------------------------------------------------------------------
+
+    def seed_ripple(
+        self, seed_id: str, *, cause: Union[str, Mapping[str, Any]], change: str = "revised",
+        magnitude: Optional[float] = None, cosine_distance: Optional[float] = None, surprise: Optional[str] = None,
+        reconsider_seed: Optional[bool] = None, budget: int = 20, dry_run: bool = False, now: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Open a ripple from a changed memory (ripple.seed_ripple)."""
+        from .ripple import seed_ripple
+
+        return seed_ripple(self, seed_id, cause=cause, change=change, magnitude=magnitude,
+                           cosine_distance=cosine_distance, surprise=surprise, reconsider_seed=reconsider_seed,
+                           budget=budget, dry_run=dry_run, now=now)
+
+    def settle_reconsideration(
+        self, task_id: str, *, holder: str, outcome: str, change: Optional[str] = None,
+        cosine_distance: Optional[float] = None, result: Optional[Mapping[str, Any]] = None,
+        now: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Settle one ripple.reconsider task and hand the change on (ripple.settle_reconsideration)."""
+        from .ripple import settle_reconsideration
+
+        return settle_reconsideration(self, task_id, holder=holder, outcome=outcome, change=change,
+                                      cosine_distance=cosine_distance, result=result, now=now)
+
+    def form_consolidation(
+        self, task_id: str, *, holder: str, text: str, title: str, author: Mapping[str, Any],
+        reader: Optional[Mapping[str, Any]] = None, sources: Sequence[Mapping[str, Any]] = (),
+        keywords: Sequence[str] = (), now: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Form a ripple's "what this changes" record in a night window (ripple.form_consolidation)."""
+        from .ripple import form_consolidation
+
+        return form_consolidation(self, task_id, holder=holder, text=text, title=title, author=author,
+                                  reader=reader, sources=sources, keywords=keywords, now=now)
+
+    def refresh_ripples(self, *, now: Optional[str] = None) -> List[Dict[str, str]]:
+        """Close settled ripples, enqueue their consolidations (ripple.refresh_ripples)."""
+        from .ripple import refresh_ripples
+
+        return refresh_ripples(self, now=now)
+
+    def revert_ripple(self, ripple_id: str, *, by: Optional[Mapping[str, Any]] = None,
+                      reason: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Restore what a ripple changed (ripple.revert_ripple)."""
+        from .ripple import revert_ripple
+
+        return revert_ripple(self, ripple_id, by=by, reason=reason)
+
+    def ripples(self, *, scope: Optional[str] = None, owner_id: Optional[str] = None,
+                status: Optional[Sequence[str]] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Ripples, newest first (ripple.ripples)."""
+        from .ripple import ripples
+
+        return ripples(self, scope=scope, owner_id=owner_id, status=status, limit=limit)
+
+    def ripple(self, ripple_id: str) -> Dict[str, Any]:
+        """One ripple with its members and gate decisions (ripple.ripple)."""
+        from .ripple import ripple
+
+        return ripple(self, ripple_id)
+
     def task_packet(self, task_id: str, *, token_budget: int = 56_000) -> Dict[str, Any]:
         """Everything a reader needs for one task, items whole within a token budget (memory_tasks.task_packet)."""
         from .memory_tasks import task_packet
