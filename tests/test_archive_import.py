@@ -202,8 +202,8 @@ def test_digest_truncation_is_counted_out_of_band_not_spliced_into_the_text() ->
     from abstractmemory.sleep_policy import NEAR_DUP_JACCARD_FLOOR
     from abstractmemory.text_tokens import jaccard, token_set
 
-    short = "One short line that fits well under the cap."
-    assert _first_sentences(short) == (short, None)  # unmarked when it fits
+    short = "One short line."
+    assert _first_sentences(short) == (short, None)
 
     left = ("weekly report reviewed budget timeline staffing risks "
             "harbour dredging permits ") * 12
@@ -212,7 +212,8 @@ def test_digest_truncation_is_counted_out_of_band_not_spliced_into_the_text() ->
     left_digest, left_meta = _first_sentences(left.strip())
     right_digest, _ = _first_sentences(right.strip())
 
-    assert left_digest.endswith("…") and "#TRUNCATION" not in left_digest
-    assert left_meta["kept"] < left_meta["of"] and left_meta["unit"] == "prose chars"
+    # Root ADR 0054: the prose is kept whole; nothing is cut, so no marker exists to share tokens.
+    assert left_digest == " ".join(left.split()) and left_meta is None
+    assert "…" not in left_digest and "#TRUNCATION" not in left_digest
     # Two unrelated documents stay unrelated: the marker adds no shared tokens.
     assert jaccard(token_set(left_digest), token_set(right_digest)) < NEAR_DUP_JACCARD_FLOOR

@@ -63,6 +63,9 @@ A record's understanding can be rewritten in place, and every earlier reading is
   `original_context` renders whole in the canonical text (was 400). `CANONICAL_TEXT_VERSION` is 3: record digests
   render as before; a plain assertion with a longer context keeps its earlier text and vector until
   `reembed_store` re-derives it. Readers shorten text at display time.
+- Also kept whole: a plain assertion's "s p o" title in context-snapshot display rows (`display_title`, was 120
+  characters; the new read-side `canonical_text.short_title` gives shelf handles their compact title), and an
+  archive-imported file's prose as its record digest (was 480; imported records no longer carry `_truncation`).
 
 ### Deprecated
 

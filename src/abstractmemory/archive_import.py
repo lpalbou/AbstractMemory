@@ -66,7 +66,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .records import MemoryRecordInput
-from .text_tokens import truncation_meta
 
 __all__ = [
     "ArchiveFile",
@@ -130,29 +129,13 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _first_sentences(text: str, cap: int = 480) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """The digest prose bounded at `cap`, with the cut recorded out-of-band.
-
-    Headings carry the title (extracted separately) — the digest is prose.
-    Framework ADR-0026 §1: the cut is never silent. It shows in the text as a
-    bare "…", and it is COUNTED in the returned metadata, which the caller
-    hangs on the record's attributes. The counts stay OUT of the digest
-    because this string is the ingested record's embedding and keyword
-    surface (`canonical_text`): a counted marker's own words would be shared
-    by every truncated import and would inflate near-duplicate Jaccard
-    between files that have nothing in common. A manifest that also declares
-    a verbatim keeps the whole file (payload_ref).
-    #[WARNING:TRUNCATION] archive-import digest bounded at `cap` chars
-    """
+def _first_sentences(text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """The digest prose of a file, WHOLE (root ADR 0054: stored text is never cut; a reader shortens it at display
+    time). Headings carry the title (extracted separately), so heading lines are left out of the prose; whitespace
+    is normalised. The second value is kept for the caller's shape and is always None (nothing is cut)."""
     prose = "\n".join(line for line in str(text or "").splitlines()
                       if not line.lstrip().startswith("#"))
-    body = " ".join(prose.split())
-    if len(body) <= cap:
-        return body, None
-    cut = body[:cap]
-    dot = cut.rfind(". ")
-    kept = cut[: dot + 1] if dot > cap // 2 else cut
-    return kept + " …", truncation_meta(len(kept), len(body), unit="prose chars")
+    return " ".join(prose.split()), None
 
 
 def _date_of(entry: ArchiveFile, text: str) -> Optional[str]:

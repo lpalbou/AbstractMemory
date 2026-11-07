@@ -12,8 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Sequence
 
-from .canonical_text import _TITLE_MAX
 from .canonical_text import display_title as _display_title
+from .canonical_text import short_title as _short_title
 from .canonical_text import token_estimate as _token_estimate
 from .channels import CHANNEL_ORDER
 from .models import TripleAssertion
@@ -108,15 +108,13 @@ def build_handle(
             cues.append(f"recent: scope {a.scope}/{a.owner_id or ''}")
 
     # v1 record enrichment (records.py): stored title beats the "s p o"
-    # preview (same _TITLE_MAX bound — imported, since the constant exists
-    # precisely "so the two surfaces can never drift").
+    # preview. A handle is a read-time view: its title is the compact form
+    # (`short_title`, 120 chars); the stored title stays whole.
     stored_title = attrs.get("title")
     if isinstance(stored_title, str) and stored_title.strip():
-        title = stored_title.strip()
-        if len(title) > _TITLE_MAX:
-            title = title[: _TITLE_MAX - 1] + "…"  #[WARNING:TRUNCATION] title preview bounded (digest carries the full text)
+        title = _short_title(stored_title.strip())
     else:
-        title = _display_title(a)
+        title = _short_title(_display_title(a))
     has_raw = isinstance(attrs.get("payload_ref"), str) and attrs["payload_ref"].strip()
     payload_tiers = ("digest", "raw") if has_raw else ("digest",)
 

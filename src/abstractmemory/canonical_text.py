@@ -32,17 +32,24 @@ from .models import TripleAssertion
 # before keep their v2 text and vector until `reembed_store` re-derives them.
 CANONICAL_TEXT_VERSION = 3
 
-# Preview title bound shared by handle titles (reconstruct) and snapshot
-# display rows (system): one constant so the two surfaces can never drift.
+# The length of a COMPACT title in read-time views (shelf handles). Stored
+# titles are whole (root ADR 0054); only `short_title` applies this, at read time.
 _TITLE_MAX = 120
 
 
 def display_title(a: TripleAssertion) -> str:
-    """Preview title "s p o", bounded at 120 chars (digest carries the full text)."""
-    title = f"{a.subject} {a.predicate} {a.object}"
-    if len(title) > _TITLE_MAX:
-        title = title[: _TITLE_MAX - 1] + "…"  #[WARNING:TRUNCATION] title preview bounded at 120 chars (digest carries the full text)
-    return title
+    """The title "s p o" of a plain assertion, WHOLE: snapshot display rows store it, and stored text is never cut
+    (root ADR 0054). Use `short_title` for a compact read-time view."""
+    return f"{a.subject} {a.predicate} {a.object}"
+
+
+def short_title(title: str, limit: int = _TITLE_MAX) -> str:
+    """A compact form of a title for a read-time view (never stored): at most `limit` characters, the cut shown
+    with a bare "…"."""
+    text = str(title or "")
+    if len(text) <= int(limit):
+        return text
+    return text[: max(1, int(limit)) - 1] + "…"  #[WARNING:TRUNCATION] read-time compact title; the stored title is whole
 
 
 def token_estimate(text: str) -> int:
