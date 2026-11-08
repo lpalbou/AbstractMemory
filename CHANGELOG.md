@@ -48,6 +48,24 @@ A record's understanding can be rewritten in place, and every earlier reading is
   per ripple and per window, each memory once per ripple; protected kinds never reconsidered; every gate decision
   stored with its potential (`memq_ripples`, `memq_ripple_gates`).
 - `rewrite_digest` results carry `cosine_distance` between the old and new vectors when both exist.
+- **`retitle`** (on `MemorySystem` and as a module function; operator 2026-11-08, root ADR 0054: a title is an
+  explicit, complete, readable phrase): changes ONLY a record's title, in place, for every kind, interest, lesson,
+  realization and every diary entry included (their protection covers the body; a title the runtime cut at formation
+  is not the entity's words). The body, keywords and the digest's reading stay byte-identical; the canonical text,
+  keyword-index entry and vector follow the new title in the same transaction. The previous title is kept as a
+  version (field `title`, version 0 = the title the record held, with the provenance of the reading that wrote it);
+  `title_version` is the compare-and-set; `title_provenance` records author, reader, sources and cause. Refusals:
+  `empty_title`, `hash_chained` (an owner-direct diary entry whose `entry_hash` attests its title), `closed`,
+  `stale`, `embedder_unavailable`; an unchanged title is `unchanged` with no version. `revert_digest(...,
+  field="title")` restores an earlier title. This is the verb the repair of the runtime's cut titles needs (170
+  interests, 38 lessons, 222 diary entries, 35 cards, 51 episodes in the live homes).
+- A digest or card reading that changes the title (`rewrite_digest(..., title=...)`, a revert) writes the title
+  version too, in the same transaction (the result carries `title_version`), so `versions(record_id,
+  field="title")` lists every title; a concurrent title change makes such a write `stale` instead of putting back the
+  title it read. A revert of a record's words keeps a title retitled since its current reading (undoing words never
+  re-cuts a repaired title).
+- Replay: a diary entry's `revision` envelopes (its title versions) are sealed like its display block (payload
+  `text`, `title` and `keywords` emptied, `redacted: "diary"`); the version row stays whole in the journal.
 
 ### Changed
 

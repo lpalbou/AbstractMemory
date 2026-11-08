@@ -26,6 +26,16 @@ beside it); a world-model card outside `author_world_model` (which keeps the evi
 replacement is the current one: `current_of`); a ripple's consolidation record (`summary_role: re-understanding`)
 except by an operator.
 
+A TITLE is changed alone by `retitle` (operator 2026-11-08, root ADR 0054: a title is an explicit, complete,
+readable phrase, and stored text is never cut): for EVERY kind, the entity's own acts included, because a title the
+runtime cut at formation is not the entity's words and the protected body is never touched. The title has its own
+version history (field `title`, `title_version`, `title_provenance`); a digest or card reading that changes the
+title (rewrite_digest's `title=`, a revert) writes its title version in the same transaction, so
+`versions(record_id, field="title")` lists every title the record has held. The diary rule here concerns the body:
+a diary entry's words are read through the book, its replay block is redacted, and the opt-in `revision` envelopes
+of its title versions are sealed the same way (replay.py); a retitle reads nothing back. An entry carrying an
+`entry_hash` (an owner-direct chained diary) refuses: its title is part of the attested hash.
+
 WHO WROTE THE WORDS is recorded, never inferred: `author` = {kind, id} with kind in `AUTHOR_KINDS`
 ("entity-mind": the entity's own model; "capability-model": a model the entity's cognition profile names for this
 capability, writing as "a passive memory process, part of me" (operator decision 2); "operator"; "mechanical");
@@ -55,6 +65,7 @@ __all__ = [
     "DEFAULT_AUTHORED_METHOD",
     "ENTITY_WORDS_KINDS",
     "REWRITE_CAUSES",
+    "RETITLE_METHOD",
     "SPARK_KINDS",
     "UNDERSTANDING_PROTECTED_KINDS",
     "current_of",
@@ -62,6 +73,7 @@ __all__ = [
     "narrate_dream",
     "reading_provenance",
     "record_understanding",
+    "retitle",
     "revert_digest",
     "rewrite_digest",
     "understanding_fields",
@@ -97,6 +109,9 @@ SPARK_KINDS = frozenset({"value", "purpose", "trait"})
 
 #: The digest_method a rewrite stamps unless the caller names another.
 DEFAULT_AUTHORED_METHOD = "authored-v1"
+
+#: The method label of a title version written by `retitle`.
+RETITLE_METHOD = "retitle-v1"
 
 #: The card floor's mechanical label (world_model.py): the cards the task queue owes authored words.
 MECHANICAL_CARD_METHODS = frozenset({"mechanical-card-v2"})
@@ -206,7 +221,11 @@ def _field_of(kind: str) -> str:
 
 
 def _version_attr(field: str) -> str:
-    return "narration_version" if field == "narration" else "digest_version"
+    return {"narration": "narration_version", "title": "title_version"}.get(field, "digest_version")
+
+
+def _title(attrs: Mapping[str, Any]) -> str:
+    return str(attrs.get("title") or "")
 
 
 def _current_version(attrs: Mapping[str, Any], field: str) -> int:
@@ -371,7 +390,10 @@ def _apply(
 ) -> Dict[str, Any]:
     """The shared write: CAS, version rows, row/keyword/vector replacement, in one transaction. `reserved(attrs, n)`
     returns the row's new attributes for version n; `version(assertion, n)` builds the version row n. `hooks` run on
-    the open SQLite cursor (the task queue acks and supersedes there); `after` run once the write committed."""
+    the open SQLite cursor (the task queue acks and supersedes there); `after` run once the write committed.
+
+    A digest or card reading that changes the title also writes the title's version (field `title`: version 0 the
+    title it replaces, then the new one with this reading's provenance), so the title history stays whole."""
     kind_backend = _backend(system)
     store, journal = system.store, system.journal
     a = _resolve(system, record_id)
@@ -380,15 +402,21 @@ def _apply(
     aid = str(a.assertion_id or "")
     attrs0 = _attrs(a)
     current = _current_version(attrs0, field)
+    title_now = _current_version(attrs0, "title")
     target_new = current + 1
     planned_attrs = reserved(attrs0, target_new)
     planned = replace(a, object=new_object if new_object is not None else a.object, attributes=planned_attrs)
-    identical = (narration is not None and str(attrs0.get("narration") or "") == narration) or (
-        narration is None and str(a.object or "") == str(new_object or ""))
+    if field == "title":
+        identical = _title(attrs0) == _title(planned_attrs)
+    elif narration is not None:
+        identical = str(attrs0.get("narration") or "") == narration
+    else:
+        identical = str(a.object or "") == str(new_object or "")
     base = {"record_id": str(a.subject), "assertion_id": aid, "field": field}
     if identical:
         return {"applied": False, "outcome": "unchanged", "reason": "identical",
-                "detail": "the text is already the current reading", "version": current, **base}
+                "detail": f"the {'title' if field == 'title' else 'text'} is already the current reading",
+                "version": current, **base}
     if int(expected_version) != current:
         return _refusal("stale", f"expected version {int(expected_version)}, the record is at version {current}",
                         version=current, **base)
@@ -407,7 +435,35 @@ def _apply(
 
             distance = round(1.0 - float(cosine(old_vector, vector)), 6)
     v_new = version(a, target_new)
-    v_zero = _version_zero(a, field) if current == 0 and field != "narration" else None
+    v_zero: Optional[UnderstandingVersion] = None
+    if current == 0 and field == "title":
+        v_zero = _title_version_zero(system, a)
+    elif current == 0 and field != "narration":
+        v_zero = _version_zero(a, field)
+    title_rows: List[UnderstandingVersion] = []
+    if field in ("digest", "card") and _title(planned_attrs) != _title(attrs0):
+        # This reading changes the title too: the title's own history records it.
+        if title_now == 0:
+            title_rows.append(_title_version_zero(system, a))
+        title_rows.append(_title_version_row(
+            a, title_now + 1, title=_title(planned_attrs), author=v_new.author, reader=v_new.reader,
+            sources=v_new.sources, cause=v_new.cause, task_id=v_new.task_id, at=v_new.understood_at,
+            method=v_new.digest_method))
+        stamp = _understanding_attr(title_now + 1, "title", v_new.author, v_new.reader, v_new.cause,
+                                    tuple(v_new.sources), (), v_new.understood_at)
+        reserved_reading = reserved
+
+        def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:  # noqa: F811 - the reading's attrs + title stamp
+            out = reserved_reading(old, n)
+            out.update({"title_version": title_now + 1, "title_provenance": stamp})
+            return out
+
+    def _title_moved(fresh_attrs: Mapping[str, Any]) -> bool:
+        """A concurrent title write (a retitle, or a reading that changed it) makes this write stale: it would
+        otherwise put back the title it read."""
+        return field != "narration" and (_title(fresh_attrs) != _title(attrs0)
+                                          or _current_version(fresh_attrs, "title") != title_now)
+
     written: List[UnderstandingVersion] = []
     queue = _queue_for(system, kind_backend)
     if queue is not None:
@@ -436,7 +492,7 @@ def _apply(
                 fresh = _S._row_to_assertion(row)
                 fresh_attrs = _attrs(fresh)
                 now_version = _current_version(fresh_attrs, field)
-                if now_version != current or fresh.object != a.object or (
+                if now_version != current or fresh.object != a.object or _title_moved(fresh_attrs) or (
                         field == "narration" and fresh_attrs.get("narration") != attrs0.get("narration")):
                     cur.execute("ROLLBACK")
                     return _refusal("stale", "the record changed while the rewrite was prepared",
@@ -450,6 +506,8 @@ def _apply(
                 if v_zero is not None:
                     written.append(journal._append_version_on(cur, v_zero))
                 written.append(journal._append_version_on(cur, v_new))
+                for row_t in title_rows:
+                    journal._append_version_on(cur, row_t)
                 if write_vector and vector is not None and store.embedding_pin() is None:
                     _pin_first_write(store, vector, cur)
                 store._rewrite_row_on(cur, row, rewritten, vector=vector, write_vector=write_vector)
@@ -468,7 +526,7 @@ def _apply(
                 return _refusal("unknown_record", f"record {record_id!r} vanished", **base)
             fresh_attrs = _attrs(fresh)
             now_version = _current_version(fresh_attrs, field)
-            if now_version != current or fresh.object != a.object:
+            if now_version != current or fresh.object != a.object or _title_moved(fresh_attrs):
                 return _refusal("stale", "the record changed while the rewrite was prepared",
                                 version=now_version, **base)
             rewritten = replace(fresh, attributes=reserved(fresh_attrs, target_new),
@@ -477,6 +535,8 @@ def _apply(
             if v_zero is not None:
                 written.append(journal.append_version(v_zero))
             written.append(journal.append_version(v_new))
+            for row_t in title_rows:
+                journal.append_version(row_t)
             if write_vector and store.embedding_pin() is None and vector is not None:
                 _pin_first_write(store, vector, None)
             store._rewrite_row(aid, stored, vector=vector, write_vector=write_vector)
@@ -486,6 +546,8 @@ def _apply(
               "previous_version": current, "version_id": written[-1].version_id, "seq": written[-1].seq,
               "captured_original": v_zero is not None, "vector_rewritten": write_vector,
               "cosine_distance": distance, **base}
+    if title_rows:
+        result["title_version"] = title_now + 1
     for fn in after:
         fn(result)
     return result
@@ -537,6 +599,39 @@ def _version_row(a: Any, n: int, *, field: str, text: str, title: str, keywords:
         cause=cause, magnitude=_json_safe(dict(magnitude or {}), "magnitude"), task_id=task_id,
         understood_at=at, version_id=version_id_for(str(a.subject), field, n),
     )
+
+
+def _title_version_row(a: Any, n: int, *, title: str, author: Dict[str, Any], reader: Dict[str, Any],
+                       sources: Sequence[Dict[str, Any]], cause: Dict[str, Any], task_id: str, at: str,
+                       method: str) -> UnderstandingVersion:
+    """One title version: the title is the row's `text` (and its `title`); keywords are the record's."""
+    return _version_row(a, n, field="title", text=title, title=title, keywords=tuple(_attrs(a).get("keywords") or ()),
+                        digest_method=method, author=dict(author), reader=dict(reader), sources=tuple(sources),
+                        derived_from=(), cause=dict(cause), magnitude={}, task_id=task_id, at=at)
+
+
+def _title_version_zero(system: Any, a: Any) -> UnderstandingVersion:
+    """The title a record holds before its first title version (version 0), with the provenance of the reading that
+    wrote it: the earliest digest/card version from which every later reading kept this title (a rewrite that passed
+    it; version 0 of the digest = the formation reading), else `reading_provenance` (a record never rewritten)."""
+    attrs = _attrs(a)
+    current = _title(attrs)
+    rows = list(system.journal.versions(record_id=str(a.subject), field=_field_of(str(attrs.get("record_kind") or ""))))
+    if rows and rows[-1].title == current:
+        k = len(rows) - 1
+        while k > 0 and rows[k - 1].title == current:
+            k -= 1
+        src = rows[k]
+        return _title_version_row(a, 0, title=current, author=src.author, reader=src.reader, sources=src.sources,
+                                  cause={**src.cause, "title_from": {"field": src.field, "version": src.version}},
+                                  task_id=src.task_id, at=src.understood_at, method=src.digest_method)
+    reading = reading_provenance(a)
+    provenance = dict(a.provenance) if isinstance(a.provenance, dict) else {}
+    return _title_version_row(
+        a, 0, title=current, author=reading["author"], reader=reading["reader"], sources=(),
+        cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance")},
+        task_id="", at=reading["understood_at"] or str(a.observed_at or ""),
+        method=str(attrs.get("digest_method") or ""))
 
 
 # --------------------------------------------------------------------------- the verbs
@@ -631,6 +726,76 @@ def rewrite_digest(
                   hooks=_hooks, after=_after)
 
 
+def retitle(
+    system: Any, record_id: str, *,
+    title: str,
+    author: Mapping[str, Any],
+    cause: Union[str, Mapping[str, Any]],
+    expected_version: int,
+    reader: Optional[Mapping[str, Any]] = None,
+    sources: Sequence[Mapping[str, Any]] = (),
+    task_id: Optional[str] = None,
+    understood_at: Optional[str] = None,
+    _hooks: Sequence[Callable[[Any], None]] = (),
+    _after: Sequence[Callable[[Dict[str, Any]], None]] = (),
+) -> Dict[str, Any]:
+    """Change ONLY a record's title, in place, keeping every earlier title as a version (field `title`).
+
+    Every kind with a title (all formed records), the entity's own acts included (interest, lesson, realization,
+    diary entries...): the body, the keywords, the digest's reading and its provenance stay byte-identical; the row's
+    `title`, `title_version` and `title_provenance` change, and the canonical text (the title is its first line), the
+    keyword-index entry and the vector are replaced in the same transaction, like `rewrite_digest`. The title is
+    stored exactly as given (stripped), never cut. `expected_version` is the compare-and-set on `title_version` (0
+    for a record never retitled). The first retitle captures version 0 (the title the record held, with the
+    provenance of the reading that wrote it). Returns the `rewrite_digest` result shape with `field="title"`;
+    `outcome="unchanged"` (no version) when the title is already the current one. Refusal reasons (nothing
+    written): `unknown_record`, `empty_title`, `hash_chained` (an owner-direct diary entry whose `entry_hash`
+    attests its title), `closed`, `stale`, `embedder_unavailable`. Invalid arguments raise ValueError, as in
+    `rewrite_digest`.
+    """
+    author_d = _author(author)
+    reader_d = _reader(reader, author_d["kind"])
+    sources_t = _sources(sources, author_d["kind"])
+    cause_d = _cause(cause)
+    words = str(title or "").strip()
+    a = _resolve(system, record_id)
+    if a is None:
+        return _refusal("unknown_record", f"no formed record {record_id!r} in this store", record_id=str(record_id))
+    base = {"record_id": str(a.subject), "assertion_id": str(a.assertion_id or ""), "field": "title"}
+    if not words:
+        return _refusal("empty_title", "a title is an explicit, complete phrase: an empty one would erase it",
+                        **base)
+    if _attrs(a).get("entry_hash") is not None:
+        return _refusal("hash_chained", "this diary entry's entry_hash attests its title (diary_entry_hash); a new "
+                        "title would break verify_diary_chain", **base)
+    closures = _closures(system.journal, a.assertion_id)
+    if closures:
+        return _refusal("closed", f"the record is closed ({closures[0].kind}); retitle its current replacement",
+                        replaced_by=_replaced_by(closures), **base)
+    return _retitle_apply(system, a, words, author_d, reader_d, sources_t, cause_d,
+                          task_id=str(task_id or "").strip(), at=str(understood_at or "").strip() or utc_now_iso(),
+                          expected=int(expected_version), method=RETITLE_METHOD, hooks=_hooks, after=_after)
+
+
+def _retitle_apply(system: Any, a: Any, words: str, author_d: Dict[str, Any], reader_d: Dict[str, Any],
+                   sources_t: Sequence[Dict[str, Any]], cause_d: Dict[str, Any], *, task_id: str, at: str,
+                   expected: int, method: str, hooks: Sequence[Callable[[Any], None]] = (),
+                   after: Sequence[Callable[[Dict[str, Any]], None]] = ()) -> Dict[str, Any]:
+    def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:
+        out = dict(old)
+        out.update({"title": words, "title_version": n,
+                    "title_provenance": _understanding_attr(n, "title", author_d, reader_d, cause_d,
+                                                            tuple(sources_t), (), at)})
+        return out
+
+    def version(rec: Any, n: int) -> UnderstandingVersion:
+        return _title_version_row(rec, n, title=words, author=author_d, reader=reader_d, sources=sources_t,
+                                  cause=cause_d, task_id=task_id, at=at, method=method)
+
+    return _apply(system, record_id=str(a.subject), field="title", new_object=None, narration=None,
+                  reserved=reserved, version=version, expected_version=expected, hooks=hooks, after=after)
+
+
 def narrate_dream(
     system: Any, dream_id: str, *,
     text: str,
@@ -692,7 +857,9 @@ def revert_digest(
     """Restore version `to_version` as a NEW version (cause `revert`; nothing is erased). The restored reading
     keeps the author and reader of the words it restores; `by` ({kind, id}, default the operator) is who reverted,
     recorded in the cause with `reverted_to` and `reason`. `field` defaults to the record's own (digest, card for a
-    world-model card, narration when asked). Extra refusal: `unknown_version`."""
+    world-model card, narration or title when asked; a digest or card version restores its title too, recorded as
+    a title version, unless the record was retitled since its current reading: that title stays). Extra refusal:
+    `unknown_version`."""
     a = _resolve(system, record_id)
     if a is None:
         return _refusal("unknown_record", f"no formed record {record_id!r} in this store", record_id=str(record_id))
@@ -710,6 +877,10 @@ def revert_digest(
              "reason": str(reason or "").strip() or None}
     if fld == "narration":
         return _restore_narration(system, a, old, cause, int(expected_version))
+    if fld == "title":
+        return _retitle_apply(system, a, old.text, dict(old.author) or {"kind": UNRECORDED, "id": ""},
+                              dict(old.reader), tuple(old.sources), cause, task_id="", at=utc_now_iso(),
+                              expected=int(expected_version), method=old.digest_method or RETITLE_METHOD)
     if fld == "card":
         return _restore_card(system, a, old, cause, int(expected_version))
     restored_author = dict(old.author) if old.author else {"kind": UNRECORDED, "id": ""}
@@ -720,10 +891,16 @@ def _restore(system: Any, a: Any, old: UnderstandingVersion, cause: Dict[str, An
              restored_author: Dict[str, Any],
              extra: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None) -> Dict[str, Any]:
     at = utc_now_iso()
+    # A revert restores a reading's title only when the title is still that reading's: a title retitled since
+    # (it differs from the current reading's version row) stays, so undoing words never re-cuts a repaired title.
+    held = _current_version(_attrs(a), fld)
+    now_rows = [v for v in system.journal.versions(record_id=str(a.subject), field=fld) if v.version == held]
+    keep_title = bool(now_rows) and now_rows[0].title != _title(_attrs(a))
 
     def reserved(prev: Dict[str, Any], n: int) -> Dict[str, Any]:
         out = dict(prev)
-        out.update({"title": old.title or str(prev.get("title") or ""), "digest_method": old.digest_method,
+        restored_title = _title(prev) if keep_title else (old.title or _title(prev))
+        out.update({"title": restored_title, "digest_method": old.digest_method,
                     "digest_version": n, "authored_by": restored_author.get("id") or restored_author.get("kind"),
                     "understanding": _understanding_attr(n, fld, restored_author, dict(old.reader), cause,
                                                          tuple(old.sources), tuple(old.derived_from), at)})
@@ -825,7 +1002,8 @@ def author_card_in_place(
 def versions(system: Any, record_id: str, *, field: Optional[str] = None) -> List[Dict[str, Any]]:
     """Every reading of a record, oldest first, as dicts (the version row plus `current`: True on the reading the
     record holds now). `field` defaults to the record's own (digest, or card for a world-model card); pass
-    `field="narration"` for a dream's narrations. A never-rewritten record returns []."""
+    `field="narration"` for a dream's narrations, `field="title"` for its titles (version 0 = the title it held
+    before its first title change). A never-rewritten record returns []."""
     a = _resolve(system, record_id)
     if a is None:
         raise ValueError(f"unknown record {record_id!r}: no formed record with that graph id or digest assertion id")

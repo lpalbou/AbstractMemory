@@ -15,7 +15,7 @@ __all__ = ["UnderstandingOps"]
 
 
 class UnderstandingOps:
-    """rewrite_digest / narrate_dream / revert_digest / versions / current_of / record_understanding, and the
+    """rewrite_digest / retitle / narrate_dream / revert_digest / versions / current_of / record_understanding, and the
     queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
 
     def rewrite_digest(
@@ -32,6 +32,17 @@ class UnderstandingOps:
             self, record_id, text=text, author=author, cause=cause, expected_version=expected_version,
             reader=reader, sources=sources, derived_from=derived_from, title=title, keywords=keywords,
             digest_method=digest_method, magnitude=magnitude, task_id=task_id, understood_at=understood_at)
+
+    def retitle(
+        self, record_id: str, *, title: str, author: Mapping[str, Any],
+        cause: Union[str, Mapping[str, Any]], expected_version: int,
+        reader: Optional[Mapping[str, Any]] = None, sources: Sequence[Mapping[str, Any]] = (),
+        task_id: Optional[str] = None, understood_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Change only a record's title in place, keeping every earlier title as a version (understanding.retitle)."""
+        return _u.retitle(
+            self, record_id, title=title, author=author, cause=cause, expected_version=expected_version,
+            reader=reader, sources=sources, task_id=task_id, understood_at=understood_at)
 
     def narrate_dream(
         self, dream_id: str, *, text: str, author: Mapping[str, Any], expected_version: int = 0,

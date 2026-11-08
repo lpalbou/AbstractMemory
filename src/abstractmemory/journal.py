@@ -405,9 +405,10 @@ class ValenceEvent:
 
 
 #: The understood fields a version row may hold (backlog 0059): a record's digest, a world-model card's text, a
-#: dream's narration. The digest and the card text are the record's `object`; the narration is an attribute beside
-#: the dream's mechanical summary.
-VERSION_FIELDS = frozenset({"digest", "card", "narration"})
+#: dream's narration, a record's title. The digest and the card text are the record's `object`; the narration is an
+#: attribute beside the dream's mechanical summary; the title is `attributes.title` (`understanding.retitle`, and any
+#: reading that changes it), whose version row holds the title as its `text`.
+VERSION_FIELDS = frozenset({"digest", "card", "narration", "title"})
 
 
 @dataclass(frozen=True)

@@ -48,7 +48,9 @@ the edges precedent). A rewrite mints no record and appends no row to the six
 families: its version row is shown only to a consumer that asks for the
 OPT-IN family "revision" (`OPT_IN_FAMILIES`; `families=None` keeps the six),
 whose envelopes carry the version verbatim as payload, its digest text in
-the display block, and the run id of its first ledger source.
+the display block, and the run id of its first ledger source. A diary
+entry's revision envelopes (its title versions, `retitle`) are sealed like
+its display block: payload `text`/`title`/`keywords` emptied, `redacted`.
 """
 
 from __future__ import annotations
@@ -356,6 +358,15 @@ def _enrich(family: str, record: Any, store: Any,
     return block
 
 
+def _seal_diary_revision(payload: Dict[str, Any], assertion: Any) -> None:
+    """A diary entry's version rows (its title versions: `retitle`) carry the entry's words; its revision envelope
+    is sealed like its display block (topology and act-frame visible, words in the book): `text`, `title` and
+    `keywords` emptied, `redacted: "diary"` set. The version row itself stays whole in the journal."""
+    attrs = getattr(assertion, "attributes", None)
+    if isinstance(attrs, dict) and attrs.get("record_kind") == "diary":
+        payload.update({"text": "", "title": "", "keywords": [], "redacted": "diary"})
+
+
 def export_replay(
     store: Any,
     journal: Any,
@@ -436,6 +447,8 @@ def export_replay(
             "run_id": run_id,       # carries no correlation info.
             "payload": record.to_dict(),  # verbatim: the ledger IS the stream
         }
+        if family == "revision":
+            _seal_diary_revision(envelope["payload"], memo.resolve(record.record_id))
         if enrich:
             display = _enrich(family, record, store, memo)
             if display is not None:
