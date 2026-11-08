@@ -34,6 +34,7 @@ from .world_model_alias import (
     alias_candidates,
     alias_map,
     alias_world_model,
+    rekey_world_model,
 )
 from .alive_drives import alive_drives
 from .candidate_miner import mine_candidates_pass, resolve_questions_pass
@@ -365,6 +366,7 @@ __all__ = [
     "reembed_store",
     "refresh_ripples",
     "reject_candidate",
+    "rekey_world_model",
     "resolve_dreams_pass",
     "resolve_questions_pass",
     "retitle",

@@ -361,10 +361,12 @@ class MemoryTaskQueue:
     def on_rewrite(self, cur: Optional[sqlite3.Cursor], *, record_id: str, field: str, version: int,
                    result: Mapping[str, Any], task_id: Optional[str]) -> None:
         """Called by the 0059 verbs inside their transaction (SQLite) or right after (in-memory): ack the task the
-        writer named, and supersede the live tasks the new reading made stale. A retitle (field `title`) acks the
-        task it names and supersedes nothing: the body a pending task would understand is unchanged."""
+        writer named, and supersede the live tasks the new reading made stale. A retitle (field `title`) and a card
+        re-key (field `target`) ack the task they name and supersede nothing: the body a pending task would
+        understand is unchanged."""
         at = _iso(_utc())
-        kind = {"digest": "digest.rewrite", "card": "card.author", "narration": "dream.narrate", "title": None}[field]
+        kind = {"digest": "digest.rewrite", "card": "card.author", "narration": "dream.narrate", "title": None,
+                "target": None}[field]
 
         def write(c: sqlite3.Cursor) -> None:
             if task_id:

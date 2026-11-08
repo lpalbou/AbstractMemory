@@ -66,9 +66,27 @@ A record's understanding can be rewritten in place, and every earlier reading is
   re-cuts a repaired title).
 - Replay: a diary entry's `revision` envelopes (its title versions) are sealed like its display block (payload
   `text`, `title` and `keywords` emptied, `redacted: "diary"`); the version row stays whole in the journal.
+- **`rekey_world_model`** (module function in `world_model_alias`, and `MemorySystem.rekey_world_model`; operator
+  2026-11-08, the title repair): moves the standing card keyed `old_key` to `new_key` IN PLACE and keeps `old_key`
+  as an alias. An interest's card is keyed on the subject head of the interest's title, so a retitled interest made
+  the next `world_model_pass` form a second card beside the standing one (63 standing cards held in ephemeral and
+  nerin); `alias_world_model` could not move a card onto a key with no card. The card keeps its record id,
+  assertion id, revision, evidence fingerprint, sources, text, title, keywords, vector, edges, versions and usage;
+  the old key resolves to it (`alias_map`, mentions, `world_model_update`), and the pass groups evidence under either
+  key onto it, so it forms no new card. The move is a version row in the journal (new version field `target`:
+  version 0 the old key, version N+1 the new one with author, reader, sources, cause, reason and `rekey: {from,
+  to}`; `target_version` / `target_provenance` on the row). No embedder is called and pending `card.author` tasks
+  stay. Refusals: `unknown_card`, `target_taken` (a different card already stands on the new key: merging is not
+  this verb), `alias_bound_elsewhere`, `stale`; a replay is `unchanged`. `revert_digest(..., field="target")` refuses
+  with `use_rekey_world_model`. Proof on a copy of nerin's pilot home: before the re-key a report-only pass would
+  form 3 cards on the new keys; after it, none (3 of 3 `unchanged`, 15 standing cards before and after, same ids).
+- `REWRITE_CAUSES` gains `repair`: a correction of what a process wrote wrong (a title cut at formation, a card key
+  derived from it), so the title repair no longer rides `backfill` with a `repair` sub-key.
 
 ### Changed
 
+- `world_model_pass`: an interest whose title heads to an alias of a card counts as an election of the card's
+  primary key (it keeps clearing the evidence floor there), as its evidence already did.
 - `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is
   kept as a version). It accepts `author` as `{kind, id}` with `reader` / `sources`, and `expected_fingerprint`
   (refused when the card's evidence changed since). `in_place=False` keeps the revision-N+1 path.

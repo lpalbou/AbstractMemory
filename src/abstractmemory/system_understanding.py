@@ -15,8 +15,8 @@ __all__ = ["UnderstandingOps"]
 
 
 class UnderstandingOps:
-    """rewrite_digest / retitle / narrate_dream / revert_digest / versions / current_of / record_understanding, and the
-    queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
+    """rewrite_digest / retitle / rekey_world_model / narrate_dream / revert_digest / versions / current_of /
+    record_understanding, and the queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
 
     def rewrite_digest(
         self, record_id: str, *, text: str, author: Mapping[str, Any],
@@ -43,6 +43,18 @@ class UnderstandingOps:
         return _u.retitle(
             self, record_id, title=title, author=author, cause=cause, expected_version=expected_version,
             reader=reader, sources=sources, task_id=task_id, understood_at=understood_at)
+
+    def rekey_world_model(
+        self, old_key: str, new_key: str, *, scope: str, owner_id: str, author: Mapping[str, Any],
+        cause: Union[str, Mapping[str, Any]], reason: Optional[str] = None,
+        reader: Optional[Mapping[str, Any]] = None, sources: Sequence[Mapping[str, Any]] = (),
+    ) -> Dict[str, Any]:
+        """Move a standing world-model card to a new key in place, the old key kept as an alias
+        (world_model_alias.rekey_world_model)."""
+        from .world_model_alias import rekey_world_model
+
+        return rekey_world_model(self, old_key, new_key, scope=scope, owner_id=owner_id, author=author, cause=cause,
+                                 reason=reason, reader=reader, sources=sources)
 
     def narrate_dream(
         self, dream_id: str, *, text: str, author: Mapping[str, Any], expected_version: int = 0,

@@ -472,6 +472,11 @@ def world_model_pass(
         if folded:
             merged = by_target.setdefault(primary, [])
             by_target[primary] = sorted({*merged, *folded})
+        # An interest whose title still heads to the alias (a card re-keyed before its interest was retitled:
+        # rekey_world_model) is an election of the primary: it keeps clearing the floor there.
+        elected = interest_evidence.pop(alias, None)
+        if elected:
+            interest_evidence[primary] = sorted({*interest_evidence.get(primary, []), *elected})
 
     if targets is not None:
         # The filter normalizes through the map too: an update naming the

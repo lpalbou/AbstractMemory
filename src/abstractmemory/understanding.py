@@ -36,6 +36,12 @@ a diary entry's words are read through the book, its replay block is redacted, a
 of its title versions are sealed the same way (replay.py); a retitle reads nothing back. An entry carrying an
 `entry_hash` (an owner-direct chained diary) refuses: its title is part of the attested hash.
 
+A CARD'S KEY (`attributes.target`) is moved alone by `world_model_alias.rekey_world_model` through
+`rekey_card_in_place` (operator 2026-11-08: an interest's card is keyed on its title's subject head, so a retitled
+interest would otherwise form a second card beside the standing one): field `target`, `target_version`,
+`target_provenance`; the old key joins `attributes.aliases`. The card's text, title, keywords and vector are
+untouched (the key is not in the canonical text), so no embedder is called.
+
 WHO WROTE THE WORDS is recorded, never inferred: `author` = {kind, id} with kind in `AUTHOR_KINDS`
 ("entity-mind": the entity's own model; "capability-model": a model the entity's cognition profile names for this
 capability, writing as "a passive memory process, part of me" (operator decision 2); "operator"; "mechanical");
@@ -64,6 +70,7 @@ __all__ = [
     "AUTHOR_KINDS",
     "DEFAULT_AUTHORED_METHOD",
     "ENTITY_WORDS_KINDS",
+    "REKEY_METHOD",
     "REWRITE_CAUSES",
     "RETITLE_METHOD",
     "SPARK_KINDS",
@@ -88,8 +95,9 @@ AUTHOR_KINDS = frozenset({"mechanical", "entity-mind", "capability-model", "oper
 MODEL_AUTHOR_KINDS = frozenset({"entity-mind", "capability-model"})
 UNRECORDED = "unrecorded"
 
-#: Why a reading was written (DESIGN §4).
-REWRITE_CAUSES = frozenset({"formation", "backfill", "ripple", "evidence", "operator", "revert"})
+#: Why a reading was written (DESIGN §4). `repair` (operator 2026-11-08): a correction of what a process wrote wrong,
+#: such as a title the runtime cut at formation or a card key derived from that cut title.
+REWRITE_CAUSES = frozenset({"formation", "backfill", "ripple", "evidence", "operator", "revert", "repair"})
 
 #: The entity's own acts: never rewritten by a background process (the redigestion rails, minus the born-digest
 #: kinds that now have their own in-place verbs: dreams get a narration, cards get `author_world_model`).
@@ -112,6 +120,10 @@ DEFAULT_AUTHORED_METHOD = "authored-v1"
 
 #: The method label of a title version written by `retitle`.
 RETITLE_METHOD = "retitle-v1"
+
+#: The method label of a card-key version written by `rekey_card_in_place` (version 0 of a key reads
+#: `world-model-pass`: the pass derived it from the evidence).
+REKEY_METHOD = "rekey-v1"
 
 #: The card floor's mechanical label (world_model.py): the cards the task queue owes authored words.
 MECHANICAL_CARD_METHODS = frozenset({"mechanical-card-v2"})
@@ -221,7 +233,8 @@ def _field_of(kind: str) -> str:
 
 
 def _version_attr(field: str) -> str:
-    return {"narration": "narration_version", "title": "title_version"}.get(field, "digest_version")
+    return {"narration": "narration_version", "title": "title_version",
+            "target": "target_version"}.get(field, "digest_version")
 
 
 def _title(attrs: Mapping[str, Any]) -> str:
@@ -408,6 +421,8 @@ def _apply(
     planned = replace(a, object=new_object if new_object is not None else a.object, attributes=planned_attrs)
     if field == "title":
         identical = _title(attrs0) == _title(planned_attrs)
+    elif field == "target":
+        identical = str(attrs0.get("target") or "") == str(planned_attrs.get("target") or "")
     elif narration is not None:
         identical = str(attrs0.get("narration") or "") == narration
     else:
@@ -424,7 +439,7 @@ def _apply(
     write_vector = False
     distance: Optional[float] = None
     text = canonical_text(planned)
-    if field != "narration":
+    if field not in ("narration", "target"):  # a card's key is not in its canonical text: the vector stands
         old_vector = store.stored_vector(aid)
         refusal, vector, write_vector = _embed(store, text, old_vector is not None)
         if refusal is not None:
@@ -438,6 +453,8 @@ def _apply(
     v_zero: Optional[UnderstandingVersion] = None
     if current == 0 and field == "title":
         v_zero = _title_version_zero(system, a)
+    elif current == 0 and field == "target":
+        v_zero = _target_version_zero(a)
     elif current == 0 and field != "narration":
         v_zero = _version_zero(a, field)
     title_rows: List[UnderstandingVersion] = []
@@ -632,6 +649,20 @@ def _title_version_zero(system: Any, a: Any) -> UnderstandingVersion:
         cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance")},
         task_id="", at=reading["understood_at"] or str(a.observed_at or ""),
         method=str(attrs.get("digest_method") or ""))
+
+
+def _target_version_zero(a: Any) -> UnderstandingVersion:
+    """The key a card holds before its first re-key (version 0): `world_model_pass` derived it from the evidence
+    (author mechanical, cause formation), at the formation of the card row that holds it."""
+    attrs = _attrs(a)
+    provenance = dict(a.provenance) if isinstance(a.provenance, dict) else {}
+    return _version_row(
+        a, 0, field="target", text=str(attrs.get("target") or ""), title=_title(attrs),
+        keywords=tuple(attrs.get("keywords") or ()), digest_method="world-model-pass",
+        author={"kind": "mechanical", "id": "world_model_pass"}, reader={}, sources=(), derived_from=(),
+        cause={"cause": "formation", "card_revision": attrs.get("revision"),
+               "formation_provenance": _json_safe(provenance, "provenance")},
+        magnitude={}, task_id="", at=str(a.observed_at or ""))
 
 
 # --------------------------------------------------------------------------- the verbs
@@ -872,6 +903,10 @@ def revert_digest(
     if not rows:
         return _refusal("unknown_version", f"no version {int(to_version)} of {fld} for this record",
                         record_id=str(a.subject), assertion_id=str(a.assertion_id or ""), field=fld)
+    if fld == "target":
+        return _refusal("use_rekey_world_model",
+                        "a card's key moves through rekey_world_model (the old key stays an alias); re-key it back",
+                        record_id=str(a.subject), assertion_id=str(a.assertion_id or ""), field=fld)
     old = rows[0]
     cause = {"cause": "revert", "reverted_to": int(to_version), "by": who,
              "reason": str(reason or "").strip() or None}
@@ -994,6 +1029,53 @@ def author_card_in_place(
 
     return _apply(system, record_id=str(card.subject), field="card", new_object=words, narration=None,
                   reserved=reserved, version=version, expected_version=expected, hooks=_hooks, after=_after)
+
+
+def rekey_card_in_place(
+    system: Any, card: Any, *, new_key: str, author: Mapping[str, Any], cause: Union[str, Mapping[str, Any]],
+    reader: Optional[Mapping[str, Any]] = None, sources: Sequence[Mapping[str, Any]] = (),
+    understood_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """`rekey_world_model`'s write (world_model_alias.py owns the refusals and calls this): the card's key
+    (`attributes.target`) becomes `new_key` IN PLACE, and the key it held joins `attributes.aliases`, so evidence,
+    mentions and participants under the old key still land on this card. Graph id, assertion id, revision, evidence
+    fingerprint, sources, text, title, keywords, vector, edges and usage stay as they are. Field `target`: version 0
+    is the key the pass derived, version N+1 this key with its provenance; `target_version` is the compare-and-set.
+    A person card's `participants` follow the pass's rule (the key plus every non-topic alias)."""
+    author_d = _author(author)
+    reader_d = _reader(reader, author_d["kind"])
+    sources_t = _sources(sources, author_d["kind"])
+    cause_d = _cause(cause)
+    key = str(new_key or "").strip()
+    if not key:
+        raise ValueError("rekey_card_in_place requires a non-empty new_key")
+    at = str(understood_at or "").strip() or utc_now_iso()
+
+    def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:
+        out = dict(old)
+        held = str(old.get("target") or "").strip()
+        names = {str(x).strip() for x in (old.get("aliases") or ()) if isinstance(x, str) and str(x).strip()}
+        if held:
+            names.add(held)
+        names.discard(key)
+        aliases = sorted(names)
+        out.update({"target": key, "aliases": aliases, "target_version": n,
+                    "target_provenance": _understanding_attr(n, "target", author_d, reader_d, cause_d, sources_t, (),
+                                                             at)})
+        if key.startswith("topic:"):
+            out.pop("participants", None)
+        else:
+            out["participants"] = [key, *(x for x in aliases if not x.startswith("topic:"))]
+        return out
+
+    def version(rec: Any, n: int) -> UnderstandingVersion:
+        return _version_row(rec, n, field="target", text=key, title=_title(_attrs(rec)),
+                            keywords=tuple(_attrs(rec).get("keywords") or ()), digest_method=REKEY_METHOD,
+                            author=author_d, reader=reader_d, sources=sources_t, derived_from=(), cause=cause_d,
+                            magnitude={}, task_id="", at=at)
+
+    return _apply(system, record_id=str(card.subject), field="target", new_object=None, narration=None,
+                  reserved=reserved, version=version, expected_version=_current_version(_attrs(card), "target"))
 
 
 # --------------------------------------------------------------------------- reads
