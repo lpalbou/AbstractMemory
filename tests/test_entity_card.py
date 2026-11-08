@@ -371,3 +371,66 @@ def test_current_window_is_a_window_not_a_point(system) -> None:
     # Standing (likes_dislikes) still folds the WHOLE life: ambivalent.
     [like] = card["likes_dislikes"]["likes"]
     assert like["target"] == "tool:x" and like["positive"] == 6.0
+
+
+# ---------------------------------------------------------------------------
+# Lessons: his book's lessons count too (operator 2026-11-08, nerin's 16)
+# ---------------------------------------------------------------------------
+
+
+def _book_lesson(system, key: str, title: str, digest: str, entry_id: str) -> str:
+    return _remember(system, key, "diary", title, digest, scope="diary",
+                     attributes={"diary_type": "lesson", "entry_id": entry_id},
+                     provenance={"source": "owner-direct"})
+
+
+def test_card_lessons_include_lessons_written_in_his_book(system) -> None:
+    """A diary entry marked lesson is a lesson: nerin wrote 16 in his book
+    and the card said none — it counted only kind=lesson records. Two book
+    lessons + one lesson record = three lessons, newest first; the book's
+    carry source='diary', the record's carry no source."""
+    b1 = _book_lesson(system, "bl-1", "Snippets are leads",
+                      "Search snippets are leads, not confirmations.", "diary_bl1")
+    rec = _remember(system, "lr-1", "lesson", "lesson: act, do not describe",
+                    "Describing a pattern is the pattern; break it by acting.",
+                    scope="self")
+    b2 = _book_lesson(system, "bl-2", "A failed search is a gap",
+                      "A failed regional search is a search gap, not evidence of absence.",
+                      "diary_bl2")
+    _remember(system, "dn-1", "diary", "A plain note", "Not a lesson.", scope="diary",
+              provenance={"source": "owner-direct"})
+
+    section = system.entity_card(scope_pairs=SCOPES, owner_id=EID)["lessons"]
+    assert section["total"] == 3
+    assert [b["record_id"] for b in section["lessons"]] == [b2, rec, b1]  # newest first
+    by_id = {b["record_id"]: b for b in section["lessons"]}
+    assert by_id[b1]["source"] == by_id[b2]["source"] == "diary"
+    assert by_id[b1]["statement"] == "Search snippets are leads, not confirmations."
+    assert by_id[b1]["entry_id"] == "diary_bl1" and by_id[b1]["observed_at"]
+    assert "source" not in by_id[rec]
+    assert "2 book entr" in section["provenance"]
+
+
+def test_card_book_lesson_derived_into_a_record_shows_once(system) -> None:
+    """Both planes stand, but the card shows a lesson ONCE: a book lesson a
+    lesson record was derived from (derived_from edge to the entry's graph
+    id, or the record's entry_id naming the book entry) appears as that
+    record only."""
+    b1 = _book_lesson(system, "bd-1", "Snippets are leads",
+                      "Search snippets are leads, not confirmations.", "diary_bd1")
+    b2 = _book_lesson(system, "bd-2", "Landing pages verify existence",
+                      "A landing page verifies a publication exists, not its claims.",
+                      "diary_bd2")
+    b3 = _book_lesson(system, "bd-3", "Name the gap", "Log a gap as a gap.", "diary_bd3")
+    via_edge = _remember(system, "rd-1", "lesson", "lesson: snippets are leads",
+                         "Search snippets are leads.", scope="self",
+                         edges=(("derived_from", b1),))
+    via_entry = _remember(system, "rd-2", "lesson", "lesson: landing pages",
+                          "Landing pages prove existence only.", scope="self",
+                          attributes={"entry_id": "diary_bd2"})
+
+    section = system.entity_card(scope_pairs=SCOPES, owner_id=EID)["lessons"]
+    shown = {b["record_id"] for b in section["lessons"]}
+    assert shown == {via_edge, via_entry, b3}
+    assert section["total"] == 3
+    assert not ({b1, b2} & shown)

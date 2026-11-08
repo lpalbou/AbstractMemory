@@ -515,17 +515,51 @@ def entity_card(
     # ratio (lessons only grow — never-100% semantics do not apply).
     lesson_rows = [a for a in believed
                    if a.attributes.get("record_kind") == "lesson"]
-    lesson_rows.sort(key=lambda a: (str(a.observed_at or ""), a.subject),
+    # A lesson he wrote in his BOOK (diary entry, diary_type='lesson') is a
+    # lesson too (operator 2026-11-08: nerin's 16 book lessons showed
+    # nowhere — the section counted only kind=lesson records). Both planes
+    # stand (records.py DIARY_TYPES note); the card shows each lesson ONCE:
+    # a book lesson that a believed lesson record was derived from (a
+    # derived_from edge, or the record's entry_id — either id namespace)
+    # is already on the card as that record.
+    lesson_ids = {a.subject for a in lesson_rows}
+    derived_refs: Set[str] = {
+        str(a.attributes.get("entry_id")).strip() for a in lesson_rows
+        if isinstance(a.attributes.get("entry_id"), str)
+    }
+    for rows in rows_by_pair.values():
+        for a in rows:
+            attrs = a.attributes if isinstance(a.attributes, dict) else {}
+            if (attrs.get("record_edge") and str(a.predicate or "").strip() == "derived_from"
+                    and a.subject in lesson_ids and a.assertion_id not in excluded):
+                derived_refs.add(str(a.object or "").strip())
+    derived_refs.discard("")
+    book_lessons = [
+        a for a in diary_rows
+        if a.attributes.get("diary_type") == "lesson"
+        and not ({a.subject, str(a.attributes.get("entry_id") or "").strip()} & derived_refs)
+    ]
+    all_lessons: List[Tuple[TripleAssertion, bool]] = (
+        [(a, False) for a in lesson_rows] + [(a, True) for a in book_lessons])
+    all_lessons.sort(key=lambda p: (str(p[0].observed_at or ""), p[0].subject),
                      reverse=True)
+    lesson_briefs: List[Dict[str, Any]] = []
+    for a, from_book in all_lessons[:_KEY_MOMENTS_BOUND]:
+        brief = _row_brief(a)
+        if from_book:
+            brief["source"] = "diary"
+        lesson_briefs.append(brief)
     lessons = {
-        "lessons": [_row_brief(a) for a in lesson_rows[:_KEY_MOMENTS_BOUND]],
-        "total": len(lesson_rows),
+        "lessons": lesson_briefs,
+        "total": len(all_lessons),
         "provenance": (
-            f"{len(lesson_rows)} lesson(s) (kind=lesson, believed rows, "
-            f"newest first, {_KEY_MOMENTS_BOUND} shown) — distilled "
-            "knowledge from lived experience; a count, never a ratio "
-            "(lessons only accumulate)"
-            if lesson_rows else "no lessons at this anchor — nothing "
+            f"{len(all_lessons)} lesson(s): {len(lesson_rows)} kind=lesson "
+            f"record(s) + {len(book_lessons)} book entr(y/ies) marked lesson "
+            "(diary_type='lesson', source='diary'; one already derived into a "
+            "lesson record shows once, as that record) — believed rows, newest "
+            f"first, {_KEY_MOMENTS_BOUND} shown; distilled knowledge from lived "
+            "experience; a count, never a ratio (lessons only accumulate)"
+            if all_lessons else "no lessons at this anchor — nothing "
             "distilled yet, which is a young life, not a failure"
         ),
     }

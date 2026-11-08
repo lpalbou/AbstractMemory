@@ -67,6 +67,14 @@ A record's understanding can be rewritten in place, and every earlier reading is
   characters; the new read-side `canonical_text.short_title` gives shelf handles their compact title), and an
   archive-imported file's prose as its record digest (was 480; imported records no longer carry `_truncation`).
 
+### Fixed
+
+- The identity card's `lessons` section counts the lessons he wrote in his book: diary entries with
+  `diary_type='lesson'` join the `kind=lesson` records (same brief shape, plus `source: "diary"`), newest first,
+  and `total` counts both. A book lesson that a believed lesson record was derived from (a `derived_from` edge to
+  the entry, or the record's `entry_id`) shows once, as that record. Before, an entity whose lessons were all in
+  his book (nerin: 16) showed none.
+
 ### Deprecated
 
 - `apply_redigestion` (emits `DeprecationWarning`): it forms a new record with zero usage. Use `rewrite_digest`.
