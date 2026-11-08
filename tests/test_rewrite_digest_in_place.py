@@ -421,7 +421,8 @@ def test_display_block_and_record_read_carry_the_provenance(home) -> None:
     gid = _form(home, "turn-d")
     plain = [e for e in home.export_replay(families=("binding",)) if e["payload"]["record_id"] == gid][0]
     assert plain["display"]["authored_by"] == {"kind": "mechanical", "id": "mechanical-v2"}
-    assert plain["display"]["digest_version"] == 0 and plain["display"]["version_count"] == 0
+    assert plain["display"]["digest_version"] == 0 and plain["display"]["version_count"] == 1
+    assert plain["display"]["cause"] == "formation"
     _rewrite(home, gid, "Understood in the entity's own words.")
     block = [e for e in home.export_replay(families=("binding",)) if e["payload"]["record_id"] == gid][0]["display"]
     assert block["digest"] == "Understood in the entity's own words."

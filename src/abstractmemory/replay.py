@@ -38,8 +38,11 @@ digest is now the one mutable cell (rewritten in place, every earlier reading
 kept as a version). Display blocks of formed non-diary records carry the
 current reading's provenance (`understanding.understanding_fields`:
 digest_method, digest_version, version_count, authored_by, reader,
-understood_at; cards: target, target_type, card_revision, source_count;
-dreams: narrated, narration_version; replaced_by for a superseded record);
+understood_at, cause; cards: target, target_type, card_revision,
+source_count; dreams: narrated, narration_version; replaced_by for a
+superseded record); a row nobody stamped reads as its formation reading
+(`understanding.reading_provenance`). Diary-redacted blocks carry the
+act-frame part only: authored_by, understood_at, cause;
 BINDING envelopes also carry the current `digest` text (one per formation,
 the edges precedent). A rewrite mints no record and appends no row to the six
 families: its version row is shown only to a consumer that asks for the
@@ -163,6 +166,15 @@ def _display_block(assertion: Any, requested_id: str,
         entry_id = str(attrs.get("entry_id") or "").strip()
         if entry_id:
             block["entry_id"] = entry_id
+        # Who wrote the entry, when and why (operator 2026-11-08) is act-frame
+        # like diary_type: the scope owner, at the entry's formation; never
+        # its words. Same derivation as every other block.
+        from .understanding import reading_provenance
+
+        reading = reading_provenance(assertion)
+        block.update({"authored_by": reading["author"], "understood_at": reading["understood_at"]})
+        if reading["cause"]:
+            block["cause"] = reading["cause"]
         return block
     digest = handle_digest(assertion)
     title = str(attrs.get("title") or "").strip() or f"{assertion.subject} {assertion.predicate}"

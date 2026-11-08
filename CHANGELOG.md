@@ -74,6 +74,23 @@ A record's understanding can be rewritten in place, and every earlier reading is
   and `total` counts both. A book lesson that a believed lesson record was derived from (a `derived_from` edge to
   the entry, or the record's `entry_id`) shows once, as that record. Before, an entity whose lessons were all in
   his book (nerin: 16) showed none.
+- Every record says who wrote its words, when and why, even when its writer stamped nothing (operator
+  2026-11-08: a lesson nerin elected at a visit close read "Who wrote it was not recorded · why: not computed
+  yet"). One derivation, `understanding.reading_provenance`, serves `record_understanding`, the replay display
+  blocks (binding and revision rows), the version 0 a first rewrite keeps, the identity card's briefs and
+  formation. The writer's stamp (`attributes.understanding`: a rewrite, a backfill, a ripple consolidation) always
+  wins. A row nobody stamped reads as its formation reading: `cause: "formation"`, `understood_at` = its
+  `observed_at`, and `authored_by` from its origin: a `mechanical*` digest_method gives `{kind: "mechanical", id:
+  <method>}`; a spark identity record (`attributes.spark_version`) `{kind: "operator", id: "spark-v<N>"}`; a row
+  whose provenance names the operator as actor (an archive import) `{kind: "operator", id: <source>}`; a kind only
+  the entity writes (`ENTITY_WORDS_KINDS`: lesson, interest, realization, observation, question, every diary entry,
+  a value, purpose or trait he elected) `{kind: "entity-mind", id: <owner>}`; anything else stays `unrecorded`.
+  Stored rows are not rewritten. `remember_many` now records the same reading at formation
+  (`attributes.understanding`, version 0) when the caller stamped none and the author is known.
+- `version_count` is 1 for a never-rewritten record (it was 0: the record has one reading); `digest_version` stays
+  0. The identity card's record briefs (interests, lessons, questions, problems, first moments) carry the reading
+  fields (`authored_by`, `understood_at`, `cause`, `digest_version`, `version_count`, ...); diary-redacted replay
+  blocks carry `authored_by`, `understood_at` and `cause`, never the entry's words.
 
 ### Deprecated
 

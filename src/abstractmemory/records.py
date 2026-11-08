@@ -508,6 +508,15 @@ def build_formation_plan(
         if r.kind == "diary" and "prev_entry_hash" in attrs:
             attrs["entry_hash"] = diary_entry_hash(r.title, r.digest, observed_at)
 
+        # Who wrote these words, recorded at formation (operator 2026-11-08): a caller that stamped nothing gets
+        # the formation reading `understanding.reading_provenance` would derive (version 0, cause "formation",
+        # understood_at = observed_at); a caller's own stamp (a ripple consolidation) stands.
+        from .understanding import formation_understanding  # lazy: understanding imports this module
+
+        stamp = formation_understanding(attrs, provenance=provenance, owner_id=owner_id, observed_at=observed_at)
+        if stamp is not None:
+            attrs["understanding"] = stamp
+
         assertions.append(
             TripleAssertion(
                 subject=rid,

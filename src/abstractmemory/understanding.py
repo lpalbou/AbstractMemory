@@ -31,6 +31,11 @@ WHO WROTE THE WORDS is recorded, never inferred: `author` = {kind, id} with kind
 capability, writing as "a passive memory process, part of me" (operator decision 2); "operator"; "mechanical");
 `reader` = {provider, model, thinking}; `sources` = ADR 0003 `SourceRef` dicts naming the ledger step of the call (a
 model author must name one). This module never invents text and applies no rule to the words it is given.
+
+A ROW NOBODY STAMPED (formed before formation recorded its reading, operator 2026-11-08) is read from what the row
+itself says about its origin, never from its words: `reading_provenance` (its digest_method label, the spark mark,
+an operator actor in its provenance, its kind; `_formation_author` has the order). `remember_many` records that
+same reading at formation, so new rows carry it as a stamp.
 """
 
 from __future__ import annotations
@@ -44,15 +49,18 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from .canonical_text import canonical_text
 from .journal import UnderstandingVersion, VERSION_FIELDS, utc_now_iso
 from .records import resolve_digest_assertion
-from .redigestion import MACHINE_AUTHORED_METHODS
 
 __all__ = [
     "AUTHOR_KINDS",
     "DEFAULT_AUTHORED_METHOD",
+    "ENTITY_WORDS_KINDS",
     "REWRITE_CAUSES",
+    "SPARK_KINDS",
     "UNDERSTANDING_PROTECTED_KINDS",
     "current_of",
+    "formation_understanding",
     "narrate_dream",
+    "reading_provenance",
     "record_understanding",
     "revert_digest",
     "rewrite_digest",
@@ -61,8 +69,9 @@ __all__ = [
     "versions",
 ]
 
-#: Who may author a reading (DESIGN §4). `unrecorded` is never accepted as input: it labels readings this package
-#: did not see written (version 0 of a record whose digest_method names no mechanical writer, a legacy author label).
+#: Who may author a reading (DESIGN §4). `unrecorded` is never accepted as input: it labels a reading nobody stamped
+#: whose row names no origin (`_formation_author`: no mechanical label, not a kind only the entity writes, no spark
+#: or operator mark) and a legacy author label.
 AUTHOR_KINDS = frozenset({"mechanical", "entity-mind", "capability-model", "operator"})
 MODEL_AUTHOR_KINDS = frozenset({"entity-mind", "capability-model"})
 UNRECORDED = "unrecorded"
@@ -74,11 +83,22 @@ REWRITE_CAUSES = frozenset({"formation", "backfill", "ripple", "evidence", "oper
 #: kinds that now have their own in-place verbs: dreams get a narration, cards get `author_world_model`).
 UNDERSTANDING_PROTECTED_KINDS = frozenset({"diary", "value", "purpose", "trait", "interest", "realization"})
 
+#: Kinds only the entity writes, in his own words (operator 2026-11-08): his elections at a visit close or mid-turn
+#: (lesson, interest, realization, observation, question), his book (diary: every diary_type, so note, idea,
+#: commitment, reflection, question, problem and lesson entries) and the identity he revises himself. A row of these
+#: kinds nobody stamped reads `entity-mind` with the scope owner as id, unless its row names another origin
+#: (`_formation_author`: a mechanical label, the spark, an operator import).
+ENTITY_WORDS_KINDS = frozenset({"lesson", "interest", "realization", "observation", "question", "diary",
+                                "value", "purpose", "trait"})
+
+#: The identity kinds the engram pass forms from the spark (engram.py stamps `attributes.spark_version`): the
+#: operator's (or the template's) words, never the entity's.
+SPARK_KINDS = frozenset({"value", "purpose", "trait"})
+
 #: The digest_method a rewrite stamps unless the caller names another.
 DEFAULT_AUTHORED_METHOD = "authored-v1"
 
-#: The card floor's mechanical label (world_model.py); with MACHINE_AUTHORED_METHODS, the labels whose words a
-#: machine wrote.
+#: The card floor's mechanical label (world_model.py): the cards the task queue owes authored words.
 MECHANICAL_CARD_METHODS = frozenset({"mechanical-card-v2"})
 
 #: A ripple's consolidation record (backlog 0061) is never batch-rewritten.
@@ -196,13 +216,64 @@ def _current_version(attrs: Mapping[str, Any], field: str) -> int:
         return 0
 
 
-def original_author(attrs: Mapping[str, Any]) -> Dict[str, Any]:
-    """Who wrote a reading this package did not see written (version 0), from its digest_method label only."""
+def _formation_author(attrs: Mapping[str, Any], provenance: Mapping[str, Any], owner_id: str) -> Dict[str, Any]:
+    """Who wrote a formation reading nobody stamped, from what the row says about its origin (first match wins):
+    a `mechanical*` digest_method; a legacy `authored_by` label (kind unknown: `unrecorded`, the label as id); a
+    spark identity record (`attributes.spark_version`: the operator's spark, id `spark-v<N>`); a row whose
+    provenance names the operator as actor (an archive import: id = provenance.source); a kind only the entity
+    writes, in his own words (`ENTITY_WORDS_KINDS`: id = the scope owner); else `unrecorded`."""
     method = str(attrs.get("digest_method") or "").strip()
-    if method in MACHINE_AUTHORED_METHODS or method in MECHANICAL_CARD_METHODS:
+    if method.startswith("mechanical"):
         return {"kind": "mechanical", "id": method}
     label = attrs.get("authored_by")
-    return {"kind": UNRECORDED, "id": str(label if isinstance(label, str) else "") or method}
+    if isinstance(label, str) and label.strip():
+        return {"kind": UNRECORDED, "id": label.strip()}
+    kind = str(attrs.get("record_kind") or "").strip().lower()
+    if kind in SPARK_KINDS and attrs.get("spark_version") is not None:
+        return {"kind": "operator", "id": f"spark-v{attrs.get('spark_version')}"}
+    if str(provenance.get("actor") or "").strip() == "operator":
+        return {"kind": "operator", "id": str(provenance.get("source") or "").strip() or "operator"}
+    owner = str(owner_id or "").strip()
+    if kind in ENTITY_WORDS_KINDS and owner:
+        return {"kind": "entity-mind", "id": owner}
+    return {"kind": UNRECORDED, "id": method}
+
+
+def _reading(attrs: Mapping[str, Any], provenance: Mapping[str, Any], owner_id: str,
+             observed_at: str) -> Dict[str, Any]:
+    und = attrs.get("understanding") if isinstance(attrs.get("understanding"), dict) else None
+    if und:  # the writer's stamp always wins
+        cause = und.get("cause") if isinstance(und.get("cause"), dict) else {}
+        return {"author": dict(und.get("author") or {}), "reader": dict(und.get("reader") or {}),
+                "understood_at": str(und.get("understood_at") or ""), "cause": str(cause.get("cause") or "")}
+    return {"author": _formation_author(attrs, provenance, owner_id), "reader": {},
+            "understood_at": str(observed_at or ""), "cause": "formation"}
+
+
+def reading_provenance(assertion: Any) -> Dict[str, Any]:
+    """THE derivation of who wrote a record's current reading, with which model, when and why (pure):
+    {author {kind, id}, reader, understood_at, cause}. The row's own stamp (`attributes.understanding`, written by
+    a rewrite, a ripple consolidation or formation) wins. A row nobody stamped is read as its formation reading:
+    cause "formation", understood_at = observed_at, the author from `_formation_author`. `understanding_fields`
+    (record_understanding, the replay display blocks), the version 0 a first rewrite captures, the card briefs and
+    the formation stamp all go through here."""
+    provenance = getattr(assertion, "provenance", None)
+    return _reading(_attrs(assertion), provenance if isinstance(provenance, dict) else {},
+                    str(getattr(assertion, "owner_id", "") or ""), str(getattr(assertion, "observed_at", "") or ""))
+
+
+def formation_understanding(attrs: Mapping[str, Any], *, provenance: Mapping[str, Any], owner_id: str,
+                            observed_at: str) -> Optional[Dict[str, Any]]:
+    """The `understanding` stamp `remember_many` writes on a record its caller did not stamp (version 0, cause
+    "formation", the same author `reading_provenance` derives), so a future read reads it recorded; None when the
+    caller stamped one or the author is `unrecorded` (nothing known to record)."""
+    if isinstance(attrs.get("understanding"), dict):
+        return None
+    reading = _reading(attrs, provenance, owner_id, observed_at)
+    if reading["author"].get("kind") == UNRECORDED:
+        return None
+    return _understanding_attr(0, _field_of(str(attrs.get("record_kind") or "")), reading["author"], {},
+                               {"cause": "formation"}, (), (), str(observed_at or ""))
 
 
 def _closures(journal: Any, assertion_id: Optional[str]) -> List[Any]:
@@ -434,16 +505,18 @@ def _pin_first_write(store: Any, vector: List[float], cur: Any) -> None:
 
 
 def _version_zero(a: Any, field: str) -> UnderstandingVersion:
-    """The original reading, captured at the first rewrite (version 0)."""
+    """The original reading, captured at the first rewrite (version 0): its provenance is `reading_provenance`'s."""
     attrs = _attrs(a)
     provenance = dict(a.provenance) if isinstance(a.provenance, dict) else {}
+    reading = reading_provenance(a)
     return UnderstandingVersion(
         record_id=str(a.subject), assertion_id=str(a.assertion_id), version=0, field=field,
         text=str(a.object or ""), scope=str(a.scope), owner_id=str(a.owner_id or ""),
         title=str(attrs.get("title") or ""), keywords=tuple(attrs.get("keywords") or ()),
-        digest_method=str(attrs.get("digest_method") or ""), author=original_author(attrs),
-        cause={"cause": "formation", "formation_provenance": _json_safe(provenance, "provenance")},
-        understood_at=str(a.observed_at or ""), version_id=version_id_for(str(a.subject), field, 0),
+        digest_method=str(attrs.get("digest_method") or ""), author=reading["author"], reader=reading["reader"],
+        cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance")},
+        understood_at=reading["understood_at"] or str(a.observed_at or ""),
+        version_id=version_id_for(str(a.subject), field, 0),
     )
 
 
@@ -802,8 +875,10 @@ def understanding_fields(
     """The provenance of a record's current reading, from its row (pure): digest_method, digest_version,
     version_count, authored_by {kind, id}, reader, understood_at, cause; cards add target, target_type,
     card_revision, source_count; dreams add narrated, narration_version; replaced_by when closed by a supersede.
-    Keys whose value is unknown are absent (never fabricated); digest_version is always present (0 = never
-    rewritten)."""
+    authored_by, reader, understood_at and cause are `reading_provenance`'s (a row nobody stamped reads as its
+    formation reading). digest_version is always present (0 = never rewritten); version_count counts the readings
+    (1 for a never-rewritten record, whose journal holds no version rows; absent when the count is unknown: a
+    rewritten record read without a versions journal). Other keys whose value is unknown are absent."""
     attrs = _attrs(assertion)
     out: Dict[str, Any] = {}
     method = str(attrs.get("digest_method") or "").strip()
@@ -811,19 +886,16 @@ def understanding_fields(
         out["digest_method"] = method
     out["digest_version"] = _current_version(attrs, "digest")
     if version_count is not None:
-        out["version_count"] = int(version_count)
-    und = attrs.get("understanding") if isinstance(attrs.get("understanding"), dict) else None
-    if und:
-        out["authored_by"] = dict(und.get("author") or {})
-        if und.get("reader"):
-            out["reader"] = dict(und["reader"])
-        out["understood_at"] = str(und.get("understood_at") or "")
-        cause = und.get("cause") if isinstance(und.get("cause"), dict) else {}
-        if cause.get("cause"):
-            out["cause"] = str(cause["cause"])
-    else:
-        out["authored_by"] = original_author(attrs)
-        out["understood_at"] = str(getattr(assertion, "observed_at", "") or "")
+        out["version_count"] = max(1, int(version_count))
+    elif out["digest_version"] == 0:
+        out["version_count"] = 1
+    reading = reading_provenance(assertion)
+    out["authored_by"] = reading["author"]
+    if reading["reader"]:
+        out["reader"] = reading["reader"]
+    out["understood_at"] = reading["understood_at"]
+    if reading["cause"]:
+        out["cause"] = reading["cause"]
     kind = str(attrs.get("record_kind") or "")
     if kind == "world_model":
         target = str(attrs.get("target") or "").strip()

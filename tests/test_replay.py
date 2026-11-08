@@ -161,9 +161,12 @@ def test_enrichment_shape_pairs_and_absence(system) -> None:
     # current digest text (one per formation, the edges precedent).
     assert set(lesson_block) == {"record_id", "kind", "title", "token_estimate", "graph_id",
                                  "digest_version", "version_count", "authored_by",
-                                 "understood_at", "digest"}
+                                 "understood_at", "cause", "digest"}
     assert lesson_block["graph_id"] == ids["lesson"]
-    assert lesson_block["digest_version"] == 0 and lesson_block["version_count"] == 0
+    # Never rewritten: one reading, his own words at formation.
+    assert lesson_block["digest_version"] == 0 and lesson_block["version_count"] == 1
+    assert lesson_block["authored_by"] == {"kind": "entity-mind", "id": OWNER}
+    assert lesson_block["cause"] == "formation"
 
     # The lesson's closure enriches keyed by the ASSERTION id namespace —
     # graph_id joins it back to the binding's graph-id namespace.

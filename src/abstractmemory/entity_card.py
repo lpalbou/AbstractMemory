@@ -77,7 +77,22 @@ def _chrono_key(a: TripleAssertion) -> Tuple[str, str]:
     return (str(a.observed_at or ""), str(a.assertion_id or ""))
 
 
-def _row_brief(a: TripleAssertion) -> Dict[str, Any]:
+def _reading(a: TripleAssertion, journal: Any) -> Dict[str, Any]:
+    """The brief's reading provenance, through the same derivation as record_understanding and the replay display
+    blocks (`understanding.understanding_fields`: authored_by, understood_at, cause, digest_version, version_count,
+    ...). A never-rewritten record has no version rows to count; a rewritten one is counted in the journal."""
+    from .understanding import _current_version, _field_of, understanding_fields
+
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+    field = _field_of(str(attrs.get("record_kind") or ""))
+    count: Optional[int] = None
+    reader = getattr(journal, "versions", None)
+    if _current_version(attrs, field) > 0 and callable(reader):
+        count = len(reader(record_id=a.subject, field=field))
+    return understanding_fields(a, version_count=count)
+
+
+def _row_brief(a: TripleAssertion, journal: Any) -> Dict[str, Any]:
     attrs = a.attributes if isinstance(a.attributes, dict) else {}
     out: Dict[str, Any] = {
         "record_id": a.subject,
@@ -89,6 +104,7 @@ def _row_brief(a: TripleAssertion) -> Dict[str, Any]:
     entry_id = attrs.get("entry_id")
     if isinstance(entry_id, str) and entry_id.strip():
         out["entry_id"] = entry_id.strip()
+    out.update(_reading(a, journal))
     return out
 
 
@@ -100,12 +116,13 @@ def _valence_moment(e: ValenceEvent) -> Dict[str, Any]:
     }
 
 
-def _first_moment(what: str, row: TripleAssertion) -> Dict[str, Any]:
+def _first_moment(what: str, row: TripleAssertion, journal: Any) -> Dict[str, Any]:
     attrs = row.attributes if isinstance(row.attributes, dict) else {}
     return {
         "type": "first", "what": what, "record_id": row.subject,
         "title": str(attrs.get("title") or "").strip(),
         "observed_at": row.observed_at,
+        **_reading(row, journal),
     }
 
 
@@ -350,7 +367,7 @@ def entity_card(
                 continue
             refs = {a.subject, str(a.attributes.get("entry_id") or "").strip()} - {""}
             resolvers = sorted({rid for ref in refs for rid in resolved_by.get(ref, ())})
-            brief = _row_brief(a)
+            brief = _row_brief(a, journal)
             if resolvers:
                 brief["resolved_by"] = resolvers
                 resolved_rows.append(brief)
@@ -396,7 +413,7 @@ def entity_card(
     for what, kind in (("first_dream", "dream"), ("first_interest", "interest")):
         first = next((a for a in history if a.attributes.get("record_kind") == kind), None)
         if first is not None:
-            moments.append(_first_moment(what, first))
+            moments.append(_first_moment(what, first, journal))
     supersessions = [c for c in journal.closures(until_seq=anchor, limit=0)
                      if c.kind == "supersede" and c.assertion_id in assertion_rows]
     if supersessions:
@@ -442,7 +459,7 @@ def entity_card(
     interests = []
     explored_n = 0
     for a in interest_rows:
-        brief = _row_brief(a)
+        brief = _row_brief(a, journal)
         explored = bool({a.subject, str(a.assertion_id or "")} & explores_refs)
         brief["explored"] = explored
         explored_n += int(explored)
@@ -545,7 +562,7 @@ def entity_card(
                      reverse=True)
     lesson_briefs: List[Dict[str, Any]] = []
     for a, from_book in all_lessons[:_KEY_MOMENTS_BOUND]:
-        brief = _row_brief(a)
+        brief = _row_brief(a, journal)
         if from_book:
             brief["source"] = "diary"
         lesson_briefs.append(brief)
