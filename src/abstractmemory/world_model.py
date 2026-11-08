@@ -251,10 +251,20 @@ def _interest_subject_head(text: str) -> str:
     """The subject an interest DECLARES, extracted deterministically from
     its title/digest: strip the 'interest:' prefix, take the head before
     the first qualifier separator (em/en dash, colon, question mark),
-    fold whitespace, lowercase, drop one leading article, cap at 8 words.
-    His own words, never invented — 'interest: Decentralized clinical
-    trials and health equity — how removing...' -> 'decentralized
-    clinical trials and health equity'."""
+    fold whitespace, lowercase, drop one leading article. His own words,
+    never invented — 'interest: Decentralized clinical trials and health
+    equity — how removing...' -> 'decentralized clinical trials and
+    health equity'.
+
+    The head is WHOLE (root ADR 0054, operator 2026-11-08: "the title of
+    any lesson, question, interest, world model must be explicit and easy
+    to read"): it becomes the card's stored target and its title "World
+    model: <head>", so the old 8-word cap stored "first-person accounts as
+    the bridge between aggregate crisis" for a subject that runs on to
+    "...data and lived human experience". Removing the cap re-keys no
+    existing card: every interest title stored before 2026-11-08 was
+    already the runtime's 8-word cut (census of the 17 live homes, 174
+    interests, 0 heads changed)."""
     t = str(text or "").strip()
     if t.lower().startswith("interest:"):
         t = t[len("interest:"):].strip()
@@ -265,10 +275,10 @@ def _interest_subject_head(text: str) -> str:
     words = t.lower().split()
     if words and words[0] in ("the", "a", "an"):
         words = words[1:]
-    words = words[:8]
-    # An 8-word cut can land mid-phrase — drop dangling connectives so the
+    # A title the runtime cut at 8 words (every interest formed before
+    # 2026-11-08) can end mid-phrase — drop dangling connectives so the
     # card key reads as a subject, never a fragment ("...consolidation,
-    # and" -> "...consolidation").
+    # and" -> "...consolidation"). Kept so those cards keep their keys.
     _dangling = {"and", "or", "of", "in", "on", "for", "with", "between",
                  "during", "the", "a", "an", "to", "that", "—", "–", "-"}
     while words and words[-1].strip(".,;:—–-?") in _dangling:

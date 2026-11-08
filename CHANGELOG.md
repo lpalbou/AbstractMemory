@@ -66,6 +66,13 @@ A record's understanding can be rewritten in place, and every earlier reading is
 - Also kept whole: a plain assertion's "s p o" title in context-snapshot display rows (`display_title`, was 120
   characters; the new read-side `canonical_text.short_title` gives shelf handles their compact title), and an
   archive-imported file's prose as its record digest (was 480; imported records no longer carry `_truncation`).
+- Titles are explicit and whole (root ADR 0054; operator 2026-11-08, nerin's Interests panel: "the title of any
+  lesson, question, interest, world model must be explicit and easy to read"): a world-model card formed from an
+  interest keeps the interest's whole subject head as its target and its title "World model: <head>" (was cut at 8
+  words, e.g. "first-person accounts as the bridge between aggregate crisis"; no existing card re-keys, since every
+  interest title stored so far is the runtime's 8-word cut); a lesson candidate's title carries the resolved
+  question's words whole (was a 90-character head inside a 120-character title), and interest-candidate and
+  group-offer titles are no longer bounded at 120 characters.
 
 ### Fixed
 

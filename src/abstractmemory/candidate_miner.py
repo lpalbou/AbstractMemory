@@ -59,7 +59,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from .records import MemoryRecordInput, record_id_for
 from .sleep_policy import DEFAULT_SLEEP_TUNING, SleepTuning
 from .store import TripleQuery
-from .text_tokens import bounded_label, token_set
+from .text_tokens import token_set
 from .world_model import _evidence_scan, _interest_subject_head, discovery_keyword_ok
 
 __all__ = ["mine_candidates_pass", "resolve_questions_pass"]
@@ -507,15 +507,17 @@ def mine_candidates_pass(
         # Name the offer by words that CARRIED the match (live Ephemeral
         # polish: his diary titles are templated — "Diary entry
         # (question) — 2026-07-17" names nothing; when the title is all
-        # boilerplate, the question's own text head is the honest label).
+        # boilerplate, the question's own words are the honest label).
+        # WHOLE (root ADR 0054, operator 2026-11-08: a title is explicit and
+        # readable, never cut): the label was a 90-character head and the
+        # title a 120-character cut, both stored on the offer.
         label = q["title"]
         if not (_terms(q["title"]) - boilerplate):
             # `question_id` below carries the record these words came from.
-            head = bounded_label(" ".join(str(q["text"] or "").split()), 90).strip()
-            label = head or q["title"]
+            label = " ".join(str(q["text"] or "").split()) or q["title"]
         entry = {
             "proposed_kind": "lesson", "question_id": q["record_id"],
-            "title": bounded_label(f"Lesson candidate: {label}", 120),
+            "title": f"Lesson candidate: {label}",
             "sessions": row["sessions"],
         }
         out["lesson_candidates"].append(entry)
@@ -583,7 +585,7 @@ def mine_candidates_pass(
     interest_rows.sort(key=lambda r: (-r[1], r[0]))  # most-recurrent first
     for theme, n_sessions, rids in interest_rows:
         entry = {"proposed_kind": "interest", "theme": theme,
-                 "title": bounded_label(f"Interest candidate: {theme}", 120),
+                 "title": f"Interest candidate: {theme}",  # whole (ADR 0054)
                  "sessions": n_sessions}
         out["interest_candidates"].append(entry)
         example = evidence[rids[0]]["title"] if rids else ""
@@ -655,9 +657,9 @@ def mine_candidates_pass(
             new_gid = _mint(
                 f"{family}_group",
                 key_seed=f"group|{family}|{g['exemplar']}|{members_hash}",
-                title=bounded_label(
+                title=(  # whole (ADR 0054): the stored title is never cut
                     f"Group offer: {g['size']} {family}s around "
-                    f"{(g['shared_terms'][0] if g['shared_terms'] else g['exemplar'])}", 120),
+                    f"{(g['shared_terms'][0] if g['shared_terms'] else g['exemplar'])}"),
                 digest=digest,
                 source_ids=ordered_members,
                 extra={"group_size": g["size"], "group_family": family,
