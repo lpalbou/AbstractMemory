@@ -9,6 +9,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
+from .commit_guard import guard_commit
 from .embedding_pin import (
     annotate_embed_failure,
     embed_texts_degradable,
@@ -110,6 +111,10 @@ class SQLiteTripleStore:
     failure aborts the add with ZERO rows written — it never corrupts or
     half-writes the batch.
     """
+
+    #: The host's commit guard (`MemorySystem(commit_guard=)`): every write transaction of this store calls it
+    #: immediately before its COMMIT, and so do the graph and the task queue writing on this store's connection.
+    _commit_guard = None
 
     def __init__(
         self, path: Path, *, table_name: str = "triples",
@@ -463,6 +468,7 @@ class SQLiteTripleStore:
                 "VALUES ('embedding_pin', ?)", (payload,))
             return
         with self._lock:
+            guard_commit(self, "store.write_pin")  # an autocommit write: its own commit point
             self._conn.cursor().execute(
                 f"INSERT OR REPLACE INTO {self._table}_meta (key, value) "
                 "VALUES ('embedding_pin', ?)", (payload,))
@@ -481,6 +487,7 @@ class SQLiteTripleStore:
             cur.execute("BEGIN IMMEDIATE")
             try:
                 self._insert_rows_on(cur, rows)
+                guard_commit(self, "store.add")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -946,6 +953,7 @@ class SQLiteTripleStore:
                     (until, rid),
                 )
                 changed = int(cur.rowcount or 0) > 0
+                guard_commit(self, "store.close_assertion")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -972,6 +980,7 @@ class SQLiteTripleStore:
             cur.execute("BEGIN IMMEDIATE")
             try:
                 changed = self._narrow_on(cur, self._table, rid, until)
+                guard_commit(self, "store.narrow_assertion")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -1095,6 +1104,7 @@ class SQLiteTripleStore:
                 # Every vector changed: other handles' matrices must rebuild.
                 self._bump_vector_generation(cur)
                 self._write_pin(pin, cursor=cur)
+                guard_commit(self, "store.replace_vectors")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")

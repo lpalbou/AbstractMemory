@@ -46,6 +46,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optio
 
 from ..canonical_text import canonical_text as _canonical_text
 from ..canonical_text import is_record_edge as _is_record_edge
+from ..commit_guard import deferred_to_caller, guard_commit
 from ..embedding_pin import (
     build_pin,
     check_add_dimension,
@@ -452,6 +453,7 @@ class _SQLiteBackend(GraphBackend):
             cur.execute("BEGIN IMMEDIATE")
             try:
                 yield _SQLiteTx(self, cur)
+                guard_commit(self.store, "graph")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -545,6 +547,7 @@ class _SQLiteBackend(GraphBackend):
 
     def mark_journal_applied(self, rid: str) -> None:
         with self.store._lock:
+            guard_commit(self.store, "graph.mark_journal_applied")  # an autocommit write: its own commit point
             self.store._conn.cursor().execute(
                 f"UPDATE {self.t_rev} SET journal_applied = 1 WHERE revision_id = ?", (rid,))
 
@@ -791,7 +794,9 @@ class _MemoryBackend(GraphBackend):
         with self.store._lock, self._lock:
             tx = _MemoryTx(self)
             try:
-                yield tx
+                with deferred_to_caller(self.store):  # the store writes the revision makes belong to its one commit
+                    yield tx
+                guard_commit(self.store, "graph")  # refused: the undo log takes the revision back
             except BaseException:
                 tx.rollback()
                 raise
@@ -882,6 +887,7 @@ class _MemoryBackend(GraphBackend):
 
     def mark_journal_applied(self, rid: str) -> None:
         with self._lock:
+            guard_commit(self.store, "graph.mark_journal_applied")
             self.rev_by_id[rid]["journal_applied"] = True
 
 

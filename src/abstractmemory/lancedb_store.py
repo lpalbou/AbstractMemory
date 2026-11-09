@@ -6,6 +6,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from .commit_guard import guard_commit
 from .embeddings import TextEmbedder
 from .models import TripleAssertion, normalize_term
 from .store import TripleQuery
@@ -98,6 +99,10 @@ class LanceDBTripleStore:
     - Append-only: updates are represented as new assertions.
     - Vector search is optional and requires `embedder` (for query_text) or query_vector.
     """
+
+    #: The host's commit guard (`MemorySystem(commit_guard=)`): `add` calls it immediately before its table write, and
+    #: the LanceDB graph connector before its commit.
+    _commit_guard = None
 
     def __init__(
         self,
@@ -198,6 +203,7 @@ class LanceDBTripleStore:
             row = {k: v for k, v in row.items() if v is not None}
             rows.append(row)
 
+        guard_commit(self, "store.add")
         if self._table is None:
             # Create on first insert so we can infer vector dimensionality from real data.
             self._table = self._db.create_table(self._table_name, data=rows, mode="create")

@@ -81,6 +81,7 @@ from dataclasses import replace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .canonical_text import canonical_text, record_title
+from .commit_guard import deferred_to_caller, guard_commit
 from .journal import UnderstandingVersion, VERSION_FIELDS, utc_now_iso
 from .records import PENDING_TASK_KINDS, resolve_digest_assertion
 
@@ -608,6 +609,7 @@ def _apply(
                 store._rewrite_row_on(cur, row, rewritten, vector=vector, write_vector=write_vector)
                 for hook in hooks:
                     hook(cur)
+                guard_commit(store, f"understanding.{field}")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -627,16 +629,19 @@ def _apply(
             rewritten = replace(fresh, attributes=reserved(fresh_attrs, target_new),
                                 object=new_object if new_object is not None else fresh.object)
             stored = replace(rewritten, assertion_id=aid)
-            if v_zero is not None:
-                written.append(journal.append_version(v_zero))
-            written.append(journal.append_version(v_new))
-            for row_t in title_rows:
-                journal.append_version(row_t)
-            if write_vector and store.embedding_pin() is None and vector is not None:
-                _pin_first_write(store, vector, None)
-            store._rewrite_row(aid, stored, vector=vector, write_vector=write_vector)
-            for hook in hooks:
-                hook(None)
+            # No COMMIT here: the commit point is before the first write, and the writes below are its own.
+            guard_commit(store, f"understanding.{field}")
+            with deferred_to_caller(store):
+                if v_zero is not None:
+                    written.append(journal.append_version(v_zero))
+                written.append(journal.append_version(v_new))
+                for row_t in title_rows:
+                    journal.append_version(row_t)
+                if write_vector and store.embedding_pin() is None and vector is not None:
+                    _pin_first_write(store, vector, None)
+                store._rewrite_row(aid, stored, vector=vector, write_vector=write_vector)
+                for hook in hooks:
+                    hook(None)
     result = {"applied": True, "outcome": "applied", "reason": None, "version": target_new,
               "previous_version": current, "version_id": written[-1].version_id, "seq": written[-1].seq,
               "captured_original": v_zero is not None, "vector_rewritten": write_vector,

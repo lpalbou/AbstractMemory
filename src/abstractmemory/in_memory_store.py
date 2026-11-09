@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Iterable, Iterator, List, Optional, Sequence
 
+from .commit_guard import guard_commit
 from .embedding_pin import (
     annotate_embed_failure,
     embed_texts_degradable,
@@ -86,6 +88,10 @@ class InMemoryTripleStore:
       matches SQLiteTripleStore's INSERT OR IGNORE semantics).
     """
 
+    #: The host's commit guard (`MemorySystem(commit_guard=)`): every write calls it under the lock before it mutates
+    #: anything (`_write`, `_write_pin`; this store has no COMMIT), and so do the in-memory graph and the task queue.
+    _commit_guard = None
+
     def __init__(
         self,
         *,
@@ -107,6 +113,18 @@ class InMemoryTripleStore:
                 claimed_by=embedding_pin.get("claimed_by"))
         check_model_compat(self._embedding_pin, self._embedder)
 
+    @contextmanager
+    def _write(self, where: str) -> Iterator[None]:
+        """A write's section: the lock, then the commit guard before the first mutation."""
+        with self._lock:
+            guard_commit(self, where)
+            yield
+
+    def _write_pin(self, pin: dict) -> None:
+        """The first embedded write's pin (SQLite parity: its own commit point). The caller holds the lock."""
+        guard_commit(self, "store.write_pin")
+        self._embedding_pin = pin
+
     def embedding_pin(self) -> Optional[dict]:
         """The store's embedding-space pin, or None (pinless — first
         embedded write pins with a labeled #FALLBACK). SQLite parity."""
@@ -121,7 +139,7 @@ class InMemoryTripleStore:
         guard (lease violation refuses, nothing changes), every row's vector
         rewritten (absent = vectorless), pin last, live embedder swapped."""
         clean = {str(k): [float(x) for x in v] for k, v in vectors.items() if v is not None}
-        with self._lock:
+        with self._write("store.replace_vectors"):
             if len(self._rows) != int(expected_row_count):
                 raise RuntimeError(
                     f"reembed swap refused: store changed mid-pass "
@@ -150,7 +168,7 @@ class InMemoryTripleStore:
             raise ValueError("close_assertion requires an assertion_id")
         if not until:
             raise ValueError("close_assertion requires a valid_until timestamp")
-        with self._lock:
+        with self._write("store.close_assertion"):
             for row in self._rows:
                 if row.get("assertion_id") != rid:
                     continue
@@ -172,7 +190,7 @@ class InMemoryTripleStore:
             raise ValueError("narrow_assertion requires an assertion_id")
         if not until:
             raise ValueError("narrow_assertion requires a valid_until timestamp")
-        with self._lock:
+        with self._write("store.narrow_assertion"):
             for row in self._rows:
                 if row.get("assertion_id") != rid:
                     continue
@@ -297,9 +315,9 @@ class InMemoryTripleStore:
                                             source="first-write",
                                             claimed_by="embedder-attribute")
                             warn_first_write_pin(pin)
-                            self._embedding_pin = pin
+                            self._write_pin(pin)
                         elif self._embedding_pin.get("dimension") is None:
-                            self._embedding_pin = dict(self._embedding_pin, dimension=dim)
+                            self._write_pin(dict(self._embedding_pin, dimension=dim))
         return vectors
 
     def _insert_prepared(self, pending: List[TripleAssertion],
@@ -309,7 +327,7 @@ class InMemoryTripleStore:
         another writer of the same record knows it inserted nothing and never removes the winner's rows."""
         ids: list[str] = []
         inserted: list[str] = []
-        with self._lock:
+        with self._write("store.add"):
             for i, a in enumerate(pending):
                 # Honor caller-supplied ids (deterministic/import flows); default uuid4.
                 assertion_id = a.assertion_id or str(uuid.uuid4())

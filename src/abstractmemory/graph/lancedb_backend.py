@@ -34,6 +34,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from ..canonical_text import canonical_text as _canonical_text
 from ..canonical_text import is_record_edge as _is_record_edge
+from ..commit_guard import guard_commit
 from ..journal import ClosureRecord
 from ..journal_common import normalize_iso_ts as _instant
 from ..lancedb_store import LanceDBTripleStore, _escape_sql_string, _import_lancedb, _list_lancedb_tables, _loads_json
@@ -420,6 +421,8 @@ class LanceDBBackend(GraphBackend):
             tx = _LanceTx(self)
             try:
                 yield tx
+                if tx.revision is not None:
+                    guard_commit(self.store, "graph")  # before the log row: refused, the stage is discarded
             except BaseException:
                 state.counters = saved  # nothing was written: give the staged sequence numbers back
                 raise
@@ -574,6 +577,7 @@ class LanceDBBackend(GraphBackend):
 
     def mark_journal_applied(self, rid: str) -> None:
         with self.state.lock:
+            guard_commit(self.store, "graph.mark_journal_applied")
             self._t("revisions").update(where=f"revision_id = {_q(rid)}", values={"journal_applied": 1})
 
 

@@ -49,6 +49,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 from . import activation_gate as gate
 from .canonical_text import record_title, token_estimate
+from .commit_guard import deferred_to_caller, guard_commit
 
 __all__ = [
     "FORMATION_PRIORITY",
@@ -268,8 +269,9 @@ class MemoryTaskQueue:
 
     # ----------------------------------------------------------------- plumbing
 
-    def _txn(self, cur: Optional[sqlite3.Cursor], fn: Callable[[sqlite3.Cursor], Any]) -> Any:
-        """Run `fn` on the caller's open transaction (a rewrite's) or in a new one."""
+    def _txn(self, cur: Optional[sqlite3.Cursor], fn: Callable[[sqlite3.Cursor], Any], where: str = "tasks") -> Any:
+        """Run `fn` on the caller's open transaction (a rewrite's: that transaction calls the commit guard) or in a
+        new one, whose COMMIT the store's commit guard precedes (`where` names it)."""
         if cur is not None:
             return fn(cur)
         with self._lock:
@@ -277,6 +279,7 @@ class MemoryTaskQueue:
             c.execute("BEGIN IMMEDIATE")
             try:
                 out = fn(c)
+                guard_commit(self.store, where)
                 c.execute("COMMIT")
                 return out
             except BaseException:
@@ -489,7 +492,7 @@ class MemoryTaskQueue:
                             "detail_json) VALUES (?, ?, ?, ?, ?, ?)",
                             (sc, ow, str(kind), str(completed_at), int(seq), _dump(dict(detail or {}))))
 
-        self._txn(None, write)
+        self._txn(None, write, where="tasks.record_maintenance")
 
     def last_maintenance(self, scopes: Optional[Sequence[Tuple[str, str]]] = None, *,
                          kind: str = "night") -> Optional[Dict[str, Any]]:
@@ -982,6 +985,7 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
                     for binding in plan.bindings:
                         journal._append_binding_on(cur, binding)
                 _enqueue_planned(queue, planned, cur)
+                guard_commit(store, "tasks.form_with_tasks")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
@@ -1014,17 +1018,21 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
         bound: List[str] = []
         try:
             _enqueue_planned(queue, planned, qcur)
-            if missing:
-                added = store._insert_prepared(missing, prepared)[1]
-            if isinstance(journal, SQLiteJournal):
-                with journal._txn() as jcur:  # the batch's bindings: all or none
+            # The formation's one commit point, before its first row: the store's rows have no COMMIT and a
+            # SQLiteJournal commits the bindings on its own, so the guard cannot wait for the queue's COMMIT below.
+            guard_commit(store, "tasks.form_with_tasks")
+            with deferred_to_caller(store):
+                if missing:
+                    added = store._insert_prepared(missing, prepared)[1]
+                if isinstance(journal, SQLiteJournal):
+                    with journal._txn() as jcur:  # the batch's bindings: all or none
+                        for binding in plan.bindings:
+                            journal._append_binding_on(jcur, binding)
+                else:
                     for binding in plan.bindings:
-                        journal._append_binding_on(jcur, binding)
-            else:
-                for binding in plan.bindings:
-                    stored, new = journal._append_binding_tracked(binding)
-                    if new:
-                        bound.append(str(stored.binding_id))
+                        stored, new = journal._append_binding_tracked(binding)
+                        if new:
+                            bound.append(str(stored.binding_id))
             qcur.execute("COMMIT")
         except BaseException:
             qcur.execute("ROLLBACK")

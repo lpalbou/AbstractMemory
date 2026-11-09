@@ -113,9 +113,17 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
         broad_scopes: Optional[Iterable[str]] = None,
         ablation: Optional[str] = None,
         task_queue: bool = False,
+        commit_guard: Optional[Callable[[str], None]] = None,
     ) -> None:
         if store is None or journal is None:
             raise ValueError("MemorySystem requires both a store and a journal (layer-1 substrate)")
+        if commit_guard is not None:
+            # The host's commit guard (the runtime passes its lifecycle fence's `check`): called inside every write
+            # transaction of this store and journal immediately before COMMIT; raising refuses the write (rollback,
+            # nothing recorded, the exception propagates). See commit_guard.py.
+            from .commit_guard import install_commit_guard
+
+            install_commit_guard(commit_guard, store, journal)
         self._store = store
         self._journal = journal
         self._embedder = embedder

@@ -27,9 +27,11 @@ from __future__ import annotations
 import copy
 import threading
 import warnings
+from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Iterator, List, Optional, Sequence, Tuple
 
+from .commit_guard import guard_commit
 from .journal import (
     ALL_EVENT_KINDS,
     ClosureRecord,
@@ -171,6 +173,17 @@ class InMemoryJournal:
             stacklevel=2,
         )
 
+    #: The host's commit guard (`MemorySystem(commit_guard=)`): every append calls it under the lock before it
+    #: mutates anything (`_write`; this journal has no COMMIT).
+    _commit_guard = None
+
+    @contextmanager
+    def _write(self) -> Iterator[None]:
+        """Every append's write section: the lock, then the commit guard before the first mutation."""
+        with self._lock:
+            guard_commit(self, "journal")
+            yield
+
     # -- events ---------------------------------------------------------
 
     def append_events(self, events: Sequence[MemoryEvent]) -> List[MemoryEvent]:
@@ -180,7 +193,7 @@ class InMemoryJournal:
         if not items:
             return []
         items = _sanitize_batch(items)  # strict-JSON payload boundary (parity with SQLite)
-        with self._lock:
+        with self._write():
             out: List[MemoryEvent] = []
             for e in items:
                 supplied = str(e.event_id or "").strip()
@@ -254,7 +267,7 @@ class InMemoryJournal:
         _require_instance(binding, ScopeBinding, "append_binding")
         [binding] = _sanitize_batch([binding])
         supplied = str(binding.binding_id or "").strip()
-        with self._lock:
+        with self._write():
             if supplied and supplied in self._bindings_by_id:
                 return copy.deepcopy(self._bindings_by_id[supplied])  # replay no-op
             self._seq += 1
@@ -320,7 +333,7 @@ class InMemoryJournal:
         _require_instance(closure, ClosureRecord, "append_closure")
         [closure] = _sanitize_batch([closure])
         supplied = str(closure.closure_id or "").strip()
-        with self._lock:
+        with self._write():
             if supplied and supplied in self._closures_by_id:
                 return copy.deepcopy(self._closures_by_id[supplied])  # replay no-op
             self._seq += 1
@@ -357,7 +370,7 @@ class InMemoryJournal:
         _require_instance(trace, ReconstructionTrace, "append_trace")
         [trace] = _sanitize_batch([trace])
         supplied = str(trace.trace_id or "").strip()
-        with self._lock:
+        with self._write():
             if supplied and supplied in self._traces_by_id:
                 # Replay no-op (caller-supplied trace ids, a2a 0002 follow-up):
                 # the FIRST journaled trace wins; re-calls never rewrite it.
@@ -395,7 +408,7 @@ class InMemoryJournal:
         _require_instance(snapshot, ActiveMemorySnapshot, "append_snapshot")
         [snapshot] = _sanitize_batch([snapshot])
         supplied = str(snapshot.snapshot_id or "").strip()
-        with self._lock:
+        with self._write():
             if supplied and supplied in self._snapshots_by_id:
                 return copy.deepcopy(self._snapshots_by_id[supplied])  # replay no-op
             self._seq += 1
@@ -431,7 +444,7 @@ class InMemoryJournal:
         if not items:
             return []
         items = _sanitize_batch(items)
-        with self._lock:
+        with self._write():
             out: List[ValenceEvent] = []
             for e in items:
                 supplied = str(e.event_id or "").strip()
@@ -481,7 +494,7 @@ class InMemoryJournal:
         supplied = str(version.version_id or "").strip()
         if not supplied:
             raise ValueError("UnderstandingVersion.version_id must be set (deterministic per record, field, version)")
-        with self._lock:
+        with self._write():
             existing = self._versions_by_id.get(supplied)
             if existing is not None:
                 return copy.deepcopy(existing)

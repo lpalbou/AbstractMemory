@@ -45,6 +45,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
+from .commit_guard import guard_commit
 from .journal import (
     ClosureRecord,
     MemoryEvent,
@@ -89,6 +90,10 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 class SQLiteJournal:
     """Durable, thread-safe MemoryJournal backend over one SQLite file."""
+
+    #: The host's commit guard (`commit_guard.install_commit_guard`, via `MemorySystem(commit_guard=)`): `_txn`
+    #: calls it immediately before every COMMIT.
+    _commit_guard = None
 
     def __init__(self, path: Path, *, table_prefix: str = "memj_") -> None:
         prefix = str(table_prefix or "memj_").strip() or "memj_"
@@ -173,6 +178,7 @@ class SQLiteJournal:
             cur.execute("BEGIN IMMEDIATE")
             try:
                 yield cur
+                guard_commit(self, "journal")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
