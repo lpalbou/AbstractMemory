@@ -19,7 +19,11 @@ Pinned here, on both substrate pairs (in-memory, and SQLite store + journal shar
 - refusals: private (fail-closed on any non-False flag), owner-direct and chained entries, at formation and in
   `rewrite_digest` (a forged pending marker on a private row);
 - visibility: the summary versions are sealed in the replay `revision` stream like the title versions, and the task
-  packet serves the diary redacted.
+  packet serves the diary redacted;
+- a LEGACY public entry (his first line standing in, nothing owed): `declare_pending` declares its summary (and title)
+  pending with formation's task, `rewrite_digest` completes it under the same rules (body and chain byte-equal, the
+  first line kept as version 0, never restored); an owner-direct (chained or not), a chained projection and a private
+  entry are still refused `protected_kind`, nothing written.
 
 MUTATION LIST (each applied to a scratch COPY of src/, this file run against it with PYTHONPATH, red confirmed):
 - D1 MemoryRecordInput refuses a pending summary on every diary again ->
@@ -33,7 +37,15 @@ MUTATION LIST (each applied to a scratch COPY of src/, this file run against it 
 - D8 rewrite_digest opens a diary whose summary is not pending -> test_a_summary_not_pending_stays_protected;
 - D9 the authored stamp not checked -> test_an_authored_summary_carries_its_provenance;
 - D10 a mechanical author accepted -> test_an_authored_summary_carries_its_provenance;
-- D11 the diary revision seal skipped -> test_summary_versions_are_sealed_like_the_title.
+- D11 the diary revision seal skipped -> test_summary_versions_are_sealed_like_the_title;
+- D12 declare_pending refuses every diary summary again -> test_a_legacy_public_entry_is_declared_and_completed;
+- D13 declare_pending skips the diary refusal -> test_declare_pending_still_refuses_owner_direct_chained_and_private;
+- D14 the private check dropped -> test_declare_pending_still_refuses_owner_direct_chained_and_private;
+- D15 the private check reads only `is True` -> test_declare_pending_still_refuses_owner_direct_chained_and_private;
+- D16 the owner-direct check dropped -> test_declare_pending_still_refuses_owner_direct_chained_and_private;
+- D17 the hash-chained check dropped -> test_declare_pending_still_refuses_owner_direct_chained_and_private;
+- D18 rewrite_digest refuses every diary again -> test_a_legacy_public_entry_is_declared_and_completed;
+- D19 a summary-only declaration also clears a diary title -> test_a_legacy_public_entry_is_declared_and_completed.
 """
 
 from __future__ import annotations
@@ -326,3 +338,107 @@ def test_summary_versions_are_sealed_like_the_title(home) -> None:
             assert "title" not in e["display"]
     with pytest.raises(ValueError, match="book"):
         home.record_understanding(gid)
+
+
+# --------------------------------------------------------------------------- a legacy entry declared (declare_pending)
+#
+# The runtime's repair of the entries formed before 71de051: a PUBLIC projection whose summary is his first line
+# standing in (nothing pending, nothing owed) is declared pending, then authored like one formed pending.
+
+
+@pytest.mark.parametrize("fields", [("summary",), ("title", "summary")])
+def test_a_legacy_public_entry_is_declared_and_completed(home, fields) -> None:
+    chained = _form(home, "chain-2", title="A chained entry", digest="Owner-direct words, attested.",
+                    attributes={"diary_type": "note", "prev_entry_hash": ""}, provenance={"source": "owner-direct"})
+    before_chained = _row(home, chained)
+    gid = _form(home, "legacy-1")                        # his first line stands in as the summary, nothing owed
+    before = _row(home, gid)
+    assert before.object == FIRST_LINE and "pending" not in before.attributes and _tasks(home, gid) == []
+
+    out = home.declare_pending(gid, fields=fields, reason="the first line stood in for the summary")
+    assert out["applied"] is True and out["declared"] == list(fields)
+    assert out["provisional"] == {"field": "digest", "version": 0}
+    row = _row(home, gid)
+    assert row.object == FIRST_LINE and row.attributes["pending"]["summary"] is True    # provisional, kept as is
+    assert row.attributes["pending"]["title"] is ("title" in fields)
+    assert row.attributes["title"] == (None if "title" in fields else "The registry recount")
+    [task] = _tasks(home, gid)
+    assert task["status"] == "pending" and task["task_id"] == out["tasks"]["summary"]
+    assert task["capability"] == "summaries" and task["priority"] == FORMATION_PRIORITY
+    assert task["cause"] == {"cause": "repair", "reason": "the first line stood in for the summary",
+                             "pending": "summary", "declared": True}
+    packet = home.task_packet(task["task_id"])                    # the drainer reads the entry through the book
+    assert packet["record"]["redacted"] == "diary" and packet["record"]["digest"] == ""
+
+    done = _author(home, gid, task_id=task["task_id"])
+    assert done["applied"] is True and done["pending_cleared"] == ["summary"]
+    assert home.tasks.task(task["task_id"])["status"] == "done"
+    if "title" in fields:
+        [t_task] = _tasks(home, gid, "title.author")
+        expected = int(home.task_packet(t_task["task_id"])["expected_version"])
+        assert home.retitle(gid, title="The registry recount", author=MODEL, reader=READER, sources=STEP,
+                            cause="repair", expected_version=expected, task_id=t_task["task_id"])[
+            "pending_cleared"] == ["title"]
+        assert home.tasks.task(t_task["task_id"])["status"] == "done"
+    after = _row(home, gid)
+    assert after.object == AUTHORED and "pending" not in after.attributes
+    assert after.attributes["understanding"]["author"] == MODEL and after.attributes["digest_method"] == "authored-v1"
+    assert after.attributes["title"] == "The registry recount"
+
+    # The body is the book's entry: memory's reference to it, and every attribute the write does not own, byte-equal.
+    assert after.provenance == before.provenance and after.provenance["sources"][0]["digest"] == BOOK_HASH
+    assert (after.subject, after.assertion_id, after.observed_at, after.scope, after.owner_id) == (
+        before.subject, before.assertion_id, before.observed_at, before.scope, before.owner_id)
+    owned = {"pending", "pending_version", "digest_version", "digest_method", "authored_by", "understanding",
+             "keywords", "title", "title_version", "title_provenance"}
+    assert {k: v for k, v in after.attributes.items() if k not in owned} == {
+        k: v for k, v in before.attributes.items() if k not in owned}
+    assert "entry_hash" not in after.attributes and "prev_entry_hash" not in after.attributes
+    # The first line stays whole as version 0, never restored; the summary, once authored, is not rewritten again.
+    v0 = home.versions(gid)[0]
+    assert v0["version"] == 0 and v0["text"] == FIRST_LINE and v0["cause"]["pending_summary"] is True
+    assert home.revert_digest(gid, 0, expected_version=1)["reason"] == "provisional_summary"
+    again = home.rewrite_digest(gid, text="Yet another reading.", author=MODEL, reader=READER, sources=STEP,
+                                cause="repair", expected_version=1)
+    assert again["reason"] == "protected_kind" and _row(home, gid).object == AUTHORED
+    # The chain: the owner-direct chained entry untouched byte for byte, and it verifies.
+    now_chained = _row(home, chained)
+    assert (now_chained.object, now_chained.attributes, now_chained.observed_at) == (
+        before_chained.object, before_chained.attributes, before_chained.observed_at)
+    assert verify_diary_chain(home.store, scope=SCOPE, owner_id=OWNER)["intact"] is True
+
+
+def _refused_untouched(home, gid: str, code: str) -> None:
+    before = _row(home, gid)
+    for fields in (("summary",), ("title", "summary")):
+        out = home.declare_pending(gid, fields=fields)
+        assert out["applied"] is False and out["reason"] == "protected_kind", (code, fields, out)
+        assert code in out["detail"], (code, out["detail"])
+    row = _row(home, gid)
+    assert (row.object, row.attributes, row.provenance) == (before.object, before.attributes, before.provenance)
+    assert "pending" not in row.attributes and home.versions(gid, field="pending") == []
+    assert _tasks(home, gid) == [] and _tasks(home, gid, "title.author") == []
+
+
+def test_declare_pending_still_refuses_owner_direct_chained_and_private(home) -> None:
+    # An owner-direct CHAINED entry: no book, his words are the digest, and entry_hash attests them.
+    chained = _form(home, "chain-3", title="A chained entry", digest="Owner-direct words, attested.",
+                    attributes={"diary_type": "note", "prev_entry_hash": ""}, provenance={"source": "owner-direct"})
+    _refused_untouched(home, chained, "owner_direct")
+    # An owner-direct entry outside the chain: still his words.
+    plain_od = _form(home, "od-1", title="An owner-direct entry", digest="Owner-direct words.",
+                     attributes={"diary_type": "note"}, provenance={"source": "owner-direct"})
+    _refused_untouched(home, plain_od, "owner_direct")
+    # A projection that claims a chain position: its entry_hash attests the digest.
+    proj_chained = _form(home, "pc-1", attributes=_attrs(
+        "pc-1", prev_entry_hash=_row(home, chained).attributes["entry_hash"]))     # the chain's next link
+    assert _row(home, proj_chained).attributes.get("entry_hash") is not None
+    _refused_untouched(home, proj_chained, "hash_chained")
+    # A private entry: act-only and content-free, refused on any non-False flag.
+    for n, flag in enumerate((True, "yes", 1)):
+        private = _form(home, f"priv-d{n}", title=f"Diary entry (private) — 2026-11-09 [d{n}]",
+                        digest="Wrote a private diary entry.",
+                        attributes={"entry_id": f"book-priv-d{n}", "written_at": "2026-11-09T17:59:00Z",
+                                    "private": flag})
+        _refused_untouched(home, private, "private_entry")
+    assert verify_diary_chain(home.store, scope=SCOPE, owner_id=OWNER)["intact"] is True

@@ -27,11 +27,11 @@ record (its replacement is the current one: `current_of`); a ripple's consolidat
 re-understanding`) except by an operator. A dream or card formed with its summary PENDING (operator rulings
 2026-11-09: the pass's bookkeeping text is only its provisional body) takes its authored summary through
 `rewrite_digest` like any pending record; a card's goes through the card's own write (`author_card_in_place`). So
-does a PUBLIC diary projection formed with its summary pending (operator rule 2026-11-09: title + summary always
-exist, authored): its body is the book's entry (the runtime's hash-chained ledger, `attributes.entry_id`), so the
-record's digest is only its summary and the write touches neither the body nor a chain; a private, owner-direct or
-chained entry stays refused (`diary.diary_summary_refusal`). Its summary versions are sealed in replay like its
-title versions.
+does a PUBLIC diary projection formed with its summary pending, or a legacy one `declare_pending` declared (operator
+rule 2026-11-09: title + summary always exist, authored): its body is the book's entry (the runtime's hash-chained
+ledger, `attributes.entry_id`), so the record's digest is only its summary and the write touches neither the body
+nor a chain; a private, owner-direct or chained entry stays refused (`diary.diary_summary_refusal`). Its summary
+versions are sealed in replay like its title versions.
 
 A TITLE is changed alone by `retitle` (operator 2026-11-08, root ADR 0054: a title is an explicit, complete,
 readable phrase, and stored text is never cut): for EVERY kind, the entity's own acts included, because a title the
@@ -789,9 +789,10 @@ def rewrite_digest(
     is replaced in place (its signals, proposals and narration untouched); a card's goes through the card's own
     reading (`author_card_in_place`: field `card`, the summary becomes its authored lead, evidence and key
     untouched). Outside a pending summary they keep their own doors (`use_narrate_dream`,
-    `use_author_world_model`). A PUBLIC diary projection formed with its summary pending is completed here too (its
-    digest is only the summary: the body is the book's entry); every other diary write refuses `protected_kind`
-    (a private, owner-direct or chained entry, or a summary not pending).
+    `use_author_world_model`). A PUBLIC diary projection formed with its summary pending, or a legacy one whose summary
+    `declare_pending` declared, is completed here too (its digest is only the summary: the body is the book's entry);
+    every other diary write refuses `protected_kind` (a private, owner-direct or chained entry, or a summary not
+    pending).
     """
     author_d = _author(author)
     reader_d = _reader(reader, author_d["kind"])
@@ -1022,7 +1023,9 @@ def declare_pending(
     new to declare, through `rearm_pending` (outcome "rearmed", `repaired` the fields re-armed); beside a new field,
     its fresh task joins the declaration's transaction (`repaired`). Refusals (nothing written): `unknown_record`, `no_task_queue` (no title or summary is ever stored
     missing without the task that writes it), `closed` (with `replaced_by`: declare its current replacement),
-    `protected_kind` (a summary of the entity's own act: his words are the body), `consolidation_record` (a ripple's
+    `protected_kind` (a summary of the entity's own act: his words are the body; a PUBLIC diary projection's summary
+    is declared, its body being the book's entry, while a private, owner-direct or chained entry stays refused:
+    `diary.diary_summary_refusal`), `consolidation_record` (a ripple's
     consolidation summary is never rewritten by a task), `hash_chained` (a title an owner-direct diary entry's
     `entry_hash` attests), `stale`, `embedder_unavailable`. `fields` outside `PENDING_FIELDS`, an empty `fields` or a
     cause outside `REWRITE_CAUSES` raise ValueError.
@@ -1072,7 +1075,16 @@ def declare_pending(
                 "detail": f"{', '.join(already)} already pending, each with its live task: nothing declared, "
                           "nothing queued",
                 "already_pending": already, "declared": [], "pending": marker, "tasks": dict(live), **base}
-    if "summary" in new and kind in UNDERSTANDING_PROTECTED_KINDS:
+    if "summary" in new and kind == "diary":
+        # A legacy PUBLIC projection (its first line standing in as the summary) is repaired like any record: its
+        # body is the book's entry, so its digest is only the summary (formation's rule: diary_summary_refusal).
+        from .diary import diary_summary_refusal
+
+        provenance = a.provenance if isinstance(getattr(a, "provenance", None), Mapping) else {}
+        refusal = diary_summary_refusal(attrs, provenance)
+        if refusal is not None:
+            return _refusal("protected_kind", f"{refusal[1]} ({refusal[0]})", **base)
+    elif "summary" in new and kind in UNDERSTANDING_PROTECTED_KINDS:
         return _refusal("protected_kind", f"kind {kind!r} is the entity's own act: its body is his words, never "
                         "authored by a task, so its summary cannot be pending", **base)
     if "summary" in new and attrs.get("summary_role") == RE_UNDERSTANDING_ROLE:
