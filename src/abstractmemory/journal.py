@@ -408,8 +408,12 @@ class ValenceEvent:
 #: dream's narration, a record's title. The digest and the card text are the record's `object`; the narration is an
 #: attribute beside the dream's mechanical summary; the title is `attributes.title` (`understanding.retitle`, and any
 #: reading that changes it), whose version row holds the title as its `text`; a world-model card's key is
-#: `attributes.target` (`world_model_alias.rekey_world_model`), whose version row holds the key as its `text`.
-VERSION_FIELDS = frozenset({"digest", "card", "narration", "title", "target"})
+#: `attributes.target` (`world_model_alias.rekey_world_model`), whose version row holds the key as its `text`; a
+#: `pending` row is a declaration that a stored record's title and/or summary is still being written
+#: (`understanding.declare_pending`), whose `text` names the fields it declared ("title, summary") and whose cause
+#: carries its provenance (cause, reason, the tasks it queued, the reading it made provisional). A declaration is
+#: never a reading: it is not reverted, and the reading it made provisional is never restored.
+VERSION_FIELDS = frozenset({"digest", "card", "narration", "title", "target", "pending"})
 
 
 @dataclass(frozen=True)
@@ -429,7 +433,7 @@ class UnderstandingVersion:
     record_id: str                   # graph id (ex:<kind>-...)
     assertion_id: str                # the digest assertion id (usage keys on it; never changes)
     version: int
-    field: str                       # digest | card | narration | title | target
+    field: str                       # digest | card | narration | title | target | pending
     text: Optional[str]              # None only on the `title` version 0 of a record formed with its title pending
     scope: str
     owner_id: str = ""

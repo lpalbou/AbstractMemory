@@ -18,9 +18,10 @@ SQLite home) or settles with `ack` / `release`.
 TASK KINDS (capability = the cognition-profile capability that runs them):
 - `title.author`, `digest.author` (summaries): a record formed PENDING (operator rulings 2026-11-09: a title and a
   summary are mandatory metadata of every memory; when one failed at formation the record carries the marker
-  `attributes.pending = {title, summary, since, attempts}` and these tasks write what is missing). FORMATION
-  priority, ahead of every rewrite; `retitle` / `rewrite_digest` complete them and clear the marker; each claim
-  mirrors the attempt into the marker;
+  `attributes.pending = {title, summary, since, attempts}` and these tasks write what is missing; a STORED record
+  whose title or summary is still not authored, e.g. a legacy card or dream, is declared pending the same way by
+  `understanding.declare_pending`). FORMATION priority, ahead of every rewrite; `retitle` / `rewrite_digest`
+  complete them and clear the marker; each claim mirrors the attempt into the marker;
 - `digest.rewrite` (summaries): an episode, session summary or observation still in mechanical words;
 - `card.author` (summaries): a LEGACY world-model card still in mechanical words (or carrying a mechanical delta),
   formed before cards formed pending; `world_model_pass` forms every card with its title and summary pending (the
@@ -383,7 +384,7 @@ class MemoryTaskQueue:
         whoever wrote the words."""
         at = _iso(_utc())
         kind = {"digest": "digest.rewrite", "card": "card.author", "narration": "dream.narrate", "title": None,
-                "target": None}[field]
+                "target": None, "pending": None}[field]
 
         def write(c: sqlite3.Cursor) -> None:
             if task_id:
@@ -855,6 +856,57 @@ def enqueue_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List
             depends_on=depends, cost_hint=_cost_hint(system, a, sources))
         if res["enqueued"]:
             out.append(res["task_id"])
+    return out
+
+
+def plan_declared(system: Any, queue: "MemoryTaskQueue", a: Any, fields: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """The authoring task each field `understanding.declare_pending` declares gets (PURE READ, before its
+    transaction): formation's own task (`title.author` / `digest.author`, basis `<assertion id>@pending-<field>`,
+    basis_version 0), so a declared record owes exactly what a record formed pending owes. A LIVE task with that
+    identity (queued earlier without the marker) is adopted, never duplicated; one that already ran to an end on this
+    record (a title authored once, declared again) leaves the identity to the first free `...@pending-<field>@<k>`.
+    Returns {field: {kind, task_id, basis, live, cost_hint}}."""
+    from .records import PENDING_TASK_KINDS
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for fld in fields:
+        kind = PENDING_TASK_KINDS[fld]
+        base = f"{a.assertion_id}@pending-{fld}"
+        basis, k = base, 1
+        while True:
+            t = queue.task(task_id_for(kind, str(a.subject), basis))
+            if t is None or t["status"] in LIVE:
+                break
+            k += 1
+            basis = f"{base}@{k}"
+        out[fld] = {"kind": kind, "task_id": task_id_for(kind, str(a.subject), basis), "basis": basis,
+                    "live": t is not None, "cost_hint": _cost_hint(system, a)}
+    return out
+
+
+def enqueue_declared(queue: "MemoryTaskQueue", a: Any, plan: Mapping[str, Mapping[str, Any]], *,
+                     cause: Mapping[str, Any], body_kind: str, _cur: Optional[sqlite3.Cursor] = None,
+                     ) -> Dict[str, List[str]]:
+    """`declare_pending`'s enqueue, on its transaction (SQLite) or right after its write (in-memory): per declared
+    field the task `plan_declared` named, with formation's parameters (`FORMATION_PRIORITY`, `FORMATION_STRENGTH`,
+    capability summaries); its cause is the declaration's ({cause, pending: <field>, declared: true, reason?}). A
+    declared summary supersedes the record's live body task (`digest.rewrite`, a card's `card.author`): a pending
+    summary's `digest.author` task owns the body, as at formation. Returns {enqueued, adopted, superseded}."""
+    out: Dict[str, List[str]] = {"enqueued": [], "adopted": [], "superseded": []}
+    for fld, p in plan.items():
+        if p["live"]:
+            out["adopted"].append(str(p["task_id"]))
+            continue
+        res = queue.enqueue(
+            str(p["kind"]), str(a.subject), scope=str(a.scope), owner_id=str(a.owner_id or ""),
+            assertion_id=str(a.assertion_id or ""), basis=str(p["basis"]), basis_version=0,
+            strength=gate.FORMATION_STRENGTH, cause={**dict(cause), "pending": fld, "declared": True},
+            priority=FORMATION_PRIORITY, cost_hint=p["cost_hint"], _cur=_cur)
+        out["enqueued" if res["enqueued"] else "adopted"].append(str(res["task_id"]))
+    if "summary" in plan:
+        out["superseded"] = queue.supersede_target(
+            str(a.subject), kinds=("card.author",) if body_kind == "world_model" else ("digest.rewrite",),
+            reason="summary declared pending: its digest.author task owns the body", _cur=_cur)
     return out
 
 

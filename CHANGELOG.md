@@ -12,6 +12,31 @@ A record's understanding can be rewritten in place, and every earlier reading is
 
 ### Added
 
+- **`declare_pending`** (on `MemorySystem` and as a module function): a STORED record whose title or summary was
+  never authored is declared pending, the same state a record formed pending is in (operator rule 2026-11-09:
+  "title + summary must ALWAYS exist for every memory; authored, never cut, no fallback"; the runtime owner's
+  option, one rule). Its use: the runtime's sleep repair found legacy cards ("World model: <subject>",
+  `mechanical-card-v2`) and dreams ("Dream: ...") whose summaries `rewrite_digest` refused (`use_author_world_model`
+  / `use_narrate_dream`) because nothing could make a stored record pending. Any kind; `fields` defaults to
+  `("title", "summary")`, `cause` to `repair`, with an optional `reason`. It writes formation's marker
+  (`attributes.pending = {title, summary, since, attempts}`) and queues formation's tasks (`title.author` /
+  `digest.author`, capability `summaries`, `FORMATION_PRIORITY`, strength 1.0, basis `<assertion id>@pending-<field>`,
+  `basis_version` 0) in one transaction on the SQLite home; a live task queued earlier with that identity and no
+  marker is adopted, and a field authored once and declared again gets a fresh `...@pending-<field>@<k>` task. A
+  declared title is stored `None` (its old title kept as title versions 0 and 1 = `None`; canonical text, keyword
+  entry and vector replaced), and an interest's standing card moves to `topic:<graph id>` (`card_rekey`; a card other
+  active interests elect stays, `shared_card`). A declared summary keeps the body as its provisional digest, calls
+  no embedder and supersedes the record's live `digest.rewrite` / `card.author` task. `rewrite_digest` (a card's
+  summary through the card's own write, its structure untouched; a dream's in place) and `retitle` then complete the
+  tasks exactly as for a record formed pending. Idempotent: every asked field already pending returns
+  `outcome="unchanged"`, reason `already_pending`, nothing written. Refusals: `unknown_record`, `no_task_queue`,
+  `closed` (with `replaced_by`), `protected_kind` (a summary of the entity's own act), `consolidation_record`,
+  `hash_chained` (a declared title), `stale`, `embedder_unavailable`. The journal keeps each declaration as a version
+  row of the new field `pending` (`VERSION_FIELDS`; `pending_version` on the row; author
+  `{"kind": "mechanical", "id": "declare_pending"}`, cause `{cause, reason, pending, tasks, provisional}`), shown by
+  the opt-in replay family `revision`. `revert_digest` refuses a declaration (`not_revertible`) and the reading a
+  declaration made provisional (`provisional_summary`). `tests/test_declare_pending.py` (22 cases, both substrate
+  pairs; 18 mutants red on a scratch copy).
 - **`rewrite_digest`** (on `MemorySystem` and as a module function): replaces a record's digest, title and keywords
   in place. The record keeps its graph id, digest assertion id, edges, usage counts and journal; its keyword entry
   and vector are replaced in the same transaction. A compare-and-set on `digest_version` (`expected_version`)

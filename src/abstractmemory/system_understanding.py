@@ -15,8 +15,8 @@ __all__ = ["UnderstandingOps"]
 
 
 class UnderstandingOps:
-    """rewrite_digest / retitle / rekey_world_model / narrate_dream / revert_digest / versions / current_of /
-    record_understanding, and the queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
+    """rewrite_digest / retitle / declare_pending / rekey_world_model / narrate_dream / revert_digest / versions /
+    current_of / record_understanding, and the queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
 
     def rewrite_digest(
         self, record_id: str, *, text: str, author: Mapping[str, Any],
@@ -43,6 +43,14 @@ class UnderstandingOps:
         return _u.retitle(
             self, record_id, title=title, author=author, cause=cause, expected_version=expected_version,
             reader=reader, sources=sources, task_id=task_id, understood_at=understood_at)
+
+    def declare_pending(
+        self, record_id: str, *, fields: Sequence[str] = ("title", "summary"),
+        cause: Union[str, Mapping[str, Any]] = "repair", reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Declare a stored record's title and/or summary still being written: formation's marker and authoring
+        tasks, in one transaction (understanding.declare_pending)."""
+        return _u.declare_pending(self, record_id, fields=fields, cause=cause, reason=reason)
 
     def rekey_world_model(
         self, old_key: str, new_key: str, *, scope: str, owner_id: str, author: Mapping[str, Any],
