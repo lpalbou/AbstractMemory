@@ -47,7 +47,7 @@ NAMED DIVERGENCES from the fork (our architecture rules where they clash):
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from .consolidation import COMPONENT_RELATIONS, dream_pass, structural_report
 from .formation_authoring import author_and_shape, merge_receipts, new_receipt, note
@@ -652,6 +652,7 @@ def sleep_pass(
     include_dream: bool = True,
     include_identity: bool = True,
     author: Optional[Any] = None,
+    cancelled: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """One full sleep: RESOLVE first (the night reviews the day — standing
     dreams the day's lived experience already answered close softly,
@@ -689,6 +690,17 @@ def sleep_pass(
     crash semantics the engine already absorbs (idempotent formations,
     closure dedup, world-model crash-replay repair) — safe, but the
     boundary check is the graceful path hosts should prefer.
+
+    `cancelled` (Codex review 3 2026-11-09, finding 2) is the host's HARD
+    Stop check (the runtime passes its turn cancellation): a zero-arg
+    callable, True once the host stopped the night. It ends the night at
+    every sub-phase boundary like `should_continue`, and it is checked
+    again IMMEDIATELY BEFORE the completion marker: a Stop raised while
+    the final stage ran (the dream's authoring) records nothing in
+    `{prefix}maintenance`, so the idle -> sleep boundary
+    (`records_since_maintenance`) is not reset by a night that never
+    completed; the result carries `cancelled_after` = the last stage
+    that ran.
 
     include_dream=False is the MAINTENANCE-CYCLE composition (laurent
     dm#104 personal<->sleep cycle; v12 design adversary P1-6): the ~1h
@@ -771,8 +783,11 @@ def sleep_pass(
                                       "disposed": 0},
                            "provenance": "phase skipped — nothing reviewed"})
 
+    def _stopped() -> bool:
+        return cancelled is not None and bool(cancelled())
+
     def _go() -> bool:
-        return should_continue is None or bool(should_continue())
+        return not _stopped() and (should_continue is None or bool(should_continue()))
 
     def _skipped_night(after: str, resolution_result: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -949,6 +964,11 @@ def sleep_pass(
         "authoring": merge_receipts([maintenance.get("authoring"), world_models.get("authoring"),
                                      mining.get("authoring"), dream.get("authoring")]),
     }
+    if cancelled_after is None and _stopped():
+        # Stopped while the final stage ran: the night did not complete, the marker is not written (finding 2).
+        cancelled_after = next((name for name, phase in (("dream", dream), ("identity", identity),
+                                                         ("mining", mining), ("world_models", world_models))
+                                if not phase.get("skipped_reason")), "maintenance")
     if cancelled_after is not None:
         result["cancelled_after"] = cancelled_after
     elif not report_only and as_of is None and getattr(system, "tasks", None) is not None:

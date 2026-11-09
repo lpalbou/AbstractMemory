@@ -13,7 +13,8 @@ window resets the count; R5 the record filter dropped (edge rows counted); R6 th
 `since` None; R8 the count ignores the completion (counts since birth); R9 the SQLite count off the index (a full
 scan); R10 bookkeeping rows counted; B1 the earlier of `after` and memory's completion
 used; B2 `after` ignored; B3 `after` compared un-normalized; B4 a tie named "after"; B5 `since` reports memory's
-completion instead of the boundary used.
+completion instead of the boundary used; C1 no `cancelled` check before the completion marker (a night stopped
+during its dream recorded); C2 `cancelled` ignored at the sub-phase boundaries.
 """
 
 from __future__ import annotations
@@ -263,3 +264,80 @@ def test_the_hosts_boundary_is_read_in_any_offset_style(home) -> None:
         assert (out["count"], out["since"], out["boundary_source"]) == (2, host, "after"), style
     with pytest.raises(ValueError, match="ISO-8601"):
         records_since_maintenance(home, scopes=SCOPES, after="last tuesday")
+
+
+# --------------------------------------------------------------------------- a hard Stop (Codex review 3, finding 2)
+
+
+def _dream_day(system) -> None:
+    """Three records whose shared keyword makes the night form a dream (the final stage authors it)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for key, kind, digest, kws in (
+                ("s-1", "episode", "The connection pool saturated at noon.", ("pool", "saturation", "noon")),
+                ("s-3", "episode", "Planted the garden sensors at noon.", ("garden", "sensors", "noon")),
+                ("s-2", "lesson", "Batching the noon cron fixed it.", ("pool", "batching"))):
+            system.remember_many([MemoryRecordInput(kind=kind, title=f"Exchange {key}", digest=digest, keywords=kws)],
+                                 scope=SCOPE, owner_id=OWNER, idempotency_key=key)
+
+
+def _stopping_author(stop: dict, at_pass: str = "dream_pass"):
+    def author(kind, body, context):
+        stop.setdefault("passes", []).append(context.get("pass"))
+        if context.get("pass") == at_pass:
+            stop["now"] = True   # the operator pressed Stop while this stage was being authored
+        return {"title": "A noon dream", "summary": "Noon tied the pool and the garden.",
+                "author": {"kind": "capability-model", "id": "summaries"},
+                "reader": {"provider": "lmstudio", "model": "qwen/qwen3.8-27b", "thinking": False},
+                "sources": [{"kind": "artifact", "artifact_id": "authoring-call-1"}]}
+    return author
+
+
+def test_a_stop_during_the_final_dream_stage_records_no_completed_night(home) -> None:
+    _dream_day(home)
+    before = records_since_maintenance(home, scopes=SCOPES)
+    stop = {"now": False}
+    night = _sleep(home, author=_stopping_author(stop), cancelled=lambda: stop["now"])
+    assert stop["passes"] == ["dream_pass"] and night["dream"]["created"] is True   # the stage ran, then Stop
+    assert night["cancelled_after"] == "dream"
+    assert home.tasks.last_maintenance(SCOPES) is None
+    after = records_since_maintenance(home, scopes=SCOPES)
+    assert after["last_maintenance_at"] is None and after["boundary_source"] == before["boundary_source"] == "birth"
+    assert after["since"] == before["since"] and after["count"] >= before["count"]
+
+
+def test_a_stop_at_a_boundary_ends_the_night_and_records_nothing(home) -> None:
+    _dream_day(home)
+    night = _sleep(home, cancelled=lambda: True)
+    assert night["cancelled_after"] == "start (no phase ran)"
+    assert night["dream"]["created"] is False and home.tasks.last_maintenance(SCOPES) is None
+    calls = {"n": 0}
+
+    def after_resolution() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    night = _sleep(home, cancelled=after_resolution)
+    assert night["cancelled_after"] == "resolution" and home.tasks.last_maintenance(SCOPES) is None
+
+
+def test_a_night_never_stopped_still_completes(home) -> None:
+    _dream_day(home)
+    stop = {"now": False}
+    night = _sleep(home, author=_stopping_author(stop, at_pass="no-such-pass"), cancelled=lambda: stop["now"])
+    assert "cancelled_after" not in night and night["dream"]["created"] is True
+    assert home.tasks.last_maintenance(SCOPES)["kind"] == "night"
+    assert records_since_maintenance(home, scopes=SCOPES)["boundary_source"] == "memory"
+
+
+def test_a_stop_during_a_cycle_window_records_no_cycle(home) -> None:
+    _many(home, "day", 3)
+    stop = {"n": 0}
+
+    def stopped_late() -> bool:      # every boundary passes; Stop arrives during the last stage
+        stop["n"] += 1
+        return stop["n"] > 5
+
+    night = _sleep(home, include_dream=False, cancelled=stopped_late)
+    assert night["cancelled_after"] in ("identity", "mining")
+    assert home.tasks.last_maintenance(SCOPES, kind="cycle") is None
