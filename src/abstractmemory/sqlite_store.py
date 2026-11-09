@@ -471,6 +471,27 @@ class SQLiteTripleStore:
         pending: List[TripleAssertion] = [a for a in assertions]
         if not pending:
             return []
+        ids, rows = self._prepare_add(pending)
+        # ONE atomic batch (audit s4_leak_commit): BEGIN IMMEDIATE takes the
+        # write lock up front; a failure rolls back EVERY row of this batch,
+        # so nothing can linger uncommitted and flush at a later unrelated
+        # commit.
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                self._insert_rows_on(cur, rows)
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+        self._after_add_commit()
+        return ids
+
+    def _prepare_add(self, pending: List[TripleAssertion]) -> Tuple[List[str], List[tuple]]:
+        """`add`'s work before its transaction (embedding, the pin, the row tuples): (ids, rows). A caller that
+        commits the rows with other writes (`memory_tasks.form_with_tasks`: a formed record and the tasks it owes)
+        runs this, then `_insert_rows_on` on its own transaction, then `_after_add_commit`."""
 
         # Embed BEFORE the transaction (InMemory parity): edge assertions are
         # graph structure, never embedded. A DEAD embedder degrades the batch
@@ -536,45 +557,37 @@ class SQLiteTripleStore:
                 )
             )
 
-        # ONE atomic batch (audit s4_leak_commit): BEGIN IMMEDIATE takes the
-        # write lock up front; a failure rolls back EVERY row of this batch,
-        # so nothing can linger uncommitted and flush at a later unrelated
-        # commit. INSERT OR IGNORE skips rows whose assertion_id already
-        # exists (store-level id idempotency — same supplied-id-wins rule as
-        # the journal); ids are returned for ALL requested rows as before.
+        return ids, rows
+
+    def _insert_rows_on(self, cur: sqlite3.Cursor, rows: List[tuple]) -> None:
+        """`add`'s inserts on a CALLER-OWNED write transaction of this connection. INSERT OR IGNORE skips rows whose
+        assertion_id already exists (store-level id idempotency — same supplied-id-wins rule as the journal)."""
+        cur.executemany(
+            f"""
+            INSERT OR IGNORE INTO {self._table} (
+              assertion_id, subject, predicate, object, scope, owner_id,
+              observed_at, valid_from, valid_until, confidence,
+              provenance_json, attributes_json, text, embedding
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        # Keyword index rides the SAME transaction: a rolled-back
+        # batch indexes nothing; the high-water cursor makes the
+        # sync exact under OR IGNORE dedup (skipped rows sit below
+        # the cursor already).
+        self._after_insert(cur)
+
+    def _after_add_commit(self) -> None:
+        """After the rows committed: append them to the vector matrix (O(new rows)). A failure here must not report
+        the committed add as failed: the cache is dropped and the next semantic query rebuilds."""
         with self._lock:
-            cur = self._conn.cursor()
-            cur.execute("BEGIN IMMEDIATE")
-            try:
-                cur.executemany(
-                    f"""
-                    INSERT OR IGNORE INTO {self._table} (
-                      assertion_id, subject, predicate, object, scope, owner_id,
-                      observed_at, valid_from, valid_until, confidence,
-                      provenance_json, attributes_json, text, embedding
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    rows,
-                )
-                # Keyword index rides the SAME transaction: a rolled-back
-                # batch indexes nothing; the high-water cursor makes the
-                # sync exact under OR IGNORE dedup (skipped rows sit below
-                # the cursor already).
-                self._after_insert(cur)
-                cur.execute("COMMIT")
-            except BaseException:
-                cur.execute("ROLLBACK")
-                raise
             if self._vectors is not None:
-                # Append the committed rows to the matrix (O(new rows)). A
-                # failure here must not report the committed add as failed:
-                # the cache is dropped and the next semantic query rebuilds.
                 try:
                     self._synced_vectors()
                 except Exception:
                     self._vectors = None
-        return ids
 
     def query(self, q: TripleQuery) -> List[TripleAssertion]:
         # Vector-query resolution mirrors InMemory exactly: precomputed

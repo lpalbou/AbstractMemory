@@ -3,7 +3,7 @@
 
 The live failure: a bug in the host made every authoring attempt fail for a while, so records stayed marked pending
 with every `title.author` / `digest.author` task terminal (failed after `max_attempts` claims, or skipped).
-`declare_pending` answers such a record `already_pending` and queues nothing. `rearm_pending` queues formation's
+`declare_pending` answered such a record `already_pending` and queued nothing (it now repairs it through here). `rearm_pending` queues formation's
 task again for each pending field no live task owns, keeps the marker (its `rearmed` count) and journals the re-arm;
 `pending_records` finds those records in one call. Every case runs on both substrate pairs.
 
@@ -166,8 +166,6 @@ def test_an_exhausted_pending_record_is_rearmed_and_then_authored(home) -> None:
     failed = _exhaust(home, gid)
     assert len(failed) == 2 and _live(home, gid) == {}
     assert _row(home, gid).attributes["pending"]["attempts"] == 3
-    # Before: nothing could take it out of pending (declare_pending: already_pending, nothing queued).
-    assert home.declare_pending(gid)["reason"] == "already_pending" and _live(home, gid) == {}
     [found] = home.pending_records(scopes=SCOPES)
     assert found["record_id"] == gid and found["fields"] == ["title", "summary"]
     assert found["unowned"] == ["title", "summary"] and found["live"] == {"title": None, "summary": None}

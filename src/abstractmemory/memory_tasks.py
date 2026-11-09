@@ -392,7 +392,7 @@ class MemoryTaskQueue:
                 row = c.execute(f"SELECT status FROM {self.t_tasks} WHERE task_id = ?", (task_id,)).fetchone()
                 if row is not None and row[0] not in TERMINAL:
                     c.execute(f"UPDATE {self.t_tasks} SET status = 'done', result_json = ?, lease_holder = NULL, "
-                              "lease_until = NULL, updated_at = ? WHERE task_id = ?",
+                              "lease_until = NULL, error = NULL, updated_at = ? WHERE task_id = ?",
                               (_dump(dict(result)), at, task_id))
                     self._log(c, task_id, "done", at, {"by": "rewrite", "version": version})
             if kind is not None and field != "narration":
@@ -404,7 +404,7 @@ class MemoryTaskQueue:
                                  "AND status IN ('pending', 'deferred', 'leased')", (record_id, *kinds)).fetchall()
                 for (tid,) in rows:
                     c.execute(f"UPDATE {self.t_tasks} SET status = 'done', result_json = ?, lease_holder = NULL, "
-                              "lease_until = NULL, updated_at = ? WHERE task_id = ?",
+                              "lease_until = NULL, error = NULL, updated_at = ? WHERE task_id = ?",
                               (_dump({"outcome": "written", "field": field, "version": version}), at, tid))
                     self._log(c, tid, "done", at, {"by": "rewrite", "field": field, "version": version})
 
@@ -694,8 +694,11 @@ class MemoryTaskQueue:
                 return {"acked": False, "reason": "already_done", "task": t}
             if t["status"] != "leased" or t["lease_holder"] != str(holder):
                 return {"acked": False, "reason": "not_held", "task": t}
+            # A done task carries no error: an earlier attempt's failure reason stays in the task log (its
+            # `retry` / `defer` row), never on the completed task, where it would read as failed.
             cur.execute(f"UPDATE {self.t_tasks} SET status = 'done', result_json = ?, lease_holder = NULL, "
-                        "lease_until = NULL, updated_at = ? WHERE task_id = ?", (_dump(dict(result)), at, t["task_id"]))
+                        "lease_until = NULL, error = NULL, updated_at = ? WHERE task_id = ?",
+                        (_dump(dict(result)), at, t["task_id"]))
             self._log(cur, t["task_id"], "done", at, {"by": str(holder)})
             return {"acked": True, "task": self._task(cur.execute(
                 f"SELECT * FROM {self.t_tasks} WHERE task_id = ?", (t["task_id"],)).fetchone())}
@@ -817,30 +820,31 @@ def pending_task_kinds(attrs: Mapping[str, Any]) -> List[str]:
     return [kind for fld, kind in PENDING_TASK_KINDS.items() if marker.get(fld)]
 
 
-def enqueue_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[str]:
-    """`remember_many`'s enqueue (opted-in homes only): a `title.author` / `digest.author` task per pending field
-    of a record formed pending (formation priority, strength FORMATION_STRENGTH), and one `digest.rewrite` per
-    formed record whose digest_method is in the repair-consent set (`MECHANICAL_DIGEST_METHODS`; never beside a
-    pending summary, whose `digest.author` task owns the body). A summary depends on the pending rewrites of the
-    records it summarizes. Returns the task ids enqueued."""
+def plan_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[Dict[str, Any]]:
+    """The tasks `remember_many` owes for a formation plan (PURE READ, before anything is written; opted-in homes):
+    a `title.author` / `digest.author` per pending field of a record formed pending (formation priority, strength
+    FORMATION_STRENGTH), and one `digest.rewrite` per formed record whose digest_method is in the repair-consent set
+    (`MECHANICAL_DIGEST_METHODS`; never beside a pending summary, whose `digest.author` task owns the body). A
+    summary depends on the live rewrites of the records it summarizes, batch siblings included. Cost hints read the
+    batch's own rows for its siblings. Returns the `MemoryTaskQueue.enqueue` keyword sets, in order."""
     from .redigestion import MECHANICAL_DIGEST_METHODS
 
     queue: Optional[MemoryTaskQueue] = getattr(system, "tasks", None)
     if queue is None:
         return []
     digests = [a for a in plan.assertions if (a.attributes or {}).get("record_kind")]
-    out: List[str] = []
+    siblings = {str(a.subject): a for a in digests}
+    out: List[Dict[str, Any]] = []
+    rewrites: Dict[str, str] = {}  # target -> the digest.rewrite this batch queues for it (new tasks only)
     for a in digests:
         attrs = dict(a.attributes or {})
         for task_kind in pending_task_kinds(attrs):
             fld = "title" if task_kind == "title.author" else "summary"
-            res = queue.enqueue(
-                task_kind, a.subject, scope=scope, owner_id=owner_id, assertion_id=str(a.assertion_id or ""),
-                basis=f"{a.assertion_id}@pending-{fld}", basis_version=0, strength=gate.FORMATION_STRENGTH,
-                cause={"cause": "formation", "pending": fld}, priority=FORMATION_PRIORITY,
-                cost_hint=_cost_hint(system, a))
-            if res["enqueued"]:
-                out.append(res["task_id"])
+            out.append({"kind": task_kind, "target_id": a.subject, "scope": scope, "owner_id": owner_id,
+                        "assertion_id": str(a.assertion_id or ""), "basis": f"{a.assertion_id}@pending-{fld}",
+                        "basis_version": 0, "strength": gate.FORMATION_STRENGTH,
+                        "cause": {"cause": "formation", "pending": fld}, "priority": FORMATION_PRIORITY,
+                        "cost_hint": _cost_hint(system, a, known=siblings)})
         if _pending_marker(attrs).get("summary"):
             continue
         if str(attrs.get("digest_method") or "") not in MECHANICAL_DIGEST_METHODS or _protected(attrs):
@@ -850,14 +854,107 @@ def enqueue_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List
                    if e.subject == a.subject and (e.attributes or {}).get("record_edge") and e.predicate == "summarizes"]
         depends = [t["task_id"] for s in sources
                    for t in queue.tasks(status=tuple(LIVE), kind=("digest.rewrite",), target_id=s)]
-        res = queue.enqueue(
-            "digest.rewrite", a.subject, scope=scope, owner_id=owner_id, assertion_id=str(a.assertion_id or ""),
-            basis=f"{a.assertion_id}@v0", basis_version=0, strength=gate.FORMATION_STRENGTH,
-            cause={"cause": "formation"}, priority=TURN_PRIORITY if kind != "summary" else PRIORITY["digest.rewrite"],
-            depends_on=depends, cost_hint=_cost_hint(system, a, sources))
+        depends += [rewrites[s] for s in sources if s in rewrites and rewrites[s] not in depends]
+        basis = f"{a.assertion_id}@v0"
+        tid = task_id_for("digest.rewrite", str(a.subject), basis)
+        if queue.task(tid) is None:
+            rewrites[str(a.subject)] = tid
+        out.append({"kind": "digest.rewrite", "target_id": a.subject, "scope": scope, "owner_id": owner_id,
+                    "assertion_id": str(a.assertion_id or ""), "basis": basis, "basis_version": 0,
+                    "strength": gate.FORMATION_STRENGTH, "cause": {"cause": "formation"},
+                    "priority": TURN_PRIORITY if kind != "summary" else PRIORITY["digest.rewrite"],
+                    "depends_on": depends, "cost_hint": _cost_hint(system, a, sources, known=siblings)})
+    return out
+
+
+def _enqueue_planned(queue: "MemoryTaskQueue", planned: Sequence[Mapping[str, Any]],
+                     _cur: Optional[sqlite3.Cursor]) -> List[str]:
+    out: List[str] = []
+    for p in planned:
+        args = dict(p)
+        res = queue.enqueue(args.pop("kind"), args.pop("target_id"), _cur=_cur, **args)
         if res["enqueued"]:
             out.append(res["task_id"])
     return out
+
+
+def enqueue_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[str]:
+    """Queue the tasks `plan_formed` names for records ALREADY stored (each in its own transaction). Formation
+    itself goes through `form_with_tasks`, where the records and their tasks commit together. Returns the task ids
+    enqueued."""
+    queue: Optional[MemoryTaskQueue] = getattr(system, "tasks", None)
+    if queue is None:
+        return []
+    return _enqueue_planned(queue, plan_formed(system, plan, scope=scope, owner_id=owner_id), None)
+
+
+def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[str]:
+    """`remember_many` on an opted-in home: the formed records, their bindings and the tasks they owe (above all a
+    pending record's `title.author` / `digest.author`) commit ATOMICALLY (Codex review 2026-11-09 finding 11: the
+    records were stored before their tasks were queued, so a failed enqueue left a pending record no task would
+    ever write). The tasks are planned first (`plan_formed`, a pure read), then:
+
+    - SQLite home (the queue shares the store's file and connection): the rows, their keyword entries, the bindings
+      (when the journal is the store's own file) and the tasks are written in ONE transaction; any failure rolls
+      all of them back. A journal in another file gets its bindings right after the commit (as before).
+    - in-memory pair (the queue's private database): the queue transaction opens first and commits last, around
+      the store's rows and the bindings; a failure rolls the tasks back and removes the rows this batch added.
+
+    Idempotent like `apply_formation_plan` (existing rows skipped, bindings and tasks replay as no-ops). Returns
+    the record ids in input order."""
+    from .journal_sqlite import SQLiteJournal
+    from .sqlite_store import SQLiteTripleStore
+    from .store import TripleQuery
+
+    queue: MemoryTaskQueue = system.tasks
+    store, journal = system.store, system.journal
+    planned = plan_formed(system, plan, scope=scope, owner_id=owner_id)
+    existing = {a.assertion_id for a in store.query(TripleQuery(assertion_ids=plan.assertion_ids, limit=0))}
+    missing = [a for a in plan.assertions if a.assertion_id not in existing]
+    if isinstance(store, SQLiteTripleStore) and queue.shares_store_transaction:
+        from .understanding import _same_file
+
+        shared = isinstance(journal, SQLiteJournal) and _same_file(store._path, journal._path)
+        rows = store._prepare_add(missing)[1] if missing else []
+        with store._lock:
+            cur = store._conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                if rows:
+                    store._insert_rows_on(cur, rows)
+                if shared:
+                    for binding in plan.bindings:
+                        journal._append_binding_on(cur, binding)
+                _enqueue_planned(queue, planned, cur)
+                cur.execute("COMMIT")
+            except BaseException:
+                cur.execute("ROLLBACK")
+                raise
+        if rows:
+            store._after_add_commit()
+        if not shared:
+            for binding in plan.bindings:
+                journal.append_binding(binding)
+        return list(plan.record_ids)
+    with queue._lock:
+        qcur = queue._conn.cursor()
+        qcur.execute("BEGIN IMMEDIATE")
+        added: List[str] = []
+        try:
+            _enqueue_planned(queue, planned, qcur)
+            if missing:
+                store.add(missing)
+                added = [str(a.assertion_id) for a in missing]
+            for binding in plan.bindings:
+                journal.append_binding(binding)
+            qcur.execute("COMMIT")
+        except BaseException:
+            qcur.execute("ROLLBACK")
+            discard = getattr(store, "_discard_formed", None)
+            if added and callable(discard):
+                discard(added)
+            raise
+    return list(plan.record_ids)
 
 
 def plan_declared(system: Any, queue: "MemoryTaskQueue", a: Any, fields: Sequence[str]) -> Dict[str, Dict[str, Any]]:
@@ -913,14 +1010,16 @@ def enqueue_declared(queue: "MemoryTaskQueue", a: Any, plan: Mapping[str, Mappin
     return out
 
 
-def _cost_hint(system: Any, a: Any, source_ids: Sequence[str] = ()) -> Dict[str, Any]:
-    """What memory knows of a task's input size: the target's digest plus its source digests (token estimates);
-    the verbatim is a host artifact, named but not read."""
+def _cost_hint(system: Any, a: Any, source_ids: Sequence[str] = (),
+               known: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """What memory knows of a task's input size: the target's digest plus its source digests (token estimates;
+    `known` = rows not stored yet, e.g. a formation batch's siblings); the verbatim is a host artifact, named but
+    not read."""
     from .records import resolve_digest_assertion
 
     tokens = token_estimate(str(a.object or ""))
     for sid in source_ids:
-        s = resolve_digest_assertion(system.store, sid)
+        s = (known or {}).get(str(sid)) or resolve_digest_assertion(system.store, sid)
         if s is not None:
             tokens += token_estimate(str(s.object or ""))
     attrs = a.attributes if isinstance(a.attributes, dict) else {}

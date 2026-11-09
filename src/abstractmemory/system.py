@@ -218,13 +218,14 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
             records, scope=scope, owner_id=owner_id,
             idempotency_key=idempotency_key, turn_id=turn_id,
         )
-        ids = _apply_formation_plan(self._store, self._journal, plan)
-        if self._task_queue is not None:
-            # Opted-in homes owe understanding for every labelled-mechanical record they form (0060).
-            from .memory_tasks import enqueue_formed
+        if self._task_queue is None:
+            return _apply_formation_plan(self._store, self._journal, plan)
+        # Opted-in homes owe understanding for every labelled-mechanical record they form (0060), and a pending
+        # record its title.author / digest.author: the records and their tasks commit together (a failure writes
+        # neither; Codex review 2026-11-09 finding 11).
+        from .memory_tasks import form_with_tasks
 
-            enqueue_formed(self, plan, scope=str(scope).strip().lower(), owner_id=owner_id)
-        return ids
+        return form_with_tasks(self, plan, scope=str(scope).strip().lower(), owner_id=owner_id)
 
     def remember(
         self, record: MemoryRecordInput, *, scope: str, owner_id: str,

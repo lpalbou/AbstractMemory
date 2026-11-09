@@ -990,20 +990,24 @@ def declare_pending(
 
     The journal keeps the declaration as a version row (field `pending`, `pending_version` on the row): text = the
     fields declared, author `DECLARER`, cause = {cause, reason?, pending: [fields], tasks: {field: task id},
-    provisional?: {field, version}, already_pending?: [fields]}; the opt-in replay family `revision` shows it.
+    provisional?: {field, version}, already_pending?: [fields], repaired?: [fields]}; the opt-in replay family
+    `revision` shows it.
 
-    Returns {applied, outcome: applied | unchanged | refused, reason, detail?, record_id, assertion_id,
-    field: "pending", version, declared, already_pending, pending (the marker), tasks {field: task id}, enqueued,
-    adopted, superseded, provisional?, title_version?, vector_rewritten?, seq?, version_id?, card_rekey?}.
-    Idempotent: every asked field already pending -> outcome "unchanged", reason `already_pending`, nothing written
-    or queued. Refusals (nothing written): `unknown_record`, `no_task_queue` (no title or summary is ever stored
+    Returns {applied, outcome: applied | unchanged | rearmed | refused, reason, detail?, record_id, assertion_id,
+    field: "pending", version, declared, already_pending, repaired, pending (the marker), tasks {field: task id},
+    enqueued, adopted, superseded, provisional?, title_version?, vector_rewritten?, seq?, version_id?, card_rekey?}.
+    Idempotent for a healthy record: every asked field already pending WITH its live task -> outcome "unchanged",
+    reason `already_pending`, `tasks` naming them, nothing written or queued. An already-pending field NO live task
+    owns (its enqueue failed, or every task ran out) is repaired (Codex review 2026-11-09 finding 11): with nothing
+    new to declare, through `rearm_pending` (outcome "rearmed", `repaired` the fields re-armed); beside a new field,
+    its fresh task joins the declaration's transaction (`repaired`). Refusals (nothing written): `unknown_record`, `no_task_queue` (no title or summary is ever stored
     missing without the task that writes it), `closed` (with `replaced_by`: declare its current replacement),
     `protected_kind` (a summary of the entity's own act: his words are the body), `consolidation_record` (a ripple's
     consolidation summary is never rewritten by a task), `hash_chained` (a title an owner-direct diary entry's
     `entry_hash` attests), `stale`, `embedder_unavailable`. `fields` outside `PENDING_FIELDS`, an empty `fields` or a
     cause outside `REWRITE_CAUSES` raise ValueError.
     """
-    from .memory_tasks import enqueue_declared, plan_declared
+    from .memory_tasks import enqueue_declared, live_pending_tasks, plan_declared
     from .records import PENDING_FIELDS
 
     if isinstance(fields, (str, bytes)):
@@ -1034,12 +1038,20 @@ def declare_pending(
     marker = dict(attrs["pending"]) if isinstance(attrs.get("pending"), Mapping) else {}
     already = [f for f in wanted if marker.get(f)]
     new = [f for f in wanted if not marker.get(f)]
+    live = live_pending_tasks(queue, str(a.subject), already)
+    # An already-pending field no live task owns (its enqueue failed, or every task ran out) is REPAIRED, never
+    # answered `already_pending` with no task (Codex review 2026-11-09 finding 11): a healthy record stays idempotent.
+    repair = [f for f in already if live[f] is None]
     if not new:
-        live = {f: next((t["task_id"] for t in queue.tasks(kind=(PENDING_TASK_KINDS[f],), target_id=str(a.subject))
-                         if t["status"] in ("pending", "deferred", "leased")), None) for f in already}
+        if repair:
+            out = rearm_pending(system, str(a.subject), cause=cause, reason=reason)
+            out.update({"declared": [], "already_pending": already, "repaired": sorted(out.get("tasks") or {})
+                        if out.get("applied") else []})
+            return out
         return {"applied": False, "outcome": "unchanged", "reason": "already_pending",
-                "detail": f"{', '.join(already)} already pending: nothing declared, nothing queued",
-                "already_pending": already, "declared": [], "pending": marker, "tasks": live, **base}
+                "detail": f"{', '.join(already)} already pending, each with its live task: nothing declared, "
+                          "nothing queued",
+                "already_pending": already, "declared": [], "pending": marker, "tasks": dict(live), **base}
     if "summary" in new and kind in UNDERSTANDING_PROTECTED_KINDS:
         return _refusal("protected_kind", f"kind {kind!r} is the entity's own act: its body is his words, never "
                         "authored by a task, so its summary cannot be pending", **base)
@@ -1049,11 +1061,13 @@ def declare_pending(
     if "title" in new and attrs.get("entry_hash") is not None:
         return _refusal("hash_chained", "this diary entry's entry_hash attests its title (diary_entry_hash); taking "
                         "it back to pending would break verify_diary_chain", **base)
-    plan = plan_declared(system, queue, a, new)
+    plan = plan_declared(system, queue, a, [*new, *repair])
     body = _field_of(kind)
     at = utc_now_iso()
     row_cause: Dict[str, Any] = {**cause_d, "pending": list(new),
-                                 "tasks": {f: str(plan[f]["task_id"]) for f in new}}
+                                 "tasks": {f: str(plan[f]["task_id"]) for f in plan}}
+    if repair:
+        row_cause["repaired"] = list(repair)
     provisional = {"field": body, "version": _current_version(attrs, body)} if "summary" in new else None
     if provisional is not None:
         row_cause["provisional"] = provisional
@@ -1082,7 +1096,7 @@ def declare_pending(
     queued: Dict[str, List[str]] = {}
 
     def enqueue(cur: Any) -> None:
-        queued.update(enqueue_declared(queue, a, {f: plan[f] for f in new}, cause=cause_d, body_kind=kind, _cur=cur))
+        queued.update(enqueue_declared(queue, a, plan, cause=cause_d, body_kind=kind, _cur=cur))
 
     out = _apply(system, record_id=str(a.subject), field="pending", new_object=None, narration=None,
                  reserved=reserved, version=version, expected_version=_current_version(attrs, "pending"),
@@ -1091,9 +1105,9 @@ def declare_pending(
     if not out.get("applied"):
         return out
     after = _resolve(system, str(a.subject))
-    out.update({"declared": list(new), "already_pending": list(already),
+    out.update({"declared": list(new), "already_pending": list(already), "repaired": list(repair),
                 "pending": dict(_attrs(after).get("pending") or {}) if after is not None else {},
-                "tasks": {f: str(plan[f]["task_id"]) for f in new}, "enqueued": queued.get("enqueued", []),
+                "tasks": {f: str(plan[f]["task_id"]) for f in plan}, "enqueued": queued.get("enqueued", []),
                 "adopted": queued.get("adopted", []), "superseded": queued.get("superseded", [])})
     if provisional is not None:
         out["provisional"] = provisional
@@ -1151,8 +1165,8 @@ def rearm_pending(
     """Re-arm a pending record whose authoring ran out: a field its marker says is pending but that has NO live
     (pending / deferred / leased) `title.author` / `digest.author` task, because every task it had failed after
     `max_attempts` claims, was skipped or superseded, gets a fresh one (operator rule 2026-11-09: "title + summary
-    must ALWAYS exist"; a record pending with only terminal tasks would stay pending forever, and `declare_pending`
-    answers it `already_pending`). Formation's task exactly (`plan_declared` / `enqueue_declared`: same kind,
+    must ALWAYS exist"; a record pending with only terminal tasks would stay pending forever; a repeated
+    `declare_pending` repairs it through here). Formation's task exactly (`plan_declared` / `enqueue_declared`: same kind,
     capability `summaries`, `FORMATION_PRIORITY`, `FORMATION_STRENGTH`, basis_version 0, the next free basis
     `<assertion id>@pending-<field>@<k>`; cause {cause, reason?, pending: <field>, rearmed: n}), queued in the same
     transaction as the marker (SQLite home). A field that still has a live task keeps it (listed in `live`).

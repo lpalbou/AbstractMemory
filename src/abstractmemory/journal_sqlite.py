@@ -300,24 +300,30 @@ class SQLiteJournal:
     # -- bindings -------------------------------------------------------------------
 
     def append_binding(self, binding: ScopeBinding) -> ScopeBinding:
+        with self._txn() as cur:
+            return self._append_binding_on(cur, binding)
+
+    def _append_binding_on(self, cur: sqlite3.Cursor, binding: ScopeBinding) -> ScopeBinding:
+        """append_binding's body on a CALLER-OWNED transaction of THIS file (formation on an opted-in home runs it
+        on the triple store's connection, so the record, its binding and the tasks it owes commit or roll back
+        together: `memory_tasks.form_with_tasks`). Seq allocation is in-database, so a foreign connection is safe."""
         _require_instance(binding, ScopeBinding, "append_binding")
         [binding] = _sanitize_batch([binding])
         supplied = str(binding.binding_id or "").strip()
-        with self._txn() as cur:
-            if supplied:
-                row = self._find_by_id(cur, self._t_bindings, "binding_id", supplied)
-                if row is not None:
-                    return row_to_binding(row)  # replay no-op: original record, original seq
-            enriched = _enrich_binding(binding, self._allocate_seqs(cur, 1))
-            self._insert(cur, self._t_bindings, {
-                "seq": enriched.seq, "binding_id": enriched.binding_id,
-                "record_id": enriched.record_id, "scope": enriched.scope,
-                "owner_id": enriched.owner_id, "search_state": enriched.search_state,
-                "prompt_state": enriched.prompt_state, "lifecycle": enriched.lifecycle,
-                "source": enriched.source, "reason": enriched.reason,
-                "observed_at": enriched.observed_at,
-                "provenance_json": _json_dump(enriched.provenance),
-            })
+        if supplied:
+            row = self._find_by_id(cur, self._t_bindings, "binding_id", supplied)
+            if row is not None:
+                return row_to_binding(row)  # replay no-op: original record, original seq
+        enriched = _enrich_binding(binding, self._allocate_seqs(cur, 1))
+        self._insert(cur, self._t_bindings, {
+            "seq": enriched.seq, "binding_id": enriched.binding_id,
+            "record_id": enriched.record_id, "scope": enriched.scope,
+            "owner_id": enriched.owner_id, "search_state": enriched.search_state,
+            "prompt_state": enriched.prompt_state, "lifecycle": enriched.lifecycle,
+            "source": enriched.source, "reason": enriched.reason,
+            "observed_at": enriched.observed_at,
+            "provenance_json": _json_dump(enriched.provenance),
+        })
         return enriched
 
     def bindings(

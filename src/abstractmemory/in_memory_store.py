@@ -311,6 +311,14 @@ class InMemoryTripleStore:
                 self._rows.append(row)
         return ids
 
+    def _discard_formed(self, assertion_ids: Iterable[str]) -> None:
+        """Undo a formation batch whose other writes failed (`memory_tasks.form_with_tasks`: a formed record and the
+        tasks it owes commit together; this store has no transaction, so the rows this batch added are removed)."""
+        gone = {str(a) for a in assertion_ids}
+        with self._lock:
+            self._rows = [r for r in self._rows if r.get("assertion_id") not in gone]
+            self._ids -= gone
+
     def query(self, q: TripleQuery) -> List[TripleAssertion]:
         raw_limit = int(q.limit) if isinstance(q.limit, int) else 100
         limit: Optional[int]

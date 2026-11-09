@@ -49,7 +49,11 @@ def test_sleep_node_names_this_packages_processes(artifact) -> None:
 
 def test_phase_keys_and_initial_phase_match_the_ruled_machine(artifact) -> None:
     assert sorted(artifact["phases"]) == ["personal", "sleep", "visit", "work"]
-    assert artifact["initial_phase"] == "sleep"  # newborn = sleep (ruled 13:46)
+    # Spec v25 (abstractentity 814c574, the five-state life cycle, operator 2026-11-09): idle is a state of the
+    # cycle with no phase key, and the newborn's (NEWBORN = IDLE; v1-v24 ruled newborn = sleep).
+    assert artifact["version"] >= 25
+    assert artifact["initial_phase"] == "idle"
+    assert "idle" in artifact["statuses"] and "idle" not in artifact["phases"]
 
 
 def test_every_transition_into_a_non_sleep_phase_ends_sleep_gracefully(artifact) -> None:
