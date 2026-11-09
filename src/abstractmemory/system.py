@@ -208,6 +208,12 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
         journal dedup). No attention event at formation BY DESIGN: forming
         is not using (0018). Returns record_ids in input order.
         """
+        if self._task_queue is None and any(getattr(r, "pending", ()) for r in records or ()):
+            # A title and a summary are mandatory (operator 2026-11-09): a record still writing one is formed only
+            # WITH the task that will write it. Refused before anything is written.
+            raise ValueError(
+                "a record formed pending (pending=('title',) / ('summary',)) needs its authoring task: open the home "
+                "with MemorySystem(task_queue=True) — no title or summary is ever stored missing without it")
         plan = _build_formation_plan(
             records, scope=scope, owner_id=owner_id,
             idempotency_key=idempotency_key, turn_id=turn_id,

@@ -102,6 +102,7 @@ DEFAULT_HARD_CAP: int = 64
 # overrides with `cost_of`; measured times replace these as tasks complete). Order of magnitude for a 27B local
 # model at 30-45 tokens/s decode with thinking off (DESIGN §9: 2-6k tokens in, ~250 out).
 DEFAULT_TASK_SECONDS: Mapping[str, float] = {
+    "title.author": 20.0, "digest.author": 60.0,  # a pending record's title (~20 tokens out) or summary
     "digest.rewrite": 60.0, "card.author": 60.0, "dream.narrate": 45.0,
     "ripple.reconsider": 60.0, "ripple.consolidate": 90.0,
 }

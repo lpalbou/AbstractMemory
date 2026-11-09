@@ -34,9 +34,12 @@ title (rewrite_digest's `title=`, a revert) writes its title version in the same
 `versions(record_id, field="title")` lists every title the record has held. The diary rule here concerns the body:
 a diary entry's words are read through the book, its replay block is redacted, and the opt-in `revision` envelopes
 of its title versions are sealed the same way (replay.py); a retitle reads nothing back. An entry carrying an
-`entry_hash` (an owner-direct chained diary) refuses: its title is part of the attested hash. An UNTITLED record
-(`records.TITLE_OPTIONAL_KINDS`, operator ruling 2026-11-09: a title that failed at formation is stored NULL and
-logged at the source, no fallback) is retitled like any other: its title version 0 is None.
+`entry_hash` (an owner-direct chained diary) refuses: its title is part of the attested hash. A record formed with
+its title PENDING (`records.PENDING_FIELDS`, operator rulings 2026-11-09: a title and a summary are mandatory; a
+missing one is stored None only beside its queued `title.author` / `digest.author` task and the `attributes.pending`
+marker) is retitled like any other: its title version 0 is None, and the write completes the task and clears the
+marker (`_clear_pending`; `rewrite_digest` likewise for a pending summary). A title is never removed: a revert to a
+version that held none is refused.
 
 A CARD'S KEY (`attributes.target`) is moved alone by `world_model_alias.rekey_world_model` through
 `rekey_card_in_place` (operator 2026-11-08: an interest's card is keyed on its title's subject head, so a retitled
@@ -66,7 +69,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .canonical_text import canonical_text, record_title
 from .journal import UnderstandingVersion, VERSION_FIELDS, utc_now_iso
-from .records import resolve_digest_assertion
+from .records import PENDING_TASK_KINDS, resolve_digest_assertion
 
 __all__ = [
     "AUTHOR_KINDS",
@@ -242,6 +245,31 @@ def _version_attr(field: str) -> str:
 def _title(attrs: Mapping[str, Any]) -> Optional[str]:
     """The record's title, None when it is untitled (operator ruling 2026-11-09: a failed title is stored NULL)."""
     return record_title(attrs)
+
+
+def _clear_pending(out: Dict[str, Any], field: str) -> Dict[str, Any]:
+    """The pending marker after a write (records.PENDING_FIELDS): a title is no longer pending once the row holds
+    one; a summary is no longer pending once a digest reading is written. The marker goes when nothing is left."""
+    marker = out.get("pending")
+    if not isinstance(marker, Mapping):
+        return out
+    marker = dict(marker)
+    if marker.get("title") and record_title(out) is not None:
+        marker["title"] = False
+    if marker.get("summary") and field == "digest":
+        marker["summary"] = False
+    if marker.get("title") or marker.get("summary"):
+        out["pending"] = marker
+    else:
+        out.pop("pending", None)
+    return out
+
+
+def _pending_cleared(before: Mapping[str, Any], after: Mapping[str, Any]) -> List[str]:
+    """The pending fields a write fulfilled (they were pending before it and are not after it)."""
+    m0 = before.get("pending") if isinstance(before.get("pending"), Mapping) else {}
+    m1 = after.get("pending") if isinstance(after.get("pending"), Mapping) else {}
+    return [f for f in ("title", "summary") if m0.get(f) and not m1.get(f)]
 
 
 def _current_version(attrs: Mapping[str, Any], field: str) -> int:
@@ -420,7 +448,13 @@ def _apply(
     current = _current_version(attrs0, field)
     title_now = _current_version(attrs0, "title")
     target_new = current + 1
+    reserved_verb = reserved
+
+    def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:  # noqa: F811 - the verb's attrs, pending settled
+        return _clear_pending(reserved_verb(old, n), field)
+
     planned_attrs = reserved(attrs0, target_new)
+    cleared = _pending_cleared(attrs0, planned_attrs)
     planned = replace(a, object=new_object if new_object is not None else a.object, attributes=planned_attrs)
     if field == "title":
         identical = _title(attrs0) == _title(planned_attrs)
@@ -490,7 +524,7 @@ def _apply(
         # The task queue (0060) settles in the same transaction: the named task is acked, stale tasks superseded.
         def _settle(cur: Any) -> None:
             queue.on_rewrite(cur, record_id=str(a.subject), field=field, version=target_new,
-                             task_id=v_new.task_id or None,
+                             task_id=v_new.task_id or None, completes=[PENDING_TASK_KINDS[f] for f in cleared],
                              result={"version": target_new, "version_id": v_new.version_id,
                                      "seq": written[-1].seq if written else None, "field": field,
                                      "author_kind": v_new.author.get("kind"),
@@ -568,6 +602,8 @@ def _apply(
               "cosine_distance": distance, **base}
     if title_rows:
         result["title_version"] = title_now + 1
+    if cleared:
+        result["pending_cleared"] = cleared
     for fn in after:
         fn(result)
     return result
@@ -596,7 +632,11 @@ def _version_zero(a: Any, field: str) -> UnderstandingVersion:
         text=str(a.object or ""), scope=str(a.scope), owner_id=str(a.owner_id or ""),
         title=record_title(attrs), keywords=tuple(attrs.get("keywords") or ()),
         digest_method=str(attrs.get("digest_method") or ""), author=reading["author"], reader=reading["reader"],
-        cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance")},
+        cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance"),
+               # The provisional digest of a record formed with its summary pending: never restored (a summary is
+               # mandatory; revert_digest refuses it).
+               **({"pending_summary": True} if field == "digest" and isinstance(attrs.get("pending"), Mapping)
+                  and attrs["pending"].get("summary") else {})},
         understood_at=reading["understood_at"] or str(a.observed_at or ""),
         version_id=version_id_for(str(a.subject), field, 0),
     )
@@ -783,13 +823,15 @@ def retitle(
     keyword-index entry and the vector are replaced in the same transaction, like `rewrite_digest`. The title is
     stored exactly as given (stripped), never cut. `expected_version` is the compare-and-set on `title_version` (0
     for a record never retitled). The first retitle captures version 0 (the title the record held, with the
-    provenance of the reading that wrote it). An UNTITLED record (its title failed at formation and was stored NULL,
-    operator ruling 2026-11-09) is retitled like any other: version 0 holds None (text and title), version 1 the
-    authored title; reverting to version 0 makes it untitled again. Returns the `rewrite_digest` result shape with
+    provenance of the reading that wrote it). A record whose title is PENDING (formed with `pending=("title",)`,
+    operator rulings 2026-11-09) is retitled like any other: version 0 holds None (text and title), version 1 the
+    authored title; the write completes its live `title.author` tasks, clears the marker (`pending_cleared`), and an
+    interest's card keyed on its graph id moves to the title's head (`card_rekey`). Returns the `rewrite_digest` result
+    shape with
     `field="title"`; `outcome="unchanged"` (no version) when the title is already the current one. Refusal reasons
     (nothing written): `unknown_record`, `empty_title`, `hash_chained` (an owner-direct diary entry whose
-    `entry_hash` attests its title), `closed`, `stale`, `embedder_unavailable`. Invalid arguments raise ValueError, as in
-    `rewrite_digest`.
+    `entry_hash` attests its title), `closed`, `stale`, `embedder_unavailable`. Invalid arguments raise ValueError, as
+    in `rewrite_digest`.
     """
     author_d = _author(author)
     reader_d = _reader(reader, author_d["kind"])
@@ -810,12 +852,48 @@ def retitle(
     if closures:
         return _refusal("closed", f"the record is closed ({closures[0].kind}); retitle its current replacement",
                         replaced_by=_replaced_by(closures), **base)
-    return _retitle_apply(system, a, words, author_d, reader_d, sources_t, cause_d,
-                          task_id=str(task_id or "").strip(), at=str(understood_at or "").strip() or utc_now_iso(),
-                          expected=int(expected_version), method=RETITLE_METHOD, hooks=_hooks, after=_after)
+    was_untitled = _title(_attrs(a)) is None
+    out = _retitle_apply(system, a, words, author_d, reader_d, sources_t, cause_d,
+                         task_id=str(task_id or "").strip(), at=str(understood_at or "").strip() or utc_now_iso(),
+                         expected=int(expected_version), method=RETITLE_METHOD, hooks=_hooks, after=_after)
+    if out.get("applied") and was_untitled and _attrs(a).get("record_kind") == "interest":
+        rekey = _rekey_untitled_interest_card(system, a, words, author_d, reader_d, sources_t, cause_d)
+        if rekey is not None:
+            out["card_rekey"] = rekey
+    return out
 
 
-def _retitle_apply(system: Any, a: Any, words: Optional[str], author_d: Dict[str, Any], reader_d: Dict[str, Any],
+def _rekey_untitled_interest_card(system: Any, a: Any, words: str, author_d: Dict[str, Any],
+                                  reader_d: Dict[str, Any], sources_t: Sequence[Dict[str, Any]],
+                                  cause_d: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The title of an untitled interest landed: its standing card, keyed on the interest's graph id while it had
+    no title (`world_model.interest_target`), moves to the new title's subject head through `rekey_world_model` (the
+    id key stays an alias), so the next pass forms no second card. None when no card stands on the id key; a
+    refusal (e.g. `target_taken`: a card already stands on the head) is returned as is, nothing written."""
+    from .store import TripleQuery
+    from .world_model import interest_target
+    from .world_model_alias import rekey_world_model
+
+    old_key = interest_target(str(a.subject), None)
+    new_key = interest_target(str(a.subject), words)
+    homes = sorted({(str(c.scope), str(c.owner_id or "")) for c in system.store.query(
+        TripleQuery(owner_id=str(a.owner_id or "") or None, predicate="dcterms:abstract", limit=0))
+        if isinstance(c.attributes, dict) and c.attributes.get("record_kind") == "world_model"
+        and str(c.attributes.get("target") or "").strip() == old_key})
+    if not homes:
+        return None
+    if not new_key:
+        return {"applied": False, "outcome": "refused", "reason": "no_subject_head", "old_key": old_key,
+                "detail": "the new title's subject head is too short to name a subject; the card keeps the id key"}
+    results = [rekey_world_model(system, old_key, new_key, scope=scope, owner_id=owner, author=author_d,
+                                 reader=reader_d or None, sources=sources_t,
+                                 cause={**cause_d, "pending_title": str(a.subject)},
+                                 reason="the interest's pending title landed")
+               for scope, owner in homes]
+    return results[0] if len(results) == 1 else {"results": results}
+
+
+def _retitle_apply(system: Any, a: Any, words: str, author_d: Dict[str, Any], reader_d: Dict[str, Any],
                    sources_t: Sequence[Dict[str, Any]], cause_d: Dict[str, Any], *, task_id: str, at: str,
                    expected: int, method: str, hooks: Sequence[Callable[[Any], None]] = (),
                    after: Sequence[Callable[[Dict[str, Any]], None]] = ()) -> Dict[str, Any]:
@@ -920,11 +998,19 @@ def revert_digest(
     if fld == "narration":
         return _restore_narration(system, a, old, cause, int(expected_version))
     if fld == "title":
+        if old.text is None:
+            return _refusal("null_title", "a title is mandatory metadata of every memory (operator 2026-11-09): this "
+                            "version held none, so it cannot be restored; retitle instead",
+                            record_id=str(a.subject), assertion_id=str(a.assertion_id or ""), field=fld)
         return _retitle_apply(system, a, old.text, dict(old.author) or {"kind": UNRECORDED, "id": ""},
                               dict(old.reader), tuple(old.sources), cause, task_id="", at=utc_now_iso(),
                               expected=int(expected_version), method=old.digest_method or RETITLE_METHOD)
     if fld == "card":
         return _restore_card(system, a, old, cause, int(expected_version))
+    if fld == "digest" and old.cause.get("pending_summary"):
+        return _refusal("provisional_summary", "this version is the provisional digest the record was formed with "
+                        "while its summary was pending; a summary is mandatory (operator 2026-11-09)",
+                        record_id=str(a.subject), assertion_id=str(a.assertion_id or ""), field=fld)
     restored_author = dict(old.author) if old.author else {"kind": UNRECORDED, "id": ""}
     return _restore(system, a, old, cause, int(expected_version), fld, restored_author)
 
@@ -1210,6 +1296,8 @@ def record_understanding(system: Any, record_id: str) -> Dict[str, Any]:
         "keywords": list(attrs.get("keywords") or ()), "payload_ref": attrs.get("payload_ref"),
         "observed_at": str(a.observed_at or ""), "closed": closures[0].kind if closures else None,
     }
+    if isinstance(attrs.get("pending"), dict):
+        out["pending"] = dict(attrs["pending"])  # a title / summary still being written (records.PENDING_FIELDS)
     out.update(understanding_fields(a, version_count=count, replaced_by=replaced))
     out["current_id"] = current_of(system, str(a.subject))["current_id"] if replaced else str(a.subject)
     if kind == "dream":

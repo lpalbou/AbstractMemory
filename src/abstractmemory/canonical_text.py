@@ -48,9 +48,10 @@ def display_title(a: TripleAssertion) -> str:
 def record_title(attrs: Mapping[str, Any]) -> Optional[str]:
     """A formed record's stored title as a read serves it: the title, or None when the record has none.
 
-    An untitled record (operator ruling 2026-11-09, root backlog 1146: when the title the entity should have written
-    fails, the record is stored with its title NULL and the failure is logged at the source; no fallback) reads as
-    None on every surface, never as an empty string, a placeholder, or words taken from its body."""
+    A record whose title is still being written (operator rulings 2026-11-09, root backlog 1146: a title is mandatory;
+    one that failed at formation is PENDING, stored None beside its queued `title.author` task and the
+    `attributes.pending` marker) reads as None on every surface, never as an empty string, a placeholder, or words
+    taken from its body."""
     raw = attrs.get("title") if isinstance(attrs, Mapping) else None
     if raw is None:
         return None

@@ -16,6 +16,11 @@ its reader, and applies through the 0059 verbs with `task_id=` (the verb acks th
 SQLite home) or settles with `ack` / `release`.
 
 TASK KINDS (capability = the cognition-profile capability that runs them):
+- `title.author`, `digest.author` (summaries): a record formed PENDING (operator rulings 2026-11-09: a title and a
+  summary are mandatory metadata of every memory; when one failed at formation the record carries the marker
+  `attributes.pending = {title, summary, since, attempts}` and these tasks write what is missing). FORMATION
+  priority, ahead of every rewrite; `retitle` / `rewrite_digest` complete them and clear the marker; each claim
+  mirrors the attempt into the marker;
 - `digest.rewrite` (summaries): an episode, session summary or observation still in mechanical words;
 - `card.author` (summaries): a world-model card still in mechanical words (or carrying a mechanical delta);
 - `dream.narrate` (understanding): a dream without a narration (night and nap windows only);
@@ -43,7 +48,9 @@ from . import activation_gate as gate
 from .canonical_text import record_title, token_estimate
 
 __all__ = [
+    "FORMATION_PRIORITY",
     "MemoryTaskQueue",
+    "PENDING_KINDS",
     "TASK_CAPABILITIES",
     "TASK_KINDS",
     "TASK_STATUSES",
@@ -55,9 +62,12 @@ __all__ = [
 ]
 
 TASK_CAPABILITIES: Mapping[str, str] = {
+    "title.author": "summaries", "digest.author": "summaries",
     "digest.rewrite": "summaries", "card.author": "summaries", "dream.narrate": "understanding",
     "ripple.reconsider": "understanding", "ripple.consolidate": "understanding",
 }
+#: The tasks that write a pending record's mandatory metadata (records.PENDING_TASK_KINDS, by pending field).
+PENDING_KINDS = frozenset({"title.author", "digest.author"})
 TASK_KINDS = frozenset(TASK_CAPABILITIES)
 TASK_STATUSES = frozenset({"pending", "deferred", "leased", "done", "failed", "skipped", "superseded"})
 TERMINAL = frozenset({"done", "failed", "skipped", "superseded"})
@@ -65,8 +75,11 @@ LIVE = frozenset({"pending", "deferred", "leased"})
 #: The host's window names (DESIGN §6). A task names the windows it may run in; none = any.
 WINDOWS = frozenset({"turn", "visit", "nap", "cycle", "night", "idle"})
 KIND_WINDOWS: Mapping[str, Tuple[str, ...]] = {"dream.narrate": ("night", "nap"), "ripple.consolidate": ("night",)}
-#: Tie-break after activation (DESIGN §5): 10 this turn, 20 ripple, 30 summary/card, 40 dream, 90 backfill.
-PRIORITY: Mapping[str, int] = {"digest.rewrite": 30, "card.author": 30, "dream.narrate": 40,
+#: Tie-break after activation (DESIGN §5): 5 formation (a pending title or summary: mandatory metadata still being
+#: written), 10 this turn, 20 ripple, 30 summary/card, 40 dream, 90 backfill.
+FORMATION_PRIORITY = 5
+PRIORITY: Mapping[str, int] = {"title.author": FORMATION_PRIORITY, "digest.author": FORMATION_PRIORITY,
+                               "digest.rewrite": 30, "card.author": 30, "dream.narrate": 40,
                                "ripple.reconsider": 20, "ripple.consolidate": 40}
 TURN_PRIORITY = 10
 BACKFILL_PRIORITY = 90
@@ -359,11 +372,13 @@ class MemoryTaskQueue:
         return self._txn(_cur, write)
 
     def on_rewrite(self, cur: Optional[sqlite3.Cursor], *, record_id: str, field: str, version: int,
-                   result: Mapping[str, Any], task_id: Optional[str]) -> None:
+                   result: Mapping[str, Any], task_id: Optional[str], completes: Sequence[str] = ()) -> None:
         """Called by the 0059 verbs inside their transaction (SQLite) or right after (in-memory): ack the task the
         writer named, and supersede the live tasks the new reading made stale. A retitle (field `title`) and a card
         re-key (field `target`) ack the task they name and supersede nothing: the body a pending task would
-        understand is unchanged."""
+        understand is unchanged. `completes` names the pending kinds (`title.author`, `digest.author`) this write
+        fulfilled (it cleared the record's pending marker): every live task of those kinds on the record is done,
+        whoever wrote the words."""
         at = _iso(_utc())
         kind = {"digest": "digest.rewrite", "card": "card.author", "narration": "dream.narrate", "title": None,
                 "target": None}[field]
@@ -378,6 +393,16 @@ class MemoryTaskQueue:
                     self._log(c, task_id, "done", at, {"by": "rewrite", "version": version})
             if kind is not None and field != "narration":
                 self._supersede_on(c, record_id, kind, version, at, keep=task_id)
+            kinds = [k for k in completes if k in PENDING_KINDS]
+            if kinds:
+                marks = ", ".join("?" for _ in kinds)
+                rows = c.execute(f"SELECT task_id FROM {self.t_tasks} WHERE target_id = ? AND kind IN ({marks}) "
+                                 "AND status IN ('pending', 'deferred', 'leased')", (record_id, *kinds)).fetchall()
+                for (tid,) in rows:
+                    c.execute(f"UPDATE {self.t_tasks} SET status = 'done', result_json = ?, lease_holder = NULL, "
+                              "lease_until = NULL, updated_at = ? WHERE task_id = ?",
+                              (_dump({"outcome": "written", "field": field, "version": version}), at, tid))
+                    self._log(c, tid, "done", at, {"by": "rewrite", "field": field, "version": version})
 
         self._txn(cur, write)
 
@@ -600,6 +625,8 @@ class MemoryTaskQueue:
                 self._log(cur, tid, "claimed", at, {"holder": who, "lease_until": until, "window": win})
                 claimed.append(self._task(cur.execute(
                     f"SELECT * FROM {self.t_tasks} WHERE task_id = ?", (tid,)).fetchone()))
+                if claimed[-1]["kind"] in PENDING_KINDS and self.shares_store_transaction:
+                    self._mirror_attempts(cur, claimed[-1])
             if selection is not None:
                 cur.execute(
                     f"INSERT OR REPLACE INTO {self.t_windows} (holder, window, at, budget_seconds, sensitivity, "
@@ -609,7 +636,44 @@ class MemoryTaskQueue:
                      _dump(list(selection["left_out"])), _dump(dict(selection["left_out_counts"]))))
             return {"claimed": claimed, "refused": refused}
 
-        return self._txn(None, write)
+        out = self._txn(None, write)
+        if not self.shares_store_transaction:
+            for t in out["claimed"]:
+                if t["kind"] in PENDING_KINDS:
+                    self._mirror_attempts(None, t)
+        return out
+
+    def _mirror_attempts(self, cur: Optional[sqlite3.Cursor], task: Mapping[str, Any]) -> None:
+        """A pending record's marker says how many authoring attempts its tasks have had (`attempts`, the highest
+        claim count of its live pending tasks): written into the record's attributes on the claim's own transaction
+        (SQLite home) or under the store's lock right after (in-memory). The body, title and canonical text are
+        untouched; a record whose marker is gone (written meanwhile) is left alone."""
+        from dataclasses import replace as _replace
+
+        aid, attempts = str(task.get("assertion_id") or ""), int(task["attempts"])
+        if not aid:
+            return
+
+        def bumped(fresh: Any) -> Optional[Any]:
+            attrs = dict(fresh.attributes or {}) if fresh is not None else {}
+            marker = attrs.get("pending")
+            if not isinstance(marker, dict) or int(marker.get("attempts") or 0) >= attempts:
+                return None
+            attrs["pending"] = {**marker, "attempts": attempts}
+            return _replace(fresh, attributes=attrs)
+
+        if cur is not None:
+            from .sqlite_store import SQLiteTripleStore
+
+            row = self.store._row_for_rewrite(cur, aid)
+            new = bumped(SQLiteTripleStore._row_to_assertion(row)) if row is not None else None
+            if new is not None:
+                self.store._rewrite_row_on(cur, row, new, vector=None, write_vector=False)
+        else:
+            with self.store._lock:  # read and write under one hold: a concurrent retitle is never clobbered
+                new = bumped(self.store._stored_row(aid))
+                if new is not None:
+                    self.store._rewrite_row(aid, new, vector=None, write_vector=False)
 
     def ack(self, task_id: str, *, holder: str, result: Mapping[str, Any], now: Optional[str] = None) -> Dict:
         """Settle a leased task as done with the host's result (e.g. {outcome: "unchanged", seconds, tokens,
@@ -725,9 +789,24 @@ def _protected(attrs: Mapping[str, Any]) -> bool:
             or bool(attrs.get("review_required")) or attrs.get("summary_role") == "re-understanding")
 
 
+def _pending_marker(attrs: Mapping[str, Any]) -> Dict[str, Any]:
+    marker = attrs.get("pending")
+    return dict(marker) if isinstance(marker, Mapping) else {}
+
+
+def pending_task_kinds(attrs: Mapping[str, Any]) -> List[str]:
+    """The authoring tasks a record's pending marker owes (`title.author`, `digest.author`), from its marker only."""
+    from .records import PENDING_TASK_KINDS
+
+    marker = _pending_marker(attrs)
+    return [kind for fld, kind in PENDING_TASK_KINDS.items() if marker.get(fld)]
+
+
 def enqueue_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[str]:
-    """`remember_many`'s enqueue (opted-in homes only): one `digest.rewrite` per formed record whose digest_method
-    is in the repair-consent set (`MECHANICAL_DIGEST_METHODS`). A summary depends on the pending rewrites of the
+    """`remember_many`'s enqueue (opted-in homes only): a `title.author` / `digest.author` task per pending field
+    of a record formed pending (formation priority, strength FORMATION_STRENGTH), and one `digest.rewrite` per
+    formed record whose digest_method is in the repair-consent set (`MECHANICAL_DIGEST_METHODS`; never beside a
+    pending summary, whose `digest.author` task owns the body). A summary depends on the pending rewrites of the
     records it summarizes. Returns the task ids enqueued."""
     from .redigestion import MECHANICAL_DIGEST_METHODS
 
@@ -738,6 +817,17 @@ def enqueue_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List
     out: List[str] = []
     for a in digests:
         attrs = dict(a.attributes or {})
+        for task_kind in pending_task_kinds(attrs):
+            fld = "title" if task_kind == "title.author" else "summary"
+            res = queue.enqueue(
+                task_kind, a.subject, scope=scope, owner_id=owner_id, assertion_id=str(a.assertion_id or ""),
+                basis=f"{a.assertion_id}@pending-{fld}", basis_version=0, strength=gate.FORMATION_STRENGTH,
+                cause={"cause": "formation", "pending": fld}, priority=FORMATION_PRIORITY,
+                cost_hint=_cost_hint(system, a))
+            if res["enqueued"]:
+                out.append(res["task_id"])
+        if _pending_marker(attrs).get("summary"):
+            continue
         if str(attrs.get("digest_method") or "") not in MECHANICAL_DIGEST_METHODS or _protected(attrs):
             continue
         kind = str(attrs.get("record_kind"))
@@ -854,10 +944,11 @@ def _covered(queue: Optional[MemoryTaskQueue], kind: str, target: str, version: 
 
 def understanding_debt(system: Any, *, scopes: Sequence[Tuple[str, str]],
                        methods: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-    """What is still in mechanical words (PURE READ): {debt: {task kind: {record kind: n}}, total, unqueued (debt
-    with no live or done task at the record's current version), queue: {kind: {status: n}}, by_capability:
-    {capability: live n}, oldest_pending: {task_id, kind, enqueued_at} | None}. Closed records, review offers
-    (maintenance candidates, dedup groups) and the protected kinds are never debt."""
+    """What is still in mechanical words or still being written (PURE READ): {debt: {task kind: {record kind: n}},
+    total, unqueued (debt with no live or done task at the record's current version), queue: {kind: {status: n}},
+    by_capability: {capability: live n}, oldest_pending: {task_id, kind, enqueued_at} | None}. A record formed
+    pending owes `title.author` / `digest.author` (its marker; any kind). Closed records, review offers
+    (maintenance candidates, dedup groups) and the protected kinds are never rewrite debt."""
     from .redigestion import MECHANICAL_DIGEST_METHODS
     from .understanding import _current_version, _field_of
 
@@ -867,10 +958,16 @@ def understanding_debt(system: Any, *, scopes: Sequence[Tuple[str, str]],
     unqueued = 0
     for a in _formed_rows(system, scopes):
         attrs = dict(a.attributes)
-        task_kind = _debt_kind(attrs, consent)
-        if task_kind is None:
-            continue
         rk = str(attrs.get("record_kind"))
+        # A pending record owes its mandatory metadata first (formation debt; the protected kinds included: a
+        # title is never his body).
+        for pk in pending_task_kinds(attrs):
+            debt.setdefault(pk, {})[rk] = debt.setdefault(pk, {}).get(rk, 0) + 1
+            if not _covered(queue, pk, str(a.subject), 0):
+                unqueued += 1
+        task_kind = _debt_kind(attrs, consent)
+        if task_kind is None or (task_kind == "digest.rewrite" and _pending_marker(attrs).get("summary")):
+            continue
         debt.setdefault(task_kind, {})[rk] = debt.setdefault(task_kind, {}).get(rk, 0) + 1
         version = _current_version(attrs, _field_of(rk))
         if not _covered(queue, task_kind, str(a.subject), version):
@@ -906,8 +1003,13 @@ def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str =
     consent = frozenset(methods) if methods is not None else MECHANICAL_DIGEST_METHODS
     rows = []
     for a in _formed_rows(system, scopes):
-        task_kind = _debt_kind(dict(a.attributes), consent)
-        if task_kind is None or (kinds and task_kind not in kinds):
+        attrs = dict(a.attributes)
+        for pk in pending_task_kinds(attrs):
+            if not kinds or pk in kinds:
+                rows.append((pk, a))
+        task_kind = _debt_kind(attrs, consent)
+        if task_kind is None or (kinds and task_kind not in kinds) or (
+                task_kind == "digest.rewrite" and _pending_marker(attrs).get("summary")):
             continue
         rows.append((task_kind, a))
     counts = {str(a.assertion_id): int(system.journal.selected_count(str(a.assertion_id))) for _k, a in rows}
@@ -918,11 +1020,16 @@ def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str =
         n = counts[str(a.assertion_id)]
         use = math.log1p(n) / math.log1p(top) if top > 0 else 0.0
         strength = gate.BACKFILL_FLOOR_STRENGTH + (1.0 - gate.BACKFILL_FLOOR_STRENGTH) * use
-        version = _current_version(attrs, _field_of(str(attrs.get("record_kind"))))
+        version = (0 if task_kind in PENDING_KINDS
+                   else _current_version(attrs, _field_of(str(attrs.get("record_kind")))))
         if _covered(queue, task_kind, str(a.subject), version):
             continue
         suffix = f"@v{version}" if version else ""
-        if task_kind == "card.author":
+        if task_kind in PENDING_KINDS:
+            # The formation task's own identity: a backfill never duplicates a live or settled authoring task.
+            basis = f"{a.assertion_id}@pending-{'title' if task_kind == 'title.author' else 'summary'}"
+            strength = gate.FORMATION_STRENGTH
+        elif task_kind == "card.author":
             basis = f"{attrs.get('evidence_fingerprint') or ''}@rev{attrs.get('revision') or 0}{suffix}"
         elif task_kind == "dream.narrate":
             basis = f"{a.assertion_id}@narration"
@@ -941,7 +1048,8 @@ def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str =
         for p in planned:
             queue.enqueue(p["kind"], p["target_id"], scope=p["scope"], owner_id=p["owner_id"],
                           assertion_id=p["assertion_id"], basis=p["basis"], basis_version=p["basis_version"],
-                          strength=p["strength"], cause={"cause": cause}, priority=int(priority))
+                          strength=p["strength"], cause={"cause": cause},
+                          priority=FORMATION_PRIORITY if p["kind"] in PENDING_KINDS else int(priority))
     key = "would_enqueue" if dry_run else "enqueued"
     return {"dry_run": bool(dry_run), key: len(planned), "by_kind": by_kind,
             "tasks": [{k: p[k] for k in ("task_id", "kind", "target_id", "strength")} for p in planned]}
@@ -952,7 +1060,9 @@ def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str =
 
 def task_packet(system: Any, task_id: str, *, token_budget: int = 56_000) -> Dict[str, Any]:
     """Everything a reader needs for one task (PURE READ; the host fetches the verbatim from `verbatim`):
-    {task, record (`record_understanding` of the target), expected_version, verbatim, sources | evidence | mentions
+    {task, record (`record_understanding` of the target, with its `pending` marker; a diary target is redacted:
+    its words come through the book by `entry_id`), expected_version (a `title.author` task: the title version;
+    a `digest.author` task: the digest version), verbatim, sources | evidence | mentions
     (each item WHOLE: {record_id, kind, title, digest, digest_method, observed_at, token_estimate}, newest first),
     ripple (0061 tasks), token_estimate, token_budget, left_out: [{record_id, token_estimate, reason}]}. Items that
     do not fit the budget are left out WHOLE and listed; no text is ever cut. A target that is closed or gone says
@@ -973,8 +1083,21 @@ def task_packet(system: Any, task_id: str, *, token_budget: int = 56_000) -> Dic
     a = resolve_digest_assertion(system.store, t["target_id"])
     if a is None:
         return {"task": t, "target_state": "gone"}
-    record = record_understanding(system, t["target_id"])
-    field = "narration" if t["kind"] == "dream.narrate" else _field_of(record["kind"])
+    attrs_t = a.attributes if isinstance(a.attributes, dict) else {}
+    if attrs_t.get("record_kind") == "diary":
+        # A pending diary title: the entry's words are read through the book (entry_id), never served here.
+        from .understanding import _closures
+
+        closures = _closures(system.journal, a.assertion_id)
+        record = {"record_id": t["target_id"], "graph_id": str(a.subject), "assertion_id": str(a.assertion_id or ""),
+                  "kind": "diary", "redacted": "diary", "entry_id": attrs_t.get("entry_id"),
+                  "title": record_title(attrs_t), "digest": "", "closed": closures[0].kind if closures else None}
+        if isinstance(attrs_t.get("pending"), dict):
+            record["pending"] = dict(attrs_t["pending"])
+    else:
+        record = record_understanding(system, t["target_id"])
+    field = {"dream.narrate": "narration", "title.author": "title", "digest.author": "digest"}.get(
+        t["kind"], _field_of(record["kind"]))
     out: Dict[str, Any] = {"task": t, "record": record, "target_state": "closed" if record["closed"] else "live",
                            "expected_version": _current_version(a.attributes or {}, field),
                            "verbatim": (a.attributes or {}).get("payload_ref"), "token_budget": budget}
@@ -1010,7 +1133,7 @@ def task_packet(system: Any, task_id: str, *, token_budget: int = 56_000) -> Dic
 
     edges = [e for e in system.store.query(TripleQuery(subject=a.subject, limit=0))
              if (e.attributes or {}).get("record_edge")]
-    if t["kind"] == "digest.rewrite":
+    if t["kind"] in ("digest.rewrite", "digest.author"):
         fill("sources", [e.object for e in edges if e.predicate == "summarizes"])
     elif t["kind"] == "card.author":
         fill("evidence", [str(s) for s in ((a.attributes or {}).get("known_source_ids") or ())])

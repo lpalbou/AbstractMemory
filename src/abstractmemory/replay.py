@@ -162,6 +162,8 @@ def _display_block(assertion: Any, requested_id: str,
         # hint chips) get the followable key from the stream itself instead
         # of a side-channel correlation.
         block = {"redacted": "diary", "graph_id": assertion.subject}
+        if isinstance(attrs.get("pending"), dict):
+            block["pending"] = dict(attrs["pending"])  # act-frame: a title still being written, never words
         diary_type = str(attrs.get("diary_type") or "").strip()
         if diary_type:
             block["diary_type"] = diary_type
@@ -179,8 +181,8 @@ def _display_block(assertion: Any, requested_id: str,
             block["cause"] = reading["cause"]
         return block
     digest = handle_digest(assertion)
-    # A formed record's block carries its title, or None when it is untitled
-    # (operator ruling 2026-11-09: a failed title is stored NULL; no stand-in).
+    # A formed record's block carries its title, or None while its title is
+    # pending (operator rulings 2026-11-09: no stand-in; `pending` says so).
     # A plain triple keeps its "s p" preview: it never had a title.
     title = record_title(attrs)
     if title is None and not attrs.get("record_kind"):
@@ -191,6 +193,10 @@ def _display_block(assertion: Any, requested_id: str,
         "title": title,
         "token_estimate": token_estimate(digest),
     }
+    if isinstance(attrs.get("pending"), dict):
+        # {title, summary, since, attempts}: what is still being written (records.PENDING_FIELDS); the app says
+        # "title being written…" for title None + pending.title.
+        block["pending"] = dict(attrs["pending"])
     if formed:
         block["graph_id"] = assertion.subject
     # Interaction-correlation key (item-14 render ask, additive like

@@ -51,8 +51,9 @@ __all__ = [
     "LESSON_EVIDENCE_CLASSES",
     "MEMORY_RECORD_KINDS",
     "MemoryRecordInput",
+    "PENDING_FIELDS",
+    "PENDING_TASK_KINDS",
     "ReconstructConfig",
-    "TITLE_OPTIONAL_KINDS",
     "VALUE_CLASSES",
     "apply_formation_plan",
     "build_formation_plan",
@@ -188,15 +189,21 @@ LESSON_EVIDENCE_CLASSES = frozenset(
 INSTRUCTION_CATEGORIES = frozenset({"rule", "instruction", "process"})
 
 
-# Kinds that may be stored UNTITLED (operator ruling 2026-11-09, root backlog
-# 1146: "we shouldn't need a fallback; if the title fails, add information to
-# a temporary error file in untracked/ so we know what's failing and fix it at
-# the source"). These are the records the runtime forms from the entity's own
-# election blocks (the block's `title:` line; a diary entry's `gist:` line):
-# when that line is missing or unusable the record is formed with its title
-# NULL and the runtime logs the failure — never a placeholder, never words cut
-# from the body. "" normalizes to None. Every other kind still requires a title.
-TITLE_OPTIONAL_KINDS = frozenset({"interest", "lesson", "realization", "observation", "diary"})
+# A title and a summary are MANDATORY metadata of every memory (operator
+# rulings 2026-11-09, root backlog 1146: "the title + summary must ALWAYS
+# exist for any memory"; "no fallback; log the failure to untracked/ and fix
+# it at the source"). The one exception is a transient, EXPLICIT pending
+# state: a record whose title (or summary) failed at formation is formed with
+# `pending=("title",)` (and/or "summary"); its title is stored None (a pending
+# summary keeps the provisional digest it was given), `attributes.pending`
+# carries the marker {title, summary, since, attempts}, and formation queues
+# the authoring task (PENDING_TASK_KINDS, capability "summaries") in the same
+# call — a home with no task queue refuses the record, so no null title is
+# ever stored without the task that will write it. `retitle` / `rewrite_digest`
+# complete the task and clear the marker. Never a placeholder, never words cut
+# from the body.
+PENDING_FIELDS = frozenset({"title", "summary"})
+PENDING_TASK_KINDS: Mapping[str, str] = MappingProxyType({"title": "title.author", "summary": "digest.author"})
 
 
 def _str_tuple(values: Any) -> Tuple[str, ...]:
@@ -210,8 +217,11 @@ class MemoryRecordInput:
     The digest is the 1-3 sentence orientation text that gets embedded/
     indexed; intents/outcomes/keywords are the fork's selection metadata;
     edges link to EXISTING record ids ((relation, target_record_id)).
-    `title` is required except for `TITLE_OPTIONAL_KINDS`, where None (or "",
-    normalized to None) stores an untitled record."""
+    `title` and `digest` are required. `pending` (a subset of PENDING_FIELDS)
+    declares what is still being written: `pending=("title",)` with title None
+    (or "") forms the record untitled with a queued `title.author` task;
+    "summary" marks the given digest provisional with a queued `digest.author`
+    task (never on a protected kind, whose body is the entity's own words)."""
 
     kind: str
     title: Optional[str]
@@ -234,6 +244,7 @@ class MemoryRecordInput:
     confidence: Optional[float] = None
     attributes: Mapping[str, Any] = field(default_factory=dict)
     provenance: Mapping[str, Any] = field(default_factory=dict)
+    pending: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         kind = str(self.kind or "").strip().lower()
@@ -244,11 +255,26 @@ class MemoryRecordInput:
         if not digest:
             raise ValueError(f"MemoryRecordInput.digest must be a non-empty string ({kind!r} record)")
         object.__setattr__(self, "digest", digest)
-        title = str(self.title).strip() if self.title is not None else ""
-        if not title and kind not in TITLE_OPTIONAL_KINDS:
+        pending = tuple(dict.fromkeys(str(p).strip().lower() for p in (self.pending or ()) if str(p or "").strip()))
+        unknown = sorted(set(pending) - PENDING_FIELDS)
+        if unknown:
             raise ValueError(
-                f"MemoryRecordInput.title must be a non-empty string ({kind!r} record; only "
-                f"{sorted(TITLE_OPTIONAL_KINDS)} may be formed untitled)")
+                f"MemoryRecordInput.pending names unknown fields {unknown} (known: {sorted(PENDING_FIELDS)})")
+        object.__setattr__(self, "pending", pending)
+        title = str(self.title).strip() if self.title is not None else ""
+        if not title and "title" not in pending:
+            raise ValueError(
+                f"MemoryRecordInput.title must be a non-empty string ({kind!r} record). A title still being written "
+                "is declared pending=('title',): the record is formed untitled with a queued title.author task")
+        if title and "title" in pending:
+            raise ValueError("MemoryRecordInput.pending=('title',) declares the title is still being written, but a "
+                             "title was given")
+        if "summary" in pending:
+            from .understanding import UNDERSTANDING_PROTECTED_KINDS  # lazy: understanding imports this module
+
+            if kind in UNDERSTANDING_PROTECTED_KINDS:
+                raise ValueError(f"kind {kind!r} is the entity's own act: its body is his words, never authored by a "
+                                 "task, so its summary cannot be pending")
         object.__setattr__(self, "title", title or None)
         object.__setattr__(self, "intents", _str_tuple(self.intents))
         object.__setattr__(self, "outcomes", _str_tuple(self.outcomes))
@@ -507,6 +533,11 @@ def build_formation_plan(
         # enrichment path (reconstruct/payload) must be able to trust them.
         attrs: Dict[str, Any] = dict(r.attributes)
         attrs.update({"literal": True, "record_kind": r.kind, "title": r.title})
+        # The pending marker is reserved: memory writes it (with the authoring task), a host attribute never does.
+        attrs.pop("pending", None)
+        if r.pending:
+            attrs["pending"] = {"title": "title" in r.pending, "summary": "summary" in r.pending,
+                                "since": observed_at, "attempts": 0}
         for name, values in (("intents", r.intents), ("outcomes", r.outcomes),
                              ("keywords", r.keywords), ("participants", r.participants)):
             if values:

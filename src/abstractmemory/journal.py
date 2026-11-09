@@ -430,7 +430,7 @@ class UnderstandingVersion:
     assertion_id: str                # the digest assertion id (usage keys on it; never changes)
     version: int
     field: str                       # digest | card | narration | title | target
-    text: Optional[str]              # None only on a `title` row of an untitled record (its title is NULL)
+    text: Optional[str]              # None only on the `title` version 0 of a record formed with its title pending
     scope: str
     owner_id: str = ""
     title: Optional[str] = None      # the record's title at this reading; None = untitled (never "")
@@ -459,9 +459,9 @@ class UnderstandingVersion:
             raise ValueError(f"UnderstandingVersion.field must be one of {sorted(VERSION_FIELDS)} (got {self.field!r})")
         if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 0:
             raise ValueError(f"UnderstandingVersion.version must be a non-negative int (got {self.version!r})")
-        # An untitled record (operator ruling 2026-11-09: its title is NULL, never "" and never a placeholder):
-        # its title rows hold text None (version 0 of a first retitle, or a revert to it) and every row's `title`
-        # is None. "" normalizes to None, so a row read back from a NOT NULL column round-trips.
+        # A record formed with its title pending (operator rulings 2026-11-09: None beside its title.author task,
+        # never "" and never a placeholder): its title version 0 holds text None, and every row read while the title
+        # was pending has `title` None. "" normalizes to None, so a row read back from a NOT NULL column round-trips.
         if self.field == "title" and (self.text is None or (isinstance(self.text, str) and not self.text.strip())):
             object.__setattr__(self, "text", None)
         elif not isinstance(self.text, str):

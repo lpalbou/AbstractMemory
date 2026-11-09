@@ -85,25 +85,33 @@ A record's understanding can be rewritten in place, and every earlier reading is
 
 ### Changed
 
-- **Untitled records** (operator ruling 2026-11-09, root backlog 1146: "we shouldn't need a fallback; if the title
-  fails, add information to a temporary error file in untracked/ so we know what's failing and fix it at the
-  source"). `MemoryRecordInput` accepts `title=None` for the kinds the runtime forms from the entity's own election
-  blocks, `TITLE_OPTIONAL_KINDS` (interest, lesson, realization, observation, and every diary entry kind); `""` and
-  whitespace become `None`, and the record stores `attributes.title = None`. Every other kind still refuses an empty
-  title. Every read serves the absent title as `None`, never `""`, a placeholder or words from the body: recall
-  handles (`MemoryHandle.title` is `Optional[str]`; a formed record no longer falls back to its "s p o" preview),
-  replay display blocks, `record_understanding`, `recent_records`, `explain_recall`'s origin, the identity card's
-  briefs, `alive_drives`, the identity review, probe hits, situate rows, task-queue items and tend seeds;
-  `short_title(None)` is `None`. The canonical text (keyword index, FTS, vector) is the body alone. An untitled
-  interest's world-model card is keyed `topic:<the interest's graph id>` (new `world_model.interest_target`): the
-  id is stable and none of his words, where the pass used to read the digest when the title was empty; once the
-  interest is retitled its election moves to the title's subject head, and `rekey_world_model` carries the card
-  there. The candidate miner lets an untitled interest own no theme, and an interest offer's "(e.g. ...)" example
-  quotes the first titled evidence record (none: no example). `retitle` of an untitled record is an ordinary
-  retitle: title version 0 holds `None` (`UnderstandingVersion.text` and `.title` are `None` there; the SQLite
-  journal's NOT NULL columns store `""` and read it back as `None`), and reverting to version 0 makes it untitled
-  again. The wake-cue dedup pass no longer tokenizes a missing title as "None". `tests/test_untitled_records.py`
-  (101 cases, both substrate pairs; 12 mutants red).
+- **A title and a summary are mandatory; a missing one is PENDING, with its task** (operator rulings 2026-11-09,
+  root backlog 1146: "the title + summary must ALWAYS exist for any memory. those are mandatory metadata of all
+  memories"; "no fallback; log the failure to untracked/ and fix it at the source"). `MemoryRecordInput` gains
+  `pending` (a subset of `PENDING_FIELDS` = {"title", "summary"}): `pending=("title",)` with title None (or "")
+  forms the record untitled, `"summary"` marks the given digest provisional (refused on a protected kind, whose body
+  is the entity's own words). The record carries the marker `attributes.pending = {title: bool, summary: bool,
+  since: <formation time>, attempts: <claims so far>}` (reserved: a host attribute never sets it), and the same
+  `remember_many` queues the authoring task (`PENDING_TASK_KINDS`: `title.author` / `digest.author`, capability
+  `summaries`, strength 1.0, `FORMATION_PRIORITY` 5, ahead of every `digest.rewrite`). A null title not declared
+  pending, or a pending record on a home without a task queue, is refused before anything is written. Each claim
+  of a pending task mirrors its attempt into the marker. `retitle` / `rewrite_digest` (named task or not) complete
+  the live pending tasks and clear the marker (`pending_cleared` in the result); a revert to a null title
+  (`null_title`) or to the provisional digest (`provisional_summary`) is refused. `understanding_debt`, `enqueue_debt`, `select_for_window` and `task_packet` handle both
+  kinds (a diary target's packet is redacted: its words come through the book by `entry_id`). Reads serve the
+  missing title as `None`, never `""`, a placeholder or words from the body: recall handles (`MemoryHandle.title` is
+  `Optional[str]`; a formed record no longer falls back to its "s p o" preview), replay display blocks (plus
+  `pending`, diary blocks too), `record_understanding` (plus `pending`), `recent_records`, `explain_recall`'s
+  origin, identity-card briefs, `alive_drives`, the identity review, probe hits, situate rows, task items and tend
+  seeds; `short_title(None)` is `None`; the canonical text (keyword index, FTS, vector) is the body alone. An
+  untitled interest's world-model card is keyed `topic:<the interest's graph id>` (new
+  `world_model.interest_target`; the pass used to read the digest when the title was empty), and when its title
+  lands `retitle` re-keys the card to the title's subject head through `rekey_world_model` (`card_rekey` in the
+  result; the id key stays an alias), so the next pass forms no second card. The candidate miner lets an untitled
+  interest own no theme. Title version 0 of a record formed pending holds `None` (`UnderstandingVersion.text` and
+  `.title` may be `None`; the SQLite journal's NOT NULL columns store `""` and read it back as `None`). The
+  wake-cue dedup pass no longer tokenizes a missing title as "None". `tests/test_untitled_records.py` (117 cases,
+  both substrate pairs; 15 mutants red).
 - `world_model_pass`: an interest whose title heads to an alias of a card counts as an election of the card's
   primary key (it keeps clearing the evidence floor there), as its evidence already did.
 - `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is

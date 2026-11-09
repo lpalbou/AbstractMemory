@@ -293,15 +293,15 @@ def interest_target(record_id: str, title: Optional[str]) -> str:
 
     A titled interest: `topic:<the subject head of its title>`
     (`_interest_subject_head`; "" when the head is too short to name a
-    subject). An UNTITLED interest (operator ruling 2026-11-09, root backlog
-    1146: a title that failed at formation is stored NULL and logged at the
-    source, no fallback) keys on its own graph id: `topic:<record id>`. The
+    subject). An interest whose title is PENDING (operator rulings
+    2026-11-09, root backlog 1146: stored None beside its queued
+    `title.author` task, no fallback) keys on its own graph id:
+    `topic:<record id>`. The
     id is stable (a rewrite in place keeps it), structured, and none of his
     words: the body is never cut into a key (this used to read the digest
-    when the title was empty). Once the interest is retitled its election
-    moves to the head key; `rekey_world_model` carries the standing card
-    there in place (the id key stays an alias), the same repair as any
-    retitled interest."""
+    when the title was empty). When the title lands, `retitle` moves the
+    standing card to the head key through `rekey_world_model` (the id key
+    stays an alias), so the next pass forms no second card."""
     if title is None or not str(title).strip():
         rid = str(record_id or "").strip()
         return f"topic:{rid}" if rid else ""
