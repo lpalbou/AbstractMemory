@@ -162,7 +162,9 @@ def _strength(value: float) -> float:
 class MemoryTaskQueue:
     """The queue over one home. SQLite store: the store's own file, connection and lock (a rewrite acks its task in
     its own transaction). Any other store: a private in-memory database with the same schema (volatile, like the
-    store). Construct through `MemorySystem(task_queue=True)` (then `system.tasks`) or directly over a store."""
+    store); over an `InMemoryTripleStore` the queue takes the store's own reentrant lock, so the store and its queue
+    have ONE transaction lock on both backends (no lock order to get wrong). Construct through
+    `MemorySystem(task_queue=True)` (then `system.tasks`) or directly over a store."""
 
     def __init__(self, store: Any) -> None:
         from .sqlite_store import SQLiteTripleStore
@@ -179,7 +181,13 @@ class MemoryTaskQueue:
                                           "a LanceDB store has no transactional file for it")
             self._conn = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
             self._conn.row_factory = sqlite3.Row
-            self._lock = threading.RLock()
+            # ONE reentrant transaction lock for the store and its queue (Codex review 3 finding 4): formation
+            # held the queue's lock and then took the store's, a rewrite held the store's and its task hook took
+            # the queue's, so the two deadlocked. The in-memory store's own RLock now guards the queue too, as the
+            # SQLite home's store lock guards its queue.
+            from .in_memory_store import InMemoryTripleStore
+
+            self._lock = store._lock if isinstance(store, InMemoryTripleStore) else threading.RLock()
             self.prefix = "memq_"
             self.shares_store_transaction = False
         self.t_tasks, self.t_log, self.t_windows = (f"{self.prefix}tasks", f"{self.prefix}log",
