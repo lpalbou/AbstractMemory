@@ -498,10 +498,15 @@ def _apply(
     else:
         identical = str(a.object or "") == str(new_object or "")
     base = {"record_id": str(a.subject), "assertion_id": aid, "field": field}
-    if identical:
+    if identical and not cleared:
         return {"applied": False, "outcome": "unchanged", "reason": "identical",
                 "detail": f"the {'title' if field == 'title' else 'text'} is already the current reading",
                 "version": current, **base}
+    # Identical words that settle a PENDING field are a write (Codex review 3 finding 7: `unchanged` left the marker
+    # and the task, the drainer counted it authored, the lease expired and the re-arm queued it again, forever):
+    # the authored reading's provenance is recorded as a version, the marker cleared and the task completed in one
+    # transaction, like any authored write. The canonical text is unchanged, so its vector stands.
+    settles_only = identical and canonical_text(planned) == canonical_text(a)
     if int(expected_version) != current:
         return _refusal("stale", f"expected version {int(expected_version)}, the record is at version {current}",
                         version=current, **base)
@@ -511,8 +516,8 @@ def _apply(
     text = canonical_text(planned)
     # A card's key is not in its canonical text, nor is a pending marker: the vector stands (a declaration that takes
     # the title back to pending changes the canonical text, whose first line the title is).
-    if field not in ("narration", "target", "pending") or (field == "pending"
-                                                           and _title(planned_attrs) != _title(attrs0)):
+    if not settles_only and (field not in ("narration", "target", "pending")
+                             or (field == "pending" and _title(planned_attrs) != _title(attrs0))):
         old_vector = store.stored_vector(aid)
         refusal, vector, write_vector = _embed(store, text, old_vector is not None)
         if refusal is not None:
