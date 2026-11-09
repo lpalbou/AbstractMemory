@@ -393,27 +393,66 @@ def _count_formed(system: Any, pairs: Optional[List[Tuple[str, str]]],
     return len(rows), oldest_seen
 
 
-def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[str, str]]] = None) -> Dict[str, Any]:
+def _normalized_instant(value: Any) -> Optional[str]:
+    """`after` in memory's own timestamp format (UTC, microseconds, "+00:00": `journal.utc_now_iso`), so it orders
+    exactly against stored `observed_at` / `completed_at` strings whatever offset style the host wrote ("Z",
+    "+02:00", seconds only). A naive value is read as UTC. Unparseable -> ValueError."""
+    from datetime import datetime, timezone
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00") if text.endswith("Z") else text)
+        except ValueError as exc:
+            raise ValueError(f"records_since_maintenance: after={value!r} is not an ISO-8601 instant") from exc
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[str, str]]] = None,
+                              after: Optional[str] = None) -> Dict[str, Any]:
     """How much the home lived since its last COMPLETED sleep (PURE READ; the host's idle -> sleep threshold,
-    operator 2026-11-09: sleep after 24 h or 500 events). Returns {count, last_maintenance_at, since}:
+    operator 2026-11-09: sleep after 24 h or 500 events). Returns {count, last_maintenance_at, since,
+    boundary_source}:
 
     - `last_maintenance_at`: when the newest completed night over these (scope, owner) pairs ended (`sleep_pass`
       records it when a whole night, `include_dream=True`, ran to its end: not cancelled, not report_only, not
-      anchored with `as_of`; a cycle window is recorded apart and does not count), `None` when the home never
-      completed one; `scopes=None` = any pair.
-    - `count`: the records FORMED in these scopes after that moment (a record = its digest row; edges and
-      bookkeeping rows are not records; closed ones still count: they were formed), or since birth when the home
-      never slept. The night's own formations precede its completion and never count.
-    - `since`: the moment the count starts: `last_maintenance_at`, or for a home that never slept the oldest formed
-      record's time (`None` for an empty home, `count` 0).
+      anchored with `as_of`; a cycle window is recorded apart and does not count), `None` when memory holds none;
+      `scopes=None` = any pair.
+    - `after`: the host's own knowledge of the last maintenance (the gateway's last `maintenance_done` from its
+      state history, e.g. a night that ended before memory recorded completions): an ISO-8601 instant, any offset
+      (naive = UTC), normalized to memory's format; unparseable -> ValueError.
+    - the BOUNDARY is the later of `after` and `last_maintenance_at`; `boundary_source` names it: "memory" (memory's
+      completion, also when both are equal), "after" (the host's, strictly later or memory has none), "birth"
+      (neither: the home never slept).
+    - `count`: the records FORMED in these scopes strictly after the boundary (a record = its digest row; edges and
+      bookkeeping rows are not records; closed ones still count: they were formed), or since birth. The night's
+      own formations precede its completion and never count.
+    - `since`: the boundary actually used, or for "birth" the oldest formed record's time (`None` for an empty
+      home, `count` 0).
 
     Cheap: the completion is one primary-key read; on the SQLite home the count is one indexed COUNT per pair over
-    the (scope, owner_id, observed_at) range after the completion, so it reads only the records formed since.
+    the (scope, owner_id, observed_at) range after the boundary, so it reads only the records formed since.
     Nothing is written or created (a home whose queue tables predate this read answers `last_maintenance_at`
     None)."""
     pairs = (None if scopes is None
              else sorted({(str(sc).strip().lower(), str(ow or "").strip()) for sc, ow in scopes}))
+    host = _normalized_instant(after)
     row = _maintenance_row(system, pairs)
     at = row["completed_at"] if row is not None else None
-    count, oldest = _count_formed(system, pairs, at)
-    return {"count": count, "last_maintenance_at": at, "since": at if at is not None else oldest}
+    if host is not None and (at is None or host > at):
+        boundary, source = host, "after"
+    elif at is not None:
+        boundary, source = at, "memory"
+    else:
+        boundary, source = None, "birth"
+    count, oldest = _count_formed(system, pairs, boundary)
+    return {"count": count, "last_maintenance_at": at, "since": boundary if boundary is not None else oldest,
+            "boundary_source": source}

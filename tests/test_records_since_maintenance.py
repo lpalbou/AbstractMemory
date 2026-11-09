@@ -11,13 +11,16 @@ MUTATION LIST (scratch copy, each mutant run against this file; all red, the sou
 R1 sleep_pass records no completion; R2 a cancelled night recorded; R3 a report-only night recorded; R4 a cycle
 window resets the count; R5 the record filter dropped (edge rows counted); R6 the scope filter dropped; R7 a never-slept home's
 `since` None; R8 the count ignores the completion (counts since birth); R9 the SQLite count off the index (a full
-scan); R10 bookkeeping rows counted.
+scan); R10 bookkeeping rows counted; B1 the earlier of `after` and memory's completion
+used; B2 `after` ignored; B3 `after` compared un-normalized; B4 a tie named "after"; B5 `since` reports memory's
+completion instead of the boundary used.
 """
 
 from __future__ import annotations
 
 import hashlib
 import time
+from datetime import datetime, timedelta, timezone
 import warnings
 from typing import Any, List
 
@@ -97,11 +100,12 @@ def _sleep(system, **kw: Any):
 
 
 def test_a_home_that_never_slept_counts_since_birth(home) -> None:
-    assert records_since_maintenance(home, scopes=SCOPES) == {"count": 0, "last_maintenance_at": None, "since": None}
+    assert records_since_maintenance(home, scopes=SCOPES) == {"count": 0, "last_maintenance_at": None, "since": None,
+                                                               "boundary_source": "birth"}
     first = _form(home, "first")
     _form(home, "second", edges=(("supports", first),))                  # an edge row is not a record
     out = records_since_maintenance(home, scopes=SCOPES)
-    assert out["count"] == 2 and out["last_maintenance_at"] is None
+    assert out["count"] == 2 and out["last_maintenance_at"] is None and out["boundary_source"] == "birth"
     assert out["since"] == resolve_digest_assertion(home.store, first).observed_at
 
 
@@ -111,6 +115,7 @@ def test_a_completed_night_resets_the_count_and_its_own_formations_never_count(h
     assert "cancelled_after" not in night
     out = records_since_maintenance(home, scopes=SCOPES)
     assert out["last_maintenance_at"] is not None and out["since"] == out["last_maintenance_at"]
+    assert out["boundary_source"] == "memory"
     assert out["count"] == 0                                                  # the night's dream/cards precede it
     _many(home, "after", 3)
     assert records_since_maintenance(home, scopes=SCOPES)["count"] == 3
@@ -197,3 +202,64 @@ def test_a_sqlite_home_without_a_queue_reads_without_creating_anything(tmp_path)
     finally:
         system.journal.close()
         system.store.close()
+
+
+# --------------------------------------------------------------------------- the host's `after`
+
+
+def _now() -> str:
+    time.sleep(0.002)
+    at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    time.sleep(0.002)
+    return at
+
+
+def test_a_later_host_boundary_wins_over_memorys_completion(home) -> None:
+    _many(home, "day", 2)
+    _sleep(home)
+    memory_at = records_since_maintenance(home, scopes=SCOPES)["last_maintenance_at"]
+    _many(home, "before", 2)
+    host = _now()                       # e.g. the gateway's maintenance_done, later than memory's completion
+    _many(home, "after", 3)
+    out = records_since_maintenance(home, scopes=SCOPES, after=host)
+    assert out == {"count": 3, "last_maintenance_at": memory_at, "since": host, "boundary_source": "after"}
+    # Without it, memory's own completion is the boundary.
+    plain = records_since_maintenance(home, scopes=SCOPES)
+    assert (plain["count"], plain["since"], plain["boundary_source"]) == (5, memory_at, "memory")
+
+
+def test_an_earlier_host_boundary_yields_to_memorys_completion(home) -> None:
+    host = _now()
+    _many(home, "day", 4)
+    _sleep(home)
+    _many(home, "after", 2)
+    out = records_since_maintenance(home, scopes=SCOPES, after=host)
+    assert out["boundary_source"] == "memory" and out["count"] == 2
+    assert out["since"] == out["last_maintenance_at"] and out["since"] > host
+    tie = records_since_maintenance(home, scopes=SCOPES, after=out["last_maintenance_at"])
+    assert tie["boundary_source"] == "memory" and tie["count"] == 2
+
+
+def test_a_home_memory_never_saw_sleep_counts_from_the_hosts_boundary(home) -> None:
+    _many(home, "old", 3)
+    host = _now()
+    _many(home, "new", 2)
+    out = records_since_maintenance(home, scopes=SCOPES, after=host)
+    assert out == {"count": 2, "last_maintenance_at": None, "since": host, "boundary_source": "after"}
+    assert records_since_maintenance(home, scopes=SCOPES, after=None)["boundary_source"] == "birth"
+    assert records_since_maintenance(home, scopes=SCOPES, after=None)["count"] == 5
+
+
+def test_the_hosts_boundary_is_read_in_any_offset_style(home) -> None:
+    _many(home, "old", 3)
+    host = _now()
+    _many(home, "new", 2)
+    moment = datetime.fromisoformat(host)
+    styles = [moment.astimezone(timezone(timedelta(hours=2))).isoformat(),          # +02:00, same instant
+              host.replace("+00:00", "Z"),
+              moment.replace(tzinfo=None).isoformat(timespec="microseconds")]        # naive = UTC
+    for style in styles:
+        out = records_since_maintenance(home, scopes=SCOPES, after=style)
+        assert (out["count"], out["since"], out["boundary_source"]) == (2, host, "after"), style
+    with pytest.raises(ValueError, match="ISO-8601"):
+        records_since_maintenance(home, scopes=SCOPES, after="last tuesday")
