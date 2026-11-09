@@ -372,9 +372,12 @@ def apply_redigestion(
         title = str(entry.get("title") or attrs.get("title") or "").strip()
         keywords = tuple(entry.get("keywords") or attrs.get("keywords") or ())
         try:
+            # A source whose title is still pending hands the pending title on (its new record queues the
+            # title.author task); the authored digest is never pending.
             record = MemoryRecordInput(
                 kind=kind,
-                title=title,
+                title=title or None,
+                pending=() if title else ("title",),
                 digest=new_digest,
                 keywords=keywords,
                 participants=tuple(attrs.get("participants") or ()),

@@ -21,10 +21,12 @@ byte-identical; the only journal trace is the version row, which the replay stre
 `revision` only. Rewriting deposits nothing (formation is not use).
 
 WHAT IS NEVER REWRITTEN HERE: the entity's own acts (`UNDERSTANDING_PROTECTED_KINDS`: diary, value, purpose, trait,
-interest, realization); a dream's digest (the mechanical summary of the night stays; `narrate_dream` adds a narration
-beside it); a world-model card outside `author_world_model` (which keeps the evidence rules); a closed record (its
-replacement is the current one: `current_of`); a ripple's consolidation record (`summary_role: re-understanding`)
-except by an operator.
+interest, realization); a dream's digest (a legacy dream's mechanical summary of the night stays; `narrate_dream` adds
+a narration beside it); a world-model card outside `author_world_model` (which keeps the evidence rules); a closed
+record (its replacement is the current one: `current_of`); a ripple's consolidation record (`summary_role:
+re-understanding`) except by an operator. A dream or card formed with its summary PENDING (operator rulings
+2026-11-09: the pass's bookkeeping text is only its provisional body) takes its authored summary through
+`rewrite_digest` like any pending record; a card's goes through the card's own write (`author_card_in_place`).
 
 A TITLE is changed alone by `retitle` (operator 2026-11-08, root ADR 0054: a title is an explicit, complete,
 readable phrase, and stored text is never cut): for EVERY kind, the entity's own acts included, because a title the
@@ -249,14 +251,15 @@ def _title(attrs: Mapping[str, Any]) -> Optional[str]:
 
 def _clear_pending(out: Dict[str, Any], field: str) -> Dict[str, Any]:
     """The pending marker after a write (records.PENDING_FIELDS): a title is no longer pending once the row holds
-    one; a summary is no longer pending once a digest reading is written. The marker goes when nothing is left."""
+    one; a summary is no longer pending once a digest reading (a card's: field `card`) is written. The marker goes
+    when nothing is left."""
     marker = out.get("pending")
     if not isinstance(marker, Mapping):
         return out
     marker = dict(marker)
     if marker.get("title") and record_title(out) is not None:
         marker["title"] = False
-    if marker.get("summary") and field == "digest":
+    if marker.get("summary") and field in ("digest", "card"):
         marker["summary"] = False
     if marker.get("title") or marker.get("summary"):
         out["pending"] = marker
@@ -635,8 +638,8 @@ def _version_zero(a: Any, field: str) -> UnderstandingVersion:
         cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance"),
                # The provisional digest of a record formed with its summary pending: never restored (a summary is
                # mandatory; revert_digest refuses it).
-               **({"pending_summary": True} if field == "digest" and isinstance(attrs.get("pending"), Mapping)
-                  and attrs["pending"].get("summary") else {})},
+               **({"pending_summary": True} if field in ("digest", "card")
+                  and isinstance(attrs.get("pending"), Mapping) and attrs["pending"].get("summary") else {})},
         understood_at=reading["understood_at"] or str(a.observed_at or ""),
         version_id=version_id_for(str(a.subject), field, 0),
     )
@@ -738,8 +741,17 @@ def rewrite_digest(
     Returns {applied, outcome: applied|unchanged|refused, reason, detail?, record_id, assertion_id, field, version,
     previous_version?, version_id?, seq?, captured_original?, vector_rewritten?}. Refusal reasons (nothing written):
     `unknown_record`, `protected_kind`, `use_narrate_dream`, `use_author_world_model`, `closed`,
-    `consolidation_record`, `empty_text`, `stale`, `embedder_unavailable`. Invalid arguments (an author kind outside
-    `AUTHOR_KINDS`, a model author without reader or sources, a cause outside `REWRITE_CAUSES`) raise ValueError.
+    `consolidation_record`, `empty_text`, `card_keywords`, `stale`, `embedder_unavailable`. Invalid arguments (an
+    author kind outside `AUTHOR_KINDS`, a model author without reader or sources, a cause outside `REWRITE_CAUSES`)
+    raise ValueError.
+
+    A dream or a world-model card formed with its summary PENDING (`world_model_pass`, `dream_pass`: the night's or
+    the evidence's bookkeeping text stands as the provisional body, operator rulings 2026-11-09) takes its authored
+    summary here, so the `digest.author` task completes through the one verb every drainer calls: a dream's digest
+    is replaced in place (its signals, proposals and narration untouched); a card's goes through the card's own
+    reading (`author_card_in_place`: field `card`, the summary becomes its authored lead, evidence and key
+    untouched). Outside a pending summary they keep their own doors (`use_narrate_dream`,
+    `use_author_world_model`).
     """
     author_d = _author(author)
     reader_d = _reader(reader, author_d["kind"])
@@ -756,12 +768,13 @@ def rewrite_digest(
     attrs = _attrs(a)
     kind = str(attrs.get("record_kind") or "").strip().lower()
     base = {"record_id": str(a.subject), "assertion_id": str(a.assertion_id or ""), "field": "digest"}
+    summary_pending = bool(isinstance(attrs.get("pending"), Mapping) and attrs["pending"].get("summary"))
     if kind in UNDERSTANDING_PROTECTED_KINDS:
         return _refusal("protected_kind", f"kind {kind!r} is the entity's own act; it is never rewritten", **base)
-    if kind == "dream":
+    if kind == "dream" and not summary_pending:
         return _refusal("use_narrate_dream",
                         "a dream's digest is the night's mechanical summary; narrate_dream adds a narration", **base)
-    if kind == "world_model":
+    if kind == "world_model" and not summary_pending:
         return _refusal("use_author_world_model", "cards are authored through author_world_model (evidence rules)",
                         **base)
     if attrs.get("summary_role") == RE_UNDERSTANDING_ROLE and cause_d["cause"] != "operator":
@@ -773,6 +786,16 @@ def rewrite_digest(
     if closures:
         return _refusal("closed", f"the record is closed ({closures[0].kind}); rewrite its current replacement",
                         replaced_by=_replaced_by(closures), **base)
+    if kind == "world_model":
+        # A card's pending summary is its first authored reading: the card's own write (field `card`) keeps the
+        # evidence rules (authored lead, the evidence it was read from) and completes the digest.author task.
+        if keywords is not None:
+            return _refusal("card_keywords", "a card's keywords are its evidence facets (world_model_pass)", **base)
+        known = [str(s) for s in (attrs.get("known_source_ids") or attrs.get("source_ids") or ())]
+        return author_card_in_place(
+            system, a, text=words, author=author_d, reader=reader_d or None, sources=sources_t, cause=cause_d,
+            expected_version=int(expected_version), authored_by=author_d["id"] or author_d["kind"], known_ids=known,
+            task_id=task_id, title=title, _hooks=_hooks, _after=_after)
     new_title = str(title).strip() if title is not None and str(title).strip() else record_title(attrs)
     new_keywords = [str(k).strip() for k in keywords if str(k or "").strip()] if keywords is not None else list(
         attrs.get("keywords") or ())
@@ -1005,12 +1028,12 @@ def revert_digest(
         return _retitle_apply(system, a, old.text, dict(old.author) or {"kind": UNRECORDED, "id": ""},
                               dict(old.reader), tuple(old.sources), cause, task_id="", at=utc_now_iso(),
                               expected=int(expected_version), method=old.digest_method or RETITLE_METHOD)
-    if fld == "card":
-        return _restore_card(system, a, old, cause, int(expected_version))
-    if fld == "digest" and old.cause.get("pending_summary"):
+    if fld in ("digest", "card") and old.cause.get("pending_summary"):
         return _refusal("provisional_summary", "this version is the provisional digest the record was formed with "
                         "while its summary was pending; a summary is mandatory (operator 2026-11-09)",
                         record_id=str(a.subject), assertion_id=str(a.assertion_id or ""), field=fld)
+    if fld == "card":
+        return _restore_card(system, a, old, cause, int(expected_version))
     restored_author = dict(old.author) if old.author else {"kind": UNRECORDED, "id": ""}
     return _restore(system, a, old, cause, int(expected_version), fld, restored_author)
 
@@ -1087,11 +1110,13 @@ def _restore_narration(system: Any, a: Any, old: UnderstandingVersion, cause: Di
 def author_card_in_place(
     system: Any, card: Any, *, text: str, author: Mapping[str, Any], reader: Optional[Mapping[str, Any]],
     sources: Sequence[Mapping[str, Any]], cause: Union[str, Mapping[str, Any]], expected_version: Optional[int],
-    authored_by: str, known_ids: Sequence[str], task_id: Optional[str] = None,
+    authored_by: str, known_ids: Sequence[str], task_id: Optional[str] = None, title: Optional[str] = None,
     _hooks: Sequence[Callable[[Any], None]] = (), _after: Sequence[Callable[[Dict[str, Any]], None]] = (),
 ) -> Dict[str, Any]:
-    """`author_world_model`'s in-place path (world_model.py owns the evidence rules and calls this): the card keeps
-    its id, revision and evidence; its text becomes the authored lead (field `card`)."""
+    """`author_world_model`'s in-place path (world_model.py owns the evidence rules and calls this), and a pending
+    card summary written through `rewrite_digest`: the card keeps its id, revision and evidence; its text becomes the
+    authored lead (field `card`). A `title` given with the text is written with it (its own title version, as
+    `rewrite_digest`'s `title=`); None keeps the card's title (or its pending state)."""
     author_d = dict(author)
     if author_d.get("kind") != UNRECORDED:
         author_d = _author(author_d)
@@ -1105,6 +1130,7 @@ def author_card_in_place(
     at = utc_now_iso()
     tid = str(task_id or "").strip()
     known = sorted(str(k) for k in known_ids)
+    new_title = str(title).strip() if title is not None and str(title).strip() else None
 
     def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:
         out = dict(old)
@@ -1112,10 +1138,13 @@ def author_card_in_place(
                     "authored_lead": words, "authored_known_ids": known,
                     "understanding": _understanding_attr(n, "card", author_d, reader_d, cause_d, sources_t,
                                                          tuple(known), at)})
+        if new_title is not None:
+            out["title"] = new_title
         return out
 
     def version(rec: Any, n: int) -> UnderstandingVersion:
-        return _version_row(rec, n, field="card", text=words, title=record_title(_attrs(rec)),
+        return _version_row(rec, n, field="card", text=words,
+                            title=new_title if new_title is not None else record_title(_attrs(rec)),
                             keywords=tuple(_attrs(rec).get("keywords") or ()), digest_method="authored-card-v1",
                             author=author_d, reader=reader_d, sources=sources_t, derived_from=tuple(known),
                             cause=cause_d, magnitude={}, task_id=tid, at=at)

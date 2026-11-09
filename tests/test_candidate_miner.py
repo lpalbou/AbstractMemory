@@ -109,8 +109,10 @@ def test_lesson_candidate_mints_in_the_ruled_shape(system) -> None:
     assert attrs["maintenance_candidate"] is True
     assert attrs["review_required"] is True
     assert ids["problem"] in attrs["source_ids"]
-    # His words are quoted, and the offer names adoption as HIS act.
-    assert "connection pool" in str(attrs.get("title", "")).lower()
+    # His words are quoted in the offer's provisional body (its title and summary are pending their authored words,
+    # operator rulings 2026-11-09), and the report label names them.
+    assert attrs["title"] is None and attrs["pending"]["title"] and attrs["pending"]["summary"]
+    assert "connection pool" in lessons[0]["title"].lower()
 
 
 def test_open_tension_never_offers_a_lesson(system) -> None:

@@ -378,11 +378,13 @@ def test_card_authoring_in_place_keeps_the_card_and_its_versions(home) -> None:
         _form(home, f"ada-{i}", digest=f"Worked with Ada on the archive, day {i}.", title=f"Ada day {i}",
               participants=("person:ada", OWNER))
     tuning = SleepTuning(world_model_evidence_floor=3)
+    with pytest.raises(ValueError, match="task_queue=True"):
+        world_model_pass(home, scopes=[(SCOPE, OWNER)], owner_id=OWNER, tuning=tuning)   # no queue: refused
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
+        home = MemorySystem(store=home.store, journal=home.journal, embedder=home.emb, task_queue=True)  # its queue
         out = world_model_pass(home, scopes=[(SCOPE, OWNER)], owner_id=OWNER, tuning=tuning)
     card_id = out["formed"][0]["card_id"]
-    assert _rewrite(home, card_id, "words")["reason"] == "use_author_world_model"
     authored = author_world_model(home, target="person:ada", text="Ada is the archivist I trust.",
                                   scope=SCOPE, owner_id=OWNER, author=MIND, reader=READER, sources=STEP)
     assert authored["card_id"] == card_id and authored["applied"] is True and authored["version"] == 1
@@ -391,9 +393,13 @@ def test_card_authoring_in_place_keeps_the_card_and_its_versions(home) -> None:
     assert understood["authored_by"] == MIND and understood["reader"] == READER
     assert understood["target"] == "person:ada" and understood["target_type"] == "person"
     assert understood["card_revision"] == 1 and understood["version_count"] == 2
+    assert understood["pending"]["summary"] is False and understood["pending"]["title"] is True
     assert [v["field"] for v in home.versions(card_id)] == ["card", "card"]
+    # Its summary is no longer pending: rewrite_digest is a card's door no more; the provisional body never returns.
+    assert _rewrite(home, card_id, "words")["reason"] == "use_author_world_model"
     reverted = home.revert_digest(card_id, 0, expected_version=1)
-    assert reverted["applied"] is True and _row(home, card_id).attributes["digest_method"] == "mechanical-card-v2"
+    assert reverted["reason"] == "provisional_summary"
+    assert _row(home, card_id).attributes["digest_method"] == "authored-card-v1"
 
 
 # --------------------------------------------------------------------------- serving

@@ -545,12 +545,19 @@ def consolidation_pass(
     review_required, sources byte-untouched. Idempotent by sorted source
     set; a group already covered by an existing candidate (equal or
     superset sources) is skipped. as_of anchors AUDIT reads only: writes
-    under as_of are refused loudly."""
+    under as_of are refused loudly. Each candidate forms PENDING its
+    authored title and summary (operator rulings 2026-11-09; the composed
+    text is its provisional body); a home without a task queue is refused
+    before anything is written."""
     if as_of is not None and not report_only:
         raise ValueError(
             "consolidation_pass: as_of anchors an audit read — writing candidates "
             "against a historical anchor would forge the timeline; pass report_only=True"
         )
+    if not report_only:
+        from .memory_tasks import require_task_queue
+
+        require_task_queue(system, "consolidation_pass")
     cap = tuning.validated_candidate_cap(max_candidates)
     store, journal = system.store, system.journal  # public substrate handles
     report = maintenance_report(
@@ -590,9 +597,12 @@ def consolidation_pass(
         key = f"maintenance-consolidation|{owner_id}|{fingerprint}"
         expected = record_id_for("summary", key, 0)
         existed = bool(store.query(TripleQuery(subject=expected, limit=1)))
+        # Title and summary authored (operator rulings 2026-11-09): the proposal's "Consolidated: …" label stays
+        # in the report; the candidate forms pending, the composed text its provisional body.
         candidate = MemoryRecordInput(
             kind="summary",
-            title=proposal["candidate_title"],
+            title=None,
+            pending=("title", "summary"),
             digest=digest,
             edges=tuple(("summarizes", rid) for rid in sources),
             attributes={
@@ -691,6 +701,12 @@ def sleep_pass(
             "sleep_pass: as_of anchors AUDIT reads only — pass "
             "report_only=True for anchored reads (a night written against "
             "a historical anchor would forge the timeline)")
+    if not report_only:
+        # The same one gate for the queue: tending, cards, offers and the dream form PENDING their authored title
+        # and summary (operator rulings 2026-11-09), so a home without a task queue stops here, not mid-night.
+        from .memory_tasks import require_task_queue
+
+        require_task_queue(system, "sleep_pass")
 
     # Cancelled-phase shapes mirror the REAL empty pass shapes key-for-key
     # (phase-audit adversary finding 2: a phantom `formed` key resurrected

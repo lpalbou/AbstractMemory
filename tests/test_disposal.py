@@ -39,7 +39,7 @@ SCOPES = [(SCOPE, OWNER)]
 
 @pytest.fixture()
 def system():
-    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), task_queue=True)
 
 
 def _seed(system):

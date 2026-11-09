@@ -112,6 +112,42 @@ A record's understanding can be rewritten in place, and every earlier reading is
   `.title` may be `None`; the SQLite journal's NOT NULL columns store `""` and read it back as `None`). The
   wake-cue dedup pass no longer tokenizes a missing title as "None". `tests/test_untitled_records.py` (117 cases,
   both substrate pairs; 15 mutants red).
+- **Memory's own passes never write a title or a summary: what they form is PENDING** (the same rulings; the
+  runtime's request after it moved its own formation to authored metadata). Every record a memory pass forms is
+  either authored or formed with `pending` and its `title.author` / `digest.author` tasks, its bookkeeping text kept
+  only as the provisional body those tasks author from; no "World model: <subject>", "Dream: …", "Lesson candidate:
+  …", "Consolidated: …" or "Day …: N near-identical …" title is stored any more.
+  - `world_model_pass` (both cadences): each card forms `pending=("title", "summary")`; its evidence briefing
+    (`mechanical-card-v2`, or the carried authored lead plus "Since then", `authored-card-v1+delta`) is the
+    provisional body. An AUTHORED title (one carrying `title_provenance`: written by `retitle` or a card reading)
+    carries to the next revision with `title_provenance.carried_from` (`pending=("summary",)`); the legacy
+    "World model: <subject>" label never carries. Target, evidence fingerprint, sources, revision, aliases and the
+    authored-lead bookkeeping are unchanged, and the card key never depends on the title. The pass no longer queues
+    `card.author` (the `digest.author` task owns the body; `card.author` stays for legacy cards); a revision
+    supersedes the prior card's live `title.author` / `digest.author` / `card.author` tasks
+    (`memory_tasks.supersede_revised_card`, replacing `enqueue_card`). Verdicts carry `pending`.
+  - `author_world_model`: in place, the authored text completes a pending summary (the marker clears, the
+    `digest.author` task is done) and leaves a pending title pending; handing back the provisional body itself
+    raises. `in_place=False` forms the authored summary with the prior's authored title, else `pending=("title",)`.
+  - `alias_world_model` carries the card's authored title and summary; what is not authored forms pending.
+  - `dream_pass`: the dream forms `pending=("title", "summary")`, the night's composed text its provisional body;
+    signals, proposals, questions and the `dream.narrate` task are unchanged.
+  - `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass`: offers, consolidation candidates and the
+    dedup day summary form `pending=("title", "summary")`; the passes' labels stay in their results only. The dedup
+    pass recognizes its own summary by `provenance.source` (`doctoring.DEDUP_SOURCE`) once its authored summary
+    replaced the `mechanical-dedup-v1` label.
+  - `apply_redigestion` hands a source's pending title on to the new record (it used to refuse the entry).
+  - These passes, and `sleep_pass` once for the whole night, refuse a home without a task queue before writing
+    anything (`memory_tasks.require_task_queue`); `report_only` reads still run.
+  - The drainer's seam: `rewrite_digest` completes a pending card summary (routed to the card's own in-place write,
+    field `card`: authored lead, `authored-card-v1`, evidence and key untouched; new refusal `card_keywords`) and a
+    pending dream summary (in place); outside a pending summary a card and a dream keep `use_author_world_model` /
+    `use_narrate_dream`. `author_card_in_place` takes an optional `title`. A card's pending summary clears on a
+    `card` reading, and its provisional body is never restored (`revert_digest` → `provisional_summary`).
+    `understanding_debt` / `enqueue_debt` count a card whose summary is pending as `title.author` /
+    `digest.author` debt, never `card.author`. Display blocks and `record_understanding` already carry `pending`.
+  - `tests/test_pending_formations.py` (32 cases, both substrate pairs; 19 mutants red on a scratch copy); the test
+    homes that run these passes open with `task_queue=True` (the shared `system` fixture too).
 - `world_model_pass`: an interest whose title heads to an alias of a card counts as an election of the card's
   primary key (it keeps clearing the evidence floor there), as its evidence already did.
 - `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is

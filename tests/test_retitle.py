@@ -187,8 +187,14 @@ def test_every_kind_is_retitled_alone(home, kind) -> None:
     assert after.subject == before.subject and after.assertion_id == before.assertion_id
     assert after.object == before.object                                      # the body: byte-equal
     assert after.attributes["title"] == new                                   # stored whole, as given
-    assert {k: v for k, v in after.attributes.items() if k not in TITLE_KEYS} == \
-        {k: v for k, v in before.attributes.items() if k not in TITLE_KEYS}  # keywords, reading, kind: untouched
+    keys = TITLE_KEYS | {"pending"}
+    assert {k: v for k, v in after.attributes.items() if k not in keys} == \
+        {k: v for k, v in before.attributes.items() if k not in keys}  # keywords, reading, kind: untouched
+    if isinstance(before.attributes.get("pending"), dict):  # a card forms pending its authored title (2026-11-09)
+        assert before.attributes["pending"]["title"] is True and cut is None
+        assert after.attributes["pending"] == {**before.attributes["pending"], "title": False}
+    else:
+        assert "pending" not in after.attributes
     assert after.attributes["title_version"] == 1
     assert after.attributes["title_provenance"]["author"] == MODEL
     assert after.observed_at == before.observed_at and after.provenance == before.provenance

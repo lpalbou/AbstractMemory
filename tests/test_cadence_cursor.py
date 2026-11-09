@@ -137,7 +137,7 @@ def test_fixture_flow_matches_the_scan(pair) -> None:
     """The maintenance fixture's flow (duplicate pile, a consolidation pass
     forming a candidate, new material) through MemorySystem."""
     store, journal = pair
-    system = MemorySystem(store=store, journal=journal)
+    system = MemorySystem(store=store, journal=journal, task_queue=True)
     scopes = [("life", "entity:test")]
 
     def remember(key, title, digest, **kw):

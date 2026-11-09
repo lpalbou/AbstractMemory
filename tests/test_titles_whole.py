@@ -3,12 +3,14 @@
 human and for an agent. otherwise this screws up the discoverability").
 
 Each test reads what was STORED:
-- a world-model card formed from an interest keeps the interest's whole subject head as its target and its title
+- a world-model card formed from an interest keeps the interest's whole subject head as its target
   (`world_model._interest_subject_head` capped it at 8 words: nerin's card read "World model: first-person accounts
-  as the bridge between aggregate crisis");
-- a lesson candidate's title carries the resolved question's words whole, both when the question's own title names
+  as the bridge between aggregate crisis"); its title is pending its authored words (operator rulings 2026-11-09:
+  the pass never writes a card's title);
+- a lesson candidate's label carries the resolved question's words whole, both when the question's own title names
   it and when its title is boilerplate and the question's words label it (`candidate_miner` stored a 90-character
-  head inside a 120-character title cut).
+  head inside a 120-character title cut); the offer forms pending its authored title, its body quoting the words
+  whole.
 
 MUTATION LIST (each cut restored in the source turned its test red; the source was restored byte-exact):
 - T1 `words = words[:8]` back in `_interest_subject_head` -> test_interest_card_keeps_the_whole_subject;
@@ -44,7 +46,7 @@ PROBLEM = ("the connection pool keeps saturating under noon load whenever the ni
 
 
 def _system() -> MemorySystem:
-    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), task_queue=True)
 
 
 def _stored_title(system: MemorySystem, gid: str) -> str:
@@ -69,7 +71,8 @@ def test_interest_card_keeps_the_whole_subject() -> None:
     formed = {v["target"]: v for v in out["formed"]}
     assert f"topic:{head}" in formed, sorted(formed)
     card = resolve_digest_assertion(system.store, formed[f"topic:{head}"]["card_id"])
-    assert card.attributes["title"] == f"World model: {head}"
+    assert card.attributes["target"] == f"topic:{head}"
+    assert card.attributes["title"] is None and card.attributes["pending"]["title"] is True
 
 
 def _resolved_tension(system: MemorySystem, *, title: str, text: str) -> None:
@@ -100,9 +103,13 @@ def _lesson_candidate_title(system: MemorySystem) -> str:
     result = mine_candidates_pass(system, scopes=SCOPES, owner_id=OWNER)
     lessons = [c for c in result["created"] if c["proposed_kind"] == "lesson"]
     assert lessons, "a resolved cross-session tension must offer a lesson"
-    stored = _stored_title(system, lessons[0]["candidate_id"])
-    assert stored == lessons[0]["title"]
-    return stored
+    # The offer is stored pending its authored title; the report label and the provisional body keep the words whole.
+    assert _stored_title(system, lessons[0]["candidate_id"]) == ""
+    row = resolve_digest_assertion(system.store, lessons[0]["candidate_id"])
+    assert row.attributes["pending"]["title"] is True
+    label = lessons[0]["title"]
+    assert label.split(": ", 1)[1] in str(row.object)
+    return label
 
 
 def test_lesson_candidate_title_is_whole() -> None:

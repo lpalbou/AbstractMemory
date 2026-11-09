@@ -22,7 +22,9 @@ TASK KINDS (capability = the cognition-profile capability that runs them):
   priority, ahead of every rewrite; `retitle` / `rewrite_digest` complete them and clear the marker; each claim
   mirrors the attempt into the marker;
 - `digest.rewrite` (summaries): an episode, session summary or observation still in mechanical words;
-- `card.author` (summaries): a world-model card still in mechanical words (or carrying a mechanical delta);
+- `card.author` (summaries): a LEGACY world-model card still in mechanical words (or carrying a mechanical delta),
+  formed before cards formed pending; `world_model_pass` forms every card with its title and summary pending (the
+  evidence briefing is only its provisional body), so a new card owes `title.author` / `digest.author` instead;
 - `dream.narrate` (understanding): a dream without a narration (night and nap windows only);
 - `ripple.reconsider`, `ripple.consolidate` (understanding): the ripple (backlog 0061); consolidation runs only in a
   nightly sleep window.
@@ -794,6 +796,17 @@ def _pending_marker(attrs: Mapping[str, Any]) -> Dict[str, Any]:
     return dict(marker) if isinstance(marker, Mapping) else {}
 
 
+def require_task_queue(system: Any, verb: str) -> None:
+    """A pass that forms records PENDING their authored title and summary (world_model_pass, dream_pass, the
+    candidate miner, consolidation candidates, the dedup day summary) refuses a home without a task queue before it
+    writes anything: no title or summary is ever stored missing without the task that writes it (operator rulings
+    2026-11-09; `remember_many` refuses the record itself, this keeps a night from stopping half-written)."""
+    if getattr(system, "tasks", None) is None:
+        raise ValueError(
+            f"{verb} forms its records pending their authored title and summary (the pass's bookkeeping text is "
+            "only their provisional body): open the home with MemorySystem(task_queue=True)")
+
+
 def pending_task_kinds(attrs: Mapping[str, Any]) -> List[str]:
     """The authoring tasks a record's pending marker owes (`title.author`, `digest.author`), from its marker only."""
     from .records import PENDING_TASK_KINDS
@@ -859,24 +872,15 @@ def _cost_hint(system: Any, a: Any, source_ids: Sequence[str] = ()) -> Dict[str,
     return {"input_tokens": tokens, "verbatim": attrs.get("payload_ref")}
 
 
-def enqueue_card(system: Any, card_id: str, *, scope: str, owner_id: str, fingerprint: str, revision: int,
-                 strength: float, prior_id: Optional[str] = None) -> Optional[str]:
-    """`world_model_pass`'s enqueue: a `card.author` task for a card still (partly) in mechanical words."""
+def supersede_revised_card(system: Any, prior_id: str, card_id: str) -> List[str]:
+    """`world_model_pass`'s revision: the prior card's live authoring tasks (`title.author`, `digest.author`, a
+    legacy `card.author`) are superseded; the new revision, formed pending, carries its own (queued by
+    `remember_many`)."""
     queue: Optional[MemoryTaskQueue] = getattr(system, "tasks", None)
-    if queue is None:
-        return None
-    from .records import resolve_digest_assertion
-
-    a = resolve_digest_assertion(system.store, card_id)
-    if a is None:
-        return None
-    if prior_id and prior_id != card_id:
-        queue.supersede_target(prior_id, kinds=("card.author",), reason=f"card revised to {card_id}")
-    res = queue.enqueue("card.author", card_id, scope=scope, owner_id=owner_id, assertion_id=str(a.assertion_id),
-                        basis=f"{fingerprint}@rev{int(revision)}", basis_version=0, strength=strength,
-                        cause={"cause": "evidence" if prior_id else "formation", "revision": int(revision)},
-                        cost_hint=_cost_hint(system, a, list((a.attributes or {}).get("known_source_ids") or ())))
-    return res["task_id"] if res["enqueued"] else None
+    if queue is None or not prior_id or prior_id == card_id:
+        return []
+    return queue.supersede_target(prior_id, kinds=("title.author", "digest.author", "card.author"),
+                                  reason=f"card revised to {card_id}")
 
 
 def enqueue_dream(system: Any, dream_id: str, *, scope: str, owner_id: str, salience: float,
@@ -927,6 +931,8 @@ def _debt_kind(attrs: Mapping[str, Any], methods: frozenset) -> Optional[str]:
     method = str(attrs.get("digest_method") or "")
     if _protected(attrs):
         return None
+    if kind != "dream" and _pending_marker(attrs).get("summary"):
+        return None  # the digest.author task owns the body (a dream's narration is beside it, still owed)
     if kind == "world_model":
         return "card.author" if method in MECHANICAL_CARD_METHODS or method.endswith("+delta") else None
     if kind == "dream":

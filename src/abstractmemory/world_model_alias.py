@@ -156,11 +156,15 @@ def alias_world_model(
             "is its own deliberate act, never an overwrite")
 
     from .records import MemoryRecordInput
+    from .world_model import _carried_title, _summary_authored
 
     attrs = dict(card.attributes if isinstance(card.attributes, dict) else {})
     aliases = sorted({*_aliases_of(card), alias_n})
     revision = _revision_of(card) + 1
-    display = primary_n.split(":", 1)[1] if ":" in primary_n else primary_n
+    # The new revision carries the card's AUTHORED title and summary; what is not authored (a legacy
+    # "World model: <subject>" label, a mechanical or pending summary) forms pending, its text the provisional body.
+    title, title_attrs = _carried_title(card)
+    pending = tuple(f for f, owed in (("title", title is None), ("summary", not _summary_authored(attrs))) if owed)
     known = [str(s) for s in (attrs.get("known_source_ids")
                               or attrs.get("source_ids") or ())]
     edges: List[Tuple[str, str]] = [
@@ -173,7 +177,8 @@ def alias_world_model(
     ) if k in attrs}
     new_card = MemoryRecordInput(
         kind="world_model",
-        title=str(attrs.get("title") or f"World model: {display}"),
+        title=title,
+        pending=pending,
         digest=str(card.object or ""),
         keywords=tuple(str(k) for k in (attrs.get("keywords") or ())),
         participants=((primary_n, alias_n) if not primary_n.startswith("topic:")
@@ -186,6 +191,7 @@ def alias_world_model(
             "aliases": aliases,
             "alias_reason": why,
             **carried,
+            **title_attrs,
         },
         provenance={"source": "world-model-aliasing", "actor": str(actor or "")},
     )
@@ -194,6 +200,9 @@ def alias_world_model(
         [new_card], scope=scope, owner_id=owner_id, idempotency_key=key)
     closed: List[str] = []
     if card.subject != gid:
+        from .memory_tasks import supersede_revised_card
+
+        supersede_revised_card(system, card.subject, gid)
         system.close_record(
             card.subject, kind="supersede", replacement_ids=[gid],
             reason=f"alias {alias_n} bound to {primary_n} ({why})")

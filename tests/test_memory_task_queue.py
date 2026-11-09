@@ -339,22 +339,31 @@ def test_supersede_stale_catches_a_rewrite_the_queue_did_not_see(tmp_path) -> No
 
 
 def test_cards_and_dreams_enqueue_and_their_verbs_ack(home) -> None:
+    # A card and a dream form PENDING their authored title and summary (operator rulings 2026-11-09): formation
+    # queues title.author + digest.author (formation priority, strength 1.0); the card's authoring acks its task.
     for i in range(3):
         _form(home, f"ada-{i}", digest=f"Worked with Ada, day {i}.", participants=("person:ada", OWNER))
     out = world_model_pass(home, scopes=SCOPES, owner_id=OWNER, tuning=SleepTuning(world_model_evidence_floor=3))
     card = out["formed"][0]["card_id"]
-    ct = _task(home, card, "card.author")
-    assert ct["capability"] == "summaries" and ct["strength"] == 1.0
-    home.tasks.claim([ct["task_id"]], holder="rt", now=T0)
+    assert home.tasks.tasks(kind=("card.author",), target_id=card) == []
+    tt, st = _task(home, card, "title.author"), _task(home, card, "digest.author")
+    for t in (tt, st):
+        assert t["capability"] == "summaries" and t["strength"] == 1.0 and t["priority"] == 5
+    home.tasks.claim([st["task_id"]], holder="rt", now=T0)
     author_world_model(home, target="person:ada", text="Ada, the archivist I trust.", scope=SCOPE, owner_id=OWNER,
-                       author=MIND, reader=READER, sources=STEP, task_id=ct["task_id"])
-    assert home.tasks.task(ct["task_id"])["status"] == "done"
-    # New evidence revises the card: a new authoring task, the old card's live task superseded.
+                       author=MIND, reader=READER, sources=STEP, task_id=st["task_id"])
+    assert home.tasks.task(st["task_id"])["status"] == "done"
+    assert home.tasks.task(tt["task_id"])["status"] == "pending"      # the title is still to be written
+    home.retitle(card, title="Ada, the archivist", author=MIND, reader=READER, sources=STEP, cause="formation",
+                 expected_version=0, task_id=tt["task_id"])
+    assert home.tasks.task(tt["task_id"])["status"] == "done"
+    # New evidence revises the card: the new revision carries the authored title, owes a new summary.
     _form(home, "ada-9", digest="Ada finished the index.", participants=("person:ada", OWNER))
     out2 = world_model_pass(home, scopes=SCOPES, owner_id=OWNER, tuning=SleepTuning(world_model_evidence_floor=3))
     card2 = out2["formed"][0]["card_id"]
-    ct2 = _task(home, card2, "card.author")
-    assert ct2["cause"]["cause"] == "evidence" and ct2["strength"] < 1.0      # a +delta: the share that is new
+    assert out2["formed"][0]["pending"] == ["summary"]
+    assert home.tasks.tasks(kind=("title.author",), target_id=card2) == []
+    assert _task(home, card2, "digest.author")["status"] == "pending"
 
     _form(home, "s-1", digest="The connection pool saturated at noon.", keywords=("pool", "saturation", "noon"))
     _form(home, "s-3", digest="Planted the garden sensors at noon.", keywords=("garden", "sensors", "noon"))
@@ -362,6 +371,8 @@ def test_cards_and_dreams_enqueue_and_their_verbs_ack(home) -> None:
           keywords=("pool", "batching"))
     night = dream_pass(home, scopes=SCOPES, owner_id=OWNER)
     assert night["dream_record_id"], night["skipped_reason"]
+    for kind in ("title.author", "digest.author"):
+        assert _task(home, night["dream_record_id"], kind)["status"] == "pending"
     dt = _task(home, night["dream_record_id"], "dream.narrate")
     assert dt["windows"] == ["night", "nap"]
     assert home.tasks.claim([dt["task_id"]], holder="rt", window="turn", now=T0)["refused"][0]["reason"] == "window"

@@ -291,7 +291,7 @@ def test_night_completes_vectorless_under_dead_embedder() -> None:
                                     embedding_pin={"model_id": "dead-model",
                                                    "dimension": 4})
         journal = InMemoryJournal()
-        system = MemorySystem(store=store, journal=journal)
+        system = MemorySystem(store=store, journal=journal, task_queue=True)
         owner = "entity:outage"
         for i, noun in enumerate(("anchor", "beacon", "compass")):
             system.remember_many([

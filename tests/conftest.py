@@ -65,6 +65,8 @@ def stack(request: pytest.FixtureRequest, tmp_path) -> Tuple[Any, Any]:
 
 @pytest.fixture
 def system(stack) -> MemorySystem:
+    # task_queue=True like every host home (runtime, gateway): the sleep passes form their records pending their
+    # authored title and summary and refuse a home without the queue that writes them (operator 2026-11-09).
     store, journal = stack
-    return MemorySystem(store=store, journal=journal)
+    return MemorySystem(store=store, journal=journal, task_queue=True)
 

@@ -18,9 +18,14 @@ prompt-pinned"), ORIENTATION NEVER AUTHORITY. Our port keeps every guard
 and adds the closure fold: a superseded revision leaves recall through
 the normal current-wins mechanism instead of a revision-number sort.
 
-MECHANICS (deterministic, zero LLM — the digest is mechanical-v1 and says
-so; entity-authored re-digestion is the waking lane, like every mechanical
-digest):
+MECHANICS (deterministic, zero LLM). The pass never writes a card's title
+or summary (operator rulings 2026-11-09: both are mandatory and authored):
+every card it forms is PENDING (`pending=("title", "summary")`, or
+`("summary",)` when an authored title carries from the prior revision), its
+evidence briefing (mechanical-card-v2, or the carried authored lead + what
+is new since) standing only as the provisional body the queued
+`title.author` / `digest.author` tasks author from (`rewrite_digest` /
+`author_world_model` write the summary, `retitle` the title):
 - TARGETS are the gradation universe, extracted from lived records:
   participants (person:/entity:/... — except the scope owner: the
   explicit co-presence self-stamp is universal and a card about oneself
@@ -235,6 +240,45 @@ def _authored_lead(prior: Any) -> str:
     return str(prior.object or "").split("\n\nSince then", 1)[0].strip()
 
 
+def _authored_title(attrs: Any) -> Optional[str]:
+    """A card's title when it was AUTHORED: written with its provenance (`retitle`, a card reading that set it, or
+    carried from the revision that held it), else None. A card formed before 2026-11-09 holds the pass's label
+    "World model: <subject>" with no title provenance: never carried, its next revision forms with its title
+    pending (operator rulings 2026-11-09: a title is authored, never the pass's words)."""
+    from .canonical_text import record_title
+
+    if not isinstance(attrs, dict):
+        return None
+    title = record_title(attrs)
+    prov = attrs.get("title_provenance")
+    if title is None or not isinstance(prov, dict):
+        return None
+    author = prov.get("author") if isinstance(prov.get("author"), dict) else {}
+    return None if str(author.get("kind") or "") == "mechanical" else title
+
+
+def _carried_title(prior: Any) -> Tuple[Optional[str], Dict[str, Any]]:
+    """The title a new revision of `prior` carries (`_authored_title`) and the attributes that say so (its
+    `title_provenance`, with `carried_from` = the prior card); (None, {}) = the new revision's title is pending."""
+    attrs = prior.attributes if prior is not None and isinstance(prior.attributes, dict) else {}
+    title = _authored_title(attrs)
+    if title is None:
+        return None, {}
+    return title, {"title_provenance": {**dict(attrs["title_provenance"]), "carried_from": str(prior.subject)}}
+
+
+def _summary_authored(attrs: Any) -> bool:
+    """A card's text is an AUTHORED summary: not pending, labelled authored, and no mechanical delta appended (a
+    legacy `authored-card-v1+delta` card carries the pass's "Since then" words)."""
+    if not isinstance(attrs, dict):
+        return False
+    pending = attrs.get("pending")
+    if isinstance(pending, dict) and pending.get("summary"):
+        return False
+    method = str(attrs.get("digest_method") or "")
+    return method.startswith("authored") and not method.endswith("+delta")
+
+
 def _targets_of(record: Dict[str, Any], owner_id: str) -> List[str]:
     """The card targets one lived record contributes to: participants
     (minus the owner) + every elected topic (attributes.topic single or
@@ -384,6 +428,10 @@ def world_model_pass(
             "world_model_pass requires a non-empty owner_id — the owner "
             "exclusion (no card about oneself; the self-stamp never counts) "
             "is meaningless against a blank owner")
+    if not report_only:
+        from .memory_tasks import require_task_queue
+
+        require_task_queue(system, "world_model_pass")
     store, journal = system.store, system.journal
     evidence = _evidence_scan(store, journal, scopes=scopes,
                               scan_limit=int(scan_limit))
@@ -641,6 +689,15 @@ def world_model_pass(
                 display, rows, feeling=feeling, first_seen=first_seen,
                 last_seen=last_seen, kinds_line=kinds_line, top_facets=top_facets)
             digest_method = "mechanical-card-v2"
+        # THE TITLE AND THE SUMMARY ARE AUTHORED, never the pass's words (operator rulings 2026-11-09: "the title
+        # + summary must ALWAYS exist for any memory", no fallback). The briefing above (or the carried authored
+        # lead with what is new since) is the card's PROVISIONAL BODY only: the summary is pending on every
+        # revision (new evidence owes a new reading, authored from this body by the digest.author task), and the
+        # title is pending unless an authored one carries from the prior revision (a card is keyed by its target,
+        # never by its title, so an authored title keeps naming the subject; the legacy "World model: <subject>"
+        # label never carries).
+        title, title_attrs = _carried_title(prior)
+        extra_attrs.update(title_attrs)
         newest_first = [r["record_id"] for r in reversed(rows)]
         edges: List[Tuple[str, str]] = [
             ("derived_from", rid)
@@ -650,7 +707,8 @@ def world_model_pass(
             edges.append(("refines", prior.subject))
         card = MemoryRecordInput(
             kind="world_model",
-            title=f"World model: {display}",
+            title=title,
+            pending=("summary",) if title is not None else ("title", "summary"),
             digest=digest,
             keywords=tuple(top_facets),
             participants=((target, *(a for a in card_aliases
@@ -668,8 +726,9 @@ def world_model_pass(
                 "known_source_ids": sorted(r["record_id"] for r in rows),
                 "first_seen": first_seen,
                 "last_seen": last_seen,
-                # Mechanical floor awaiting authored words (author_world_model)
-                # — or the authored lead + mechanical delta when carried.
+                # The provisional body's label: the mechanical floor, or the
+                # authored lead + mechanical delta when carried (the summary
+                # authored from it replaces both: authored-card-v1).
                 "digest_method": digest_method,
                 **extra_attrs,
             },
@@ -687,26 +746,16 @@ def world_model_pass(
             key = f"world-model|{owner}|{target}|rev{revision}|{fingerprint}"
             expected = record_id_for("world_model", key, 0)
             existed = bool(store.query(TripleQuery(subject=expected, limit=1)))
+            # remember_many queues the card's title.author / digest.author tasks with it (the pending marker).
             [gid] = system.remember_many(
                 [card], scope=scopes[0][0], owner_id=owner, idempotency_key=key)
             verdict["card_id"] = gid
             verdict["formed"] = not existed
-            if getattr(system, "tasks", None) is not None:
-                # A card still (partly) in mechanical words owes an authoring (0060). Its strength: a new or
-                # never-authored card is a full change; a +delta revision is the share of evidence that is new.
-                from .activation_gate import FORMATION_STRENGTH
-                from .memory_tasks import enqueue_card
-
-                if digest_method == "authored-card-v1+delta":
-                    baseline = set(extra_attrs.get("authored_known_ids") or ())
-                    fresh = sum(1 for r in rows if r["record_id"] not in baseline)
-                    strength = min(1.0, max(0.1, fresh / max(1, len(rows))))
-                else:
-                    strength = FORMATION_STRENGTH
-                enqueue_card(system, gid, scope=scopes[0][0], owner_id=owner, fingerprint=fingerprint,
-                             revision=revision, strength=strength,
-                             prior_id=prior.subject if prior is not None else None)
+            verdict["pending"] = list(card.pending)
             if prior is not None and prior.subject != gid:
+                from .memory_tasks import supersede_revised_card
+
+                supersede_revised_card(system, prior.subject, gid)
                 # Append-only revision: the old card leaves recall through
                 # the normal closure fold; its history stays. Close
                 # UNCONDITIONALLY (not just when the new card is fresh —
@@ -872,7 +921,11 @@ def author_world_model(
     the mechanical floor awaits). The engine never invents text — this verb
     takes words authored elsewhere (the entity's reflection call, or an
     operator/host LLM pass). Cards are excluded from apply_redigestion and
-    from rewrite_digest by rail; this is their one authoring door.
+    from rewrite_digest by rail (except a card whose summary is PENDING,
+    which `rewrite_digest` routes to this same in-place write); this is
+    their authoring door. On a pending card the authored text is its
+    summary: the marker's `summary` clears and its `digest.author` task
+    completes; a pending title stays pending (`retitle` writes it).
 
     IN PLACE (the default since backlog 0059, operator ruling 2026-11-07):
     the authoring changes the WORDS, not the world, so the card keeps its id,
@@ -890,7 +943,10 @@ def author_world_model(
 
     `in_place=False` keeps the pre-0059 path: a new card (revision N+1,
     refines → prior, derived_from + evidence bookkeeping CARRIED), prior
-    closed kind="supersede".
+    closed kind="supersede". Its summary is the authored text; its title is
+    the prior's AUTHORED title (`_authored_title`), else pending (formed
+    `pending=("title",)` with its `title.author` task) — never the legacy
+    "World model: <subject>" label.
 
     Refusals are loud: no standing card (run world_model_pass first — an
     authored card without evidence lineage would be assertion, not
@@ -916,7 +972,14 @@ def author_world_model(
             f"no standing world-model card for {target_n!r} — run "
             "world_model_pass first: an authored card without evidence "
             "lineage would be assertion, not orientation")
+    attrs = current.attributes if isinstance(current.attributes, dict) else {}
+    summary_pending = bool(isinstance(attrs.get("pending"), dict) and attrs["pending"].get("summary"))
     if words == str(current.object or "").strip():
+        if summary_pending:
+            # The provisional body handed back is not an authored summary: nothing to write, still pending.
+            raise ValueError(
+                f"the text for {target_n!r} is the card's provisional body (the pass's evidence briefing); "
+                "its summary is pending authored words")
         # Idempotent success, not a refusal (adversary finding 10): a
         # crash-retry of an authoring that already landed must read as
         # "already current", indistinguishable refusals hide real errors.
@@ -924,7 +987,6 @@ def author_world_model(
                 "revision": _revision_of(current), "applied": False,
                 "digest_method": str((current.attributes or {}).get("digest_method") or ""),
                 "note": "authored text is already the current card"}
-    attrs = current.attributes if isinstance(current.attributes, dict) else {}
     known = [str(s) for s in (attrs.get("known_source_ids")
                               or attrs.get("source_ids") or ())]
     if not known:
@@ -965,13 +1027,15 @@ def author_world_model(
                 "version": result.get("version")}
     author = label
     revision = _revision_of(current) + 1
-    display = target_n.split(":", 1)[1] if ":" in target_n else target_n
     edges: List[Tuple[str, str]] = [
         ("derived_from", rid) for rid in list(reversed(known))[:8]]
     edges.append(("refines", current.subject))
+    # The summary is the authored text; the title is the prior's authored one, else pending (never the label).
+    title, title_attrs = _carried_title(current)
     card = MemoryRecordInput(
         kind="world_model",
-        title=f"World model: {display}",
+        title=title,
+        pending=() if title is not None else ("title",),
         digest=words,
         keywords=tuple(str(k) for k in (attrs.get("keywords") or ())),
         participants=(target_n,) if not target_n.startswith("topic:") else (),
@@ -995,6 +1059,7 @@ def author_world_model(
             # lead out of digest text; never let the delta baseline drift).
             "authored_lead": words,
             "authored_known_ids": sorted(known),
+            **title_attrs,
         },
         provenance={"source": "world-model-authoring",
                     "actor": str(author or "").strip() or "unknown"},
@@ -1003,8 +1068,12 @@ def author_world_model(
     [gid] = system.remember_many(
         [card], scope=scope, owner_id=owner_id, idempotency_key=key)
     if current.subject != gid:
+        from .memory_tasks import supersede_revised_card
+
+        supersede_revised_card(system, current.subject, gid)
         system.close_record(
             current.subject, kind="supersede", replacement_ids=[gid],
             reason=f"world-model authored revision {revision} for {target_n}")
     return {"target": target_n, "card_id": gid, "revision": revision,
-            "digest_method": "authored-card-v1", "applied": True, "in_place": False}
+            "digest_method": "authored-card-v1", "applied": True, "in_place": False,
+            "pending": list(card.pending)}

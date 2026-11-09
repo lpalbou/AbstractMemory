@@ -498,7 +498,11 @@ def dream_pass(
     fingerprint, so re-running on the same graph state forms nothing new).
     A quiet night (salience < floor, or no dreamable sources) is a VALID
     night: no record, and the report says why. The dream lands in the FIRST
-    scope pair (the home scope) under owner_id.
+    scope pair (the home scope) under owner_id, formed PENDING its authored
+    title and summary (operator rulings 2026-11-09): the night's composed
+    text is only its provisional body, the queued `title.author` /
+    `digest.author` tasks author both (`retitle` / `rewrite_digest`), and a
+    home without a task queue is refused before anything is written.
 
     SALIENCE (fork parity restored 2026-07-12 — the fork-comparison
     adversary caught two silently dropped terms): bridge proposals and
@@ -531,6 +535,10 @@ def dream_pass(
             "dream_pass: as_of anchors AUDIT reads only — writing a dream "
             "against a historical anchor forges the timeline; pass "
             "report_only=True for anchored reads")
+    if not report_only:
+        from .memory_tasks import require_task_queue
+
+        require_task_queue(system, "dream_pass")
     store, journal = system.store, system.journal  # public substrate handles
     report = structural_report(store, journal, scopes=scopes, as_of=as_of)
     (proposals, questions, vectorless_pairs, trail_associated,
@@ -705,9 +713,12 @@ def dream_pass(
          "anchors": sorted(a.subject for a in prior) if continuation_only else []},
         sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
+    # The dream's TITLE and SUMMARY are authored, never the night's words (operator rulings 2026-11-09): the text
+    # composed below is the dream's provisional body (what the night's structure says, every word from the records
+    # it stands for), formed pending=("title", "summary") so the queued title.author / digest.author tasks author
+    # both from it. Its signals, proposals and questions stay structured attributes; the narration stays beside.
     title_of = lambda rid: report["records"][rid]["title"] or rid  # noqa: E731
     if continuation_only:
-        title = "Dream: returning to an unresolved tension"
         digest = (
             f"No new bridges tonight, but {len(prior)} unresolved dream(s) kept "
             "pressing. The tension is still here — the same islands remain "
@@ -716,9 +727,6 @@ def dream_pass(
         )
         continuation_state = "continued"
     else:
-        top = proposals[0] if proposals else questions[0]
-        left, right = top["pair"]
-        title = f"Dream: {title_of(left)} beside {title_of(right)}"
         # CONTENTFUL DIGEST (2026-07-19, the return-gap diagnosis on
         # Ephemeral's store: 0/56 dreams EVER selected, 735 traces —
         # dropped below_shelf at ~0.08 because the old digest was
@@ -837,7 +845,8 @@ def dream_pass(
 
     dream = MemoryRecordInput(
         kind="dream",
-        title=title,
+        title=None,
+        pending=("title", "summary"),
         digest=digest,
         keywords=tuple(sorted(dream_keywords)[: tuning.list_bound]),
         participants=tuple(sorted(dream_participants)[: tuning.list_bound]),

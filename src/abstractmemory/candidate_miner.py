@@ -316,7 +316,13 @@ def mine_candidates_pass(
     sleep formation. The night cap counts MINTS only (adversary F1:
     counting stale retries let two living themes starve every future
     offer forever) and applies in report_only too, so the report predicts
-    the write night (F13b)."""
+    the write night (F13b).
+
+    Each offer is formed PENDING its authored title and summary (operator
+    rulings 2026-11-09): the offer's composed text is its provisional body,
+    the queued `title.author` / `digest.author` tasks author both. The
+    result's `title` fields are report labels, never stored. A home without
+    a task queue is refused before anything is written."""
     if as_of is not None:
         # The miner reads CURRENT diary/evidence state only — there is no
         # anchored read path, so accepting as_of would serve HEAD wearing
@@ -326,6 +332,10 @@ def mine_candidates_pass(
             "mine_candidates_pass: the miner reads current state only — "
             "anchored audits are not supported (as_of must be None); "
             "sleep_pass skips the mining phase under an anchor")
+    if not report_only:
+        from .memory_tasks import require_task_queue
+
+        require_task_queue(system, "mine_candidates_pass")
     store, journal = system.store, system.journal
     cap = max(0, int(max_candidates))
 
@@ -423,9 +433,12 @@ def mine_candidates_pass(
                                    "title": title, "source_ids": sources,
                                    "created": False, "would_mint": True})
             return None
+        # The offer's title and summary are authored (operator rulings 2026-11-09): `title` is this pass's
+        # report label only; the composed offer text is the provisional body the queued tasks author from.
         candidate = MemoryRecordInput(
             kind="summary",
-            title=title,
+            title=None,
+            pending=("title", "summary"),
             digest=digest,
             edges=tuple(("summarizes", rid) for rid in sources),
             attributes={

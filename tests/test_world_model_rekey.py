@@ -343,12 +343,14 @@ def test_a_replay_is_unchanged_and_a_revert_refuses(home) -> None:
 
 def test_no_embedder_is_called_and_a_pending_authoring_survives(home) -> None:
     ids = _subject(home)
-    [task] = home.tasks.tasks(kind=("card.author",), target_id=ids["card"])
-    assert task["status"] == "pending"
+    # The card formed pending its authored title and summary (operator rulings 2026-11-09): both tasks wait.
+    tasks = home.tasks.tasks(kind=("title.author", "digest.author"), target_id=ids["card"])
+    assert sorted(t["kind"] for t in tasks) == ["digest.author", "title.author"]
+    assert {t["status"] for t in tasks} == {"pending"}
     home.emb.dead = True                     # the key is not in the canonical text: no embedder needed
     out = rekey_world_model(home, OLD, NEW, scope=SCOPE, owner_id=OWNER, author=REPAIRER, cause="repair")
     assert out["applied"] is True and out["vector_rewritten"] is False
-    assert home.tasks.task(task["task_id"])["status"] == "pending"
+    assert {home.tasks.task(t["task_id"])["status"] for t in tasks} == {"pending"}
 
 
 # --------------------------------------------------------------------------- the cause vocabulary

@@ -51,7 +51,7 @@ TUNING = SleepTuning(world_model_evidence_floor=3)
 
 @pytest.fixture()
 def system():
-    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), task_queue=True)
 
 
 def _seed(system, person: str, n: int, key: str, text: str = "archive work"):

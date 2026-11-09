@@ -47,7 +47,7 @@ SCOPES = [(SCOPE, OWNER)]
 
 @pytest.fixture()
 def system():
-    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), task_queue=True)
 
 
 def _row_id(system, graph_id: str) -> str:

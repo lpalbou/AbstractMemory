@@ -42,7 +42,7 @@ SCOPES = [(SCOPE, OWNER)]
 @pytest.fixture()
 def home(tmp_path):
     db = str(tmp_path / "memory.sqlite3")
-    system = MemorySystem(store=SQLiteTripleStore(db), journal=SQLiteJournal(db))
+    system = MemorySystem(store=SQLiteTripleStore(db), journal=SQLiteJournal(db), task_queue=True)
     return system, db, tmp_path
 
 

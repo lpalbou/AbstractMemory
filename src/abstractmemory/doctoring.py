@@ -73,6 +73,11 @@ __all__ = [
 # Phase 2 — wake-cue dedup
 # ---------------------------------------------------------------------------
 
+#: provenance.source of the day summaries this pass forms: the structural mark that one is THIS pass's own (it may
+#: adopt residuals) once its authored summary has replaced the mechanical-dedup-v1 label.
+DEDUP_SOURCE = "wake_cue_dedup"
+
+
 def wake_cue_dedup_pass(
     system: Any,
     *,
@@ -91,10 +96,12 @@ def wake_cue_dedup_pass(
     and a cluster only acts at `min_cluster`+ members — two similar
     episodes are a life, twenty near-identical ones are a loop artifact.
 
-    Each acted cluster forms ONE kind="summary" record: digest = the
-    cluster's LONGEST member digest (the most content-bearing witness —
-    mechanical, honestly labeled digest_method="mechanical-dedup-v1";
-    re-digestion can re-author it later), summarizes edges to every
+    Each acted cluster forms ONE kind="summary" record, PENDING its
+    authored title and summary (operator rulings 2026-11-09; a home without
+    a task queue is refused before anything is written): its provisional
+    body = the cluster's LONGEST member digest (the most content-bearing
+    witness — honestly labeled digest_method="mechanical-dedup-v1" until
+    the digest.author task writes the summary), summarizes edges to every
     member, participants = the union, keywords = the union (bounded),
     attributes.dedup_members + origin_date; then every member closes
     kind="supersede" with the summary as replacement.
@@ -106,6 +113,10 @@ def wake_cue_dedup_pass(
     author = str(actor or "").strip()
     if not author:
         raise ValueError("wake_cue_dedup_pass requires a non-empty actor")
+    if not report_only:
+        from .memory_tasks import require_task_queue
+
+        require_task_queue(system, "wake_cue_dedup_pass")
     if int(min_cluster) < 2:
         raise ValueError(
             f"wake_cue_dedup_pass: min_cluster must be >= 2 (got {min_cluster}) — "
@@ -127,8 +138,11 @@ def wake_cue_dedup_pass(
         attrs = a.attributes if isinstance(a.attributes, dict) else {}
         if attrs.get("record_edge") or attrs.get("bookkeeping"):
             continue
+        prov = a.provenance if isinstance(a.provenance, dict) else {}
         if (str(attrs.get("record_kind") or "") == "summary"
-                and str(attrs.get("digest_method") or "") == "mechanical-dedup-v1"):
+                and (str(attrs.get("digest_method") or "") == "mechanical-dedup-v1"
+                     # its authored summary replaced the label (rewrite_digest); the provenance stays the pass's
+                     or str(prov.get("source") or "") == DEDUP_SOURCE)):
             dedup_summaries.add(str(a.subject))
         if str(attrs.get("record_kind") or "") != kind:
             continue
@@ -262,10 +276,13 @@ def wake_cue_dedup_pass(
                     if k not in keywords and len(keywords) < 12:
                         keywords.append(k)
             idem = f"dedup|{scope}|{owner_id}|{day}|{member_ids[0]}"
+            # Title and summary authored (operator rulings 2026-11-09): formed pending, the witness's words its
+            # provisional body (a member's reading, not one standing for the day's group).
             [summary_gid] = system.remember_many(
                 [MemoryRecordInput(
                     kind="summary",
-                    title=f"Day {day}: {len(c)} near-identical {kind}s consolidated",
+                    title=None,
+                    pending=("title", "summary"),
                     digest=str(witness.object or ""),
                     keywords=tuple(keywords),
                     participants=tuple(participants),
@@ -275,7 +292,7 @@ def wake_cue_dedup_pass(
                         "dedup_members": len(c),
                         "origin_date": day,
                     },
-                    provenance={"actor": author, "source": "wake_cue_dedup"},
+                    provenance={"actor": author, "source": DEDUP_SOURCE},
                 )],
                 scope=scope, owner_id=owner_id, idempotency_key=idem,
             )

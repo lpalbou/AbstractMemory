@@ -45,7 +45,7 @@ TUNING = SleepTuning(world_model_evidence_floor=3)
 
 @pytest.fixture()
 def system():
-    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), task_queue=True)
 
 
 def _seed_ada(system, n: int = 3, key: str = "ada-days"):

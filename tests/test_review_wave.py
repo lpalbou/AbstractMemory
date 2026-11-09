@@ -53,7 +53,7 @@ LADDER = [(SCOPE, OWNER)]
 
 
 def _system(**kwargs) -> MemorySystem:
-    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), **kwargs)
+    return MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), **{"task_queue": True, **kwargs})
 
 
 def _form(system: MemorySystem, records, key: str):
