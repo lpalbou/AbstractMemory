@@ -50,6 +50,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from .canonical_text import record_title
+
 from .gradation import GradationConfig, compute_gradation
 from .journal import ValenceEvent
 from .models import TripleAssertion
@@ -97,7 +99,7 @@ def _row_brief(a: TripleAssertion, journal: Any) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "record_id": a.subject,
         "kind": attrs.get("record_kind"),
-        "title": str(attrs.get("title") or "").strip(),
+        "title": record_title(attrs),  # None = untitled (operator ruling 2026-11-09), never ""
         "statement": str(a.object or ""),
         "observed_at": a.observed_at,
     }
@@ -120,7 +122,7 @@ def _first_moment(what: str, row: TripleAssertion, journal: Any) -> Dict[str, An
     attrs = row.attributes if isinstance(row.attributes, dict) else {}
     return {
         "type": "first", "what": what, "record_id": row.subject,
-        "title": str(attrs.get("title") or "").strip(),
+        "title": record_title(attrs),
         "observed_at": row.observed_at,
         **_reading(row, journal),
     }

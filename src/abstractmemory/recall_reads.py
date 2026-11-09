@@ -45,6 +45,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from .canonical_text import record_title
+
 from .folds import binding_states, closure_exclusions
 from .store import TripleQuery
 
@@ -292,7 +294,7 @@ def _record_origin(store: Any, ids: Set[str]) -> Dict[str, Any]:
         "formed": True,
         "graph_id": str(digest.subject or ""),
         "kind": str(attrs.get("record_kind") or "memory"),
-        "title": str(attrs.get("title") or ""),
+        "title": record_title(attrs),  # None = untitled (never "")
         "formed_at": str(digest.observed_at or ""),
         "source": str(prov.get("source") or ""),
         "actor": str(prov.get("actor") or ""),

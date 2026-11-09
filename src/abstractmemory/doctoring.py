@@ -177,7 +177,7 @@ def wake_cue_dedup_pass(
     for day in sorted(by_day):
         members = sorted(by_day[day], key=lambda a: (str(a.observed_at), str(a.subject)))
         tokens = {a.subject: token_set(
-            f"{(a.attributes or {}).get('title', '')} {a.object}") for a in members}
+            f"{(a.attributes or {}).get('title') or ''} {a.object}") for a in members}  # NULL title: no "None" token
         # Greedy single-link clustering within the day.
         day_clusters: List[List[Any]] = []
         for a in members:

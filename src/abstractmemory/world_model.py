@@ -57,6 +57,7 @@ from .store import TripleQuery
 __all__ = [
     "author_world_model",
     "current_world_models",
+    "interest_target",
     "mention_orientation_cards",
     "standing_world_models",
     "world_model_pass",
@@ -287,6 +288,27 @@ def _interest_subject_head(text: str) -> str:
     return head if len(head) >= 4 else ""
 
 
+def interest_target(record_id: str, title: Optional[str]) -> str:
+    """The card key an ACTIVE interest elects ("" = it elects none).
+
+    A titled interest: `topic:<the subject head of its title>`
+    (`_interest_subject_head`; "" when the head is too short to name a
+    subject). An UNTITLED interest (operator ruling 2026-11-09, root backlog
+    1146: a title that failed at formation is stored NULL and logged at the
+    source, no fallback) keys on its own graph id: `topic:<record id>`. The
+    id is stable (a rewrite in place keeps it), structured, and none of his
+    words: the body is never cut into a key (this used to read the digest
+    when the title was empty). Once the interest is retitled its election
+    moves to the head key; `rekey_world_model` carries the standing card
+    there in place (the id key stays an alias), the same repair as any
+    retitled interest."""
+    if title is None or not str(title).strip():
+        rid = str(record_id or "").strip()
+        return f"topic:{rid}" if rid else ""
+    head = _interest_subject_head(str(title))
+    return f"topic:{head}" if head else ""
+
+
 def _revision_of(assertion: Any) -> int:
     """Tolerant revision read: malformed values sort as 0, never crash
     (a card is data; a bad attribute is a formation bug to surface via
@@ -407,17 +429,18 @@ def world_model_pass(
     # declared subject cards immediately — an election is worth more
     # than raw recurrence, and the card honestly says what it is built
     # from. Same-subject interests fold into one target (his rumination
-    # about continuity becomes ONE understanding, not twelve).
+    # about continuity becomes ONE understanding, not twelve). An untitled
+    # interest elects `topic:<its graph id>` (interest_target), never a
+    # head cut from its body.
     interest_evidence: Dict[str, List[str]] = {}
     if targets is None and int(scan_limit) == 0:
         for gid in sorted(evidence):
             r = evidence[gid]
             if r["kind"] != "interest":
                 continue
-            head = _interest_subject_head(r["title"] or r["digest"])
-            if not head:
+            target = interest_target(gid, r["title"])
+            if not target:
                 continue
-            target = f"topic:{head}"
             interest_evidence.setdefault(target, []).append(gid)
         for target, ids in sorted(interest_evidence.items()):
             merged_ids = sorted({*by_target.get(target, []), *ids})

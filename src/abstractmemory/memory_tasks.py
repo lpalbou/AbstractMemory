@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from . import activation_gate as gate
-from .canonical_text import token_estimate
+from .canonical_text import record_title, token_estimate
 
 __all__ = [
     "MemoryTaskQueue",
@@ -990,7 +990,7 @@ def task_packet(system: Any, task_id: str, *, token_budget: int = 56_000) -> Dic
             return {"record_id": str(s.subject), "kind": "diary", "redacted": True, "observed_at": s.observed_at,
                     "token_estimate": 0}
         return {"record_id": str(s.subject), "kind": str(attrs.get("record_kind") or ""),
-                "title": str(attrs.get("title") or ""), "digest": str(s.object or ""),
+                "title": record_title(attrs), "digest": str(s.object or ""),
                 "digest_method": str(attrs.get("digest_method") or ""), "observed_at": str(s.observed_at or ""),
                 "token_estimate": token_estimate(str(s.object or ""))}
 

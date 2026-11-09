@@ -430,10 +430,10 @@ class UnderstandingVersion:
     assertion_id: str                # the digest assertion id (usage keys on it; never changes)
     version: int
     field: str                       # digest | card | narration | title | target
-    text: str
+    text: Optional[str]              # None only on a `title` row of an untitled record (its title is NULL)
     scope: str
     owner_id: str = ""
-    title: str = ""
+    title: Optional[str] = None      # the record's title at this reading; None = untitled (never "")
     keywords: Tuple[str, ...] = ()
     digest_method: str = ""
     author: Dict[str, Any] = field(default_factory=dict)
@@ -459,8 +459,18 @@ class UnderstandingVersion:
             raise ValueError(f"UnderstandingVersion.field must be one of {sorted(VERSION_FIELDS)} (got {self.field!r})")
         if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 0:
             raise ValueError(f"UnderstandingVersion.version must be a non-negative int (got {self.version!r})")
-        if not isinstance(self.text, str):
-            raise ValueError("UnderstandingVersion.text must be a string")
+        # An untitled record (operator ruling 2026-11-09: its title is NULL, never "" and never a placeholder):
+        # its title rows hold text None (version 0 of a first retitle, or a revert to it) and every row's `title`
+        # is None. "" normalizes to None, so a row read back from a NOT NULL column round-trips.
+        if self.field == "title" and (self.text is None or (isinstance(self.text, str) and not self.text.strip())):
+            object.__setattr__(self, "text", None)
+        elif not isinstance(self.text, str):
+            raise ValueError("UnderstandingVersion.text must be a string (None only on a title row of an untitled "
+                             "record)")
+        if self.title is None or not str(self.title).strip():
+            object.__setattr__(self, "title", None)
+        else:
+            object.__setattr__(self, "title", str(self.title))
         object.__setattr__(self, "owner_id", str(self.owner_id or "").strip())
         object.__setattr__(self, "keywords", tuple(str(k) for k in (self.keywords or ()) if str(k or "").strip()))
         object.__setattr__(self, "derived_from", tuple(str(d) for d in (self.derived_from or ()) if str(d or "").strip()))

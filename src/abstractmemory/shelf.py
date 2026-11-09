@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Sequence
 
 from .canonical_text import display_title as _display_title
+from .canonical_text import record_title as _record_title
 from .canonical_text import short_title as _short_title
 from .canonical_text import token_estimate as _token_estimate
 from .channels import CHANNEL_ORDER
@@ -110,9 +111,14 @@ def build_handle(
     # v1 record enrichment (records.py): stored title beats the "s p o"
     # preview. A handle is a read-time view: its title is the compact form
     # (`short_title`, 120 chars); the stored title stays whole.
-    stored_title = attrs.get("title")
-    if isinstance(stored_title, str) and stored_title.strip():
-        title = _short_title(stored_title.strip())
+    # A formed record with no title (operator ruling 2026-11-09: a failed
+    # title is stored NULL) has handle title None, never its "s p o" preview
+    # (that would put its body's words where a title belongs).
+    stored_title = _record_title(attrs)
+    if stored_title is not None:
+        title = _short_title(stored_title)
+    elif isinstance(attrs.get("record_kind"), str) and attrs["record_kind"]:
+        title = None
     else:
         title = _short_title(_display_title(a))
     has_raw = isinstance(attrs.get("payload_ref"), str) and attrs["payload_ref"].strip()

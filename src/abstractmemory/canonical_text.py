@@ -22,6 +22,8 @@ ships pre-release with no stored spaces to migrate.)
 
 from __future__ import annotations
 
+from typing import Any, Mapping, Optional
+
 from .models import TripleAssertion
 
 # v3 (root ADR 0054, 2026-11-08: stored text is never cut): an ordinary
@@ -43,10 +45,25 @@ def display_title(a: TripleAssertion) -> str:
     return f"{a.subject} {a.predicate} {a.object}"
 
 
-def short_title(title: str, limit: int = _TITLE_MAX) -> str:
+def record_title(attrs: Mapping[str, Any]) -> Optional[str]:
+    """A formed record's stored title as a read serves it: the title, or None when the record has none.
+
+    An untitled record (operator ruling 2026-11-09, root backlog 1146: when the title the entity should have written
+    fails, the record is stored with its title NULL and the failure is logged at the source; no fallback) reads as
+    None on every surface, never as an empty string, a placeholder, or words taken from its body."""
+    raw = attrs.get("title") if isinstance(attrs, Mapping) else None
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def short_title(title: Optional[str], limit: int = _TITLE_MAX) -> Optional[str]:
     """A compact form of a title for a read-time view (never stored): at most `limit` characters, the cut shown
-    with a bare "…"."""
-    text = str(title or "")
+    with a bare "…". An untitled record (None, or a blank string) has no compact form: None."""
+    if title is None or not str(title).strip():
+        return None
+    text = str(title)
     if len(text) <= int(limit):
         return text
     return text[: max(1, int(limit)) - 1] + "…"  #[WARNING:TRUNCATION] read-time compact title; the stored title is whole

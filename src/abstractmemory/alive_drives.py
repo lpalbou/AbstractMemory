@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .canonical_text import record_title
+
 from .consolidation import unresolved_dreams
 from .diary import open_commitments, open_ideas, open_problems, open_questions
 from .store import TripleQuery
@@ -206,7 +208,7 @@ def alive_drives(
             "record_id": a.subject,
             "kind": str(attrs.get("record_kind") or ""),
             "drive": label,
-            "title": str(attrs.get("title") or "").strip(),
+            "title": record_title(attrs),
             "digest": digest,
             "born_at": str(a.observed_at or "")[:10] or None,
             "origin": _origin_of(a),
@@ -295,7 +297,7 @@ def alive_drives(
                 "record_id": a.subject,
                 "kind": str(attrs.get("record_kind") or ""),
                 "drive": label,
-                "title": str(attrs.get("title") or "").strip(),
+                "title": record_title(attrs),
                 "digest": digest,
                 "born_at": str(a.observed_at or "")[:10] or None,
                 "origin": _origin_of(a),

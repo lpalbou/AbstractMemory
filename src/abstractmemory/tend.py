@@ -65,6 +65,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from .canonical_text import record_title
+
 from .journal import utc_now_iso
 from .records import resolve_digest_assertion
 
@@ -546,7 +548,7 @@ def apply_tend_elections(
                 seed = {
                     "record_id": str(digest.assertion_id or target),
                     "graph_id": str(digest.subject or target),
-                    "title": str(attrs.get("title") or ""),
+                    "title": record_title(attrs),
                     "digest": payload.get("content"),
                     "kind": str(attrs.get("record_kind") or ""),
                     "scope": digest.scope, "owner_id": digest.owner_id or "",

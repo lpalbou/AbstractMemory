@@ -298,7 +298,7 @@ def row_to_version(r: sqlite3.Row) -> UnderstandingVersion:
         text=str(r["text"]),
         scope=str(r["scope"]),
         owner_id=str(r["owner_id"]),
-        title=str(r["title"]),
+        title=str(r["title"] or "") or None,  # "" on disk = an untitled record (NOT NULL column)
         keywords=_str_tuple(r["keywords_json"]),
         digest_method=str(r["digest_method"]),
         author=dict(_json_load(r["author_json"], {})),

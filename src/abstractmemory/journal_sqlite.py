@@ -565,7 +565,10 @@ class SQLiteJournal:
         self._insert(cur, self._t_versions, {
             "seq": stored.seq, "version_id": stored.version_id, "record_id": stored.record_id,
             "assertion_id": stored.assertion_id, "version": stored.version, "field": stored.field,
-            "text": stored.text, "title": stored.title, "keywords_json": _json_dump(list(stored.keywords)),
+            # The text/title columns are NOT NULL (schema since 0059): an untitled record's NULL title is stored as
+            # "" and reads back as None (UnderstandingVersion normalizes; a title is never the empty string).
+            "text": stored.text if stored.text is not None else "", "title": stored.title or "",
+            "keywords_json": _json_dump(list(stored.keywords)),
             "digest_method": stored.digest_method, "author_json": _json_dump(stored.author),
             "reader_json": _json_dump(stored.reader), "sources_json": _json_dump(list(stored.sources)),
             "derived_from_json": _json_dump(list(stored.derived_from)), "cause_json": _json_dump(stored.cause),

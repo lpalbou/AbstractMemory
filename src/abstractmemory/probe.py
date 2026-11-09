@@ -60,7 +60,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
-from .canonical_text import handle_digest, token_estimate
+from .canonical_text import handle_digest, record_title, token_estimate
 from .channels import (
     run_exact_channel,
     run_keyword_channel,
@@ -193,7 +193,7 @@ class ProbeHit:
 
     record_id: str
     graph_id: str
-    title: str
+    title: Optional[str]  # None = an untitled formed record (operator ruling 2026-11-09)
     digest: str
     scope: str
     owner_id: str
@@ -538,7 +538,7 @@ def probe(
         hits.append(ProbeHit(
             record_id=rid,
             graph_id=str(a.subject or ""),
-            title=str(attrs.get("title") or ""),
+            title=record_title(attrs),
             digest=digest,
             scope=a.scope,
             owner_id=a.owner_id or "",
@@ -993,7 +993,7 @@ def probe_expand(
         hits.append(ProbeHit(
             record_id=row_id,
             graph_id=gid,
-            title=str(attrs.get("title") or ""),
+            title=record_title(attrs),
             digest=digest,
             scope=a.scope,
             owner_id=a.owner_id or "",

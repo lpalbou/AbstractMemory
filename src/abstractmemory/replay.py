@@ -57,7 +57,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterator, Optional, Sequence
 
-from .canonical_text import handle_digest, token_estimate
+from .canonical_text import handle_digest, record_title, token_estimate
 from .records import resolve_digest_assertion
 
 __all__ = [
@@ -179,7 +179,12 @@ def _display_block(assertion: Any, requested_id: str,
             block["cause"] = reading["cause"]
         return block
     digest = handle_digest(assertion)
-    title = str(attrs.get("title") or "").strip() or f"{assertion.subject} {assertion.predicate}"
+    # A formed record's block carries its title, or None when it is untitled
+    # (operator ruling 2026-11-09: a failed title is stored NULL; no stand-in).
+    # A plain triple keeps its "s p" preview: it never had a title.
+    title = record_title(attrs)
+    if title is None and not attrs.get("record_kind"):
+        title = f"{assertion.subject} {assertion.predicate}"
     block: Dict[str, Any] = {
         "record_id": requested_id,
         "kind": str(attrs.get("record_kind") or "memory"),

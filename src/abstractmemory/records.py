@@ -52,6 +52,7 @@ __all__ = [
     "MEMORY_RECORD_KINDS",
     "MemoryRecordInput",
     "ReconstructConfig",
+    "TITLE_OPTIONAL_KINDS",
     "VALUE_CLASSES",
     "apply_formation_plan",
     "build_formation_plan",
@@ -187,6 +188,17 @@ LESSON_EVIDENCE_CLASSES = frozenset(
 INSTRUCTION_CATEGORIES = frozenset({"rule", "instruction", "process"})
 
 
+# Kinds that may be stored UNTITLED (operator ruling 2026-11-09, root backlog
+# 1146: "we shouldn't need a fallback; if the title fails, add information to
+# a temporary error file in untracked/ so we know what's failing and fix it at
+# the source"). These are the records the runtime forms from the entity's own
+# election blocks (the block's `title:` line; a diary entry's `gist:` line):
+# when that line is missing or unusable the record is formed with its title
+# NULL and the runtime logs the failure — never a placeholder, never words cut
+# from the body. "" normalizes to None. Every other kind still requires a title.
+TITLE_OPTIONAL_KINDS = frozenset({"interest", "lesson", "realization", "observation", "diary"})
+
+
 def _str_tuple(values: Any) -> Tuple[str, ...]:
     return tuple(str(v).strip() for v in (values or ()) if str(v or "").strip())
 
@@ -197,10 +209,12 @@ class MemoryRecordInput:
     input). JSON-safe via dataclasses.asdict (tuples serialize as lists).
     The digest is the 1-3 sentence orientation text that gets embedded/
     indexed; intents/outcomes/keywords are the fork's selection metadata;
-    edges link to EXISTING record ids ((relation, target_record_id))."""
+    edges link to EXISTING record ids ((relation, target_record_id)).
+    `title` is required except for `TITLE_OPTIONAL_KINDS`, where None (or "",
+    normalized to None) stores an untitled record."""
 
     kind: str
-    title: str
+    title: Optional[str]
     digest: str
     intents: Tuple[str, ...] = ()
     outcomes: Tuple[str, ...] = ()
@@ -226,11 +240,16 @@ class MemoryRecordInput:
         if kind not in MEMORY_RECORD_KINDS:
             raise ValueError(f"Unknown record kind {self.kind!r} (known: {sorted(MEMORY_RECORD_KINDS)})")
         object.__setattr__(self, "kind", kind)
-        for name in ("title", "digest"):
-            value = str(getattr(self, name) or "").strip()
-            if not value:
-                raise ValueError(f"MemoryRecordInput.{name} must be a non-empty string ({kind!r} record)")
-            object.__setattr__(self, name, value)
+        digest = str(self.digest or "").strip()
+        if not digest:
+            raise ValueError(f"MemoryRecordInput.digest must be a non-empty string ({kind!r} record)")
+        object.__setattr__(self, "digest", digest)
+        title = str(self.title).strip() if self.title is not None else ""
+        if not title and kind not in TITLE_OPTIONAL_KINDS:
+            raise ValueError(
+                f"MemoryRecordInput.title must be a non-empty string ({kind!r} record; only "
+                f"{sorted(TITLE_OPTIONAL_KINDS)} may be formed untitled)")
+        object.__setattr__(self, "title", title or None)
         object.__setattr__(self, "intents", _str_tuple(self.intents))
         object.__setattr__(self, "outcomes", _str_tuple(self.outcomes))
         object.__setattr__(self, "keywords", _str_tuple(self.keywords))

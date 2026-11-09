@@ -269,7 +269,7 @@ class MemoryHandle:
 
     record_id: str
     kind: str
-    title: str
+    title: Optional[str]          # None = an untitled formed record (operator ruling 2026-11-09), never ""
     digest: str
     token_estimate: int
     relevance: Dict[str, float]   # {"exact": x, "keyword": y, "vector": z} (present channels only)

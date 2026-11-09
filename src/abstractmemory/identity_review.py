@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .canonical_text import record_title
+
 from .folds import binding_states, closure_exclusions
 from .store import TripleQuery
 
@@ -139,7 +141,7 @@ def identity_review_pass(
             bars_failing += 1
         entry: Dict[str, Any] = {
             "record_id": rid,
-            "title": str(attrs.get("title") or ""),
+            "title": record_title(attrs),
             "formed_at": str(a.observed_at or ""),
             "evidence": {"unit": "records", "total": len(evidence_edges),
                          "alive": alive},

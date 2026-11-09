@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .canonical_text import handle_digest
+from .canonical_text import handle_digest, record_title
 from .folds import binding_states, closure_exclusions
 from .store import TripleQuery
 
@@ -115,7 +115,7 @@ def recent_records(
                 "record_id": rid,
                 "graph_id": str(a.subject or ""),
                 "kind": kind,
-                "title": str(attrs.get("title") or "").strip(),
+                "title": record_title(attrs),  # None = untitled (never "")
                 "digest": handle_digest(a),
                 "observed_at": str(a.observed_at or ""),
                 "scope": a.scope,

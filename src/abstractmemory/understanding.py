@@ -34,7 +34,9 @@ title (rewrite_digest's `title=`, a revert) writes its title version in the same
 `versions(record_id, field="title")` lists every title the record has held. The diary rule here concerns the body:
 a diary entry's words are read through the book, its replay block is redacted, and the opt-in `revision` envelopes
 of its title versions are sealed the same way (replay.py); a retitle reads nothing back. An entry carrying an
-`entry_hash` (an owner-direct chained diary) refuses: its title is part of the attested hash.
+`entry_hash` (an owner-direct chained diary) refuses: its title is part of the attested hash. An UNTITLED record
+(`records.TITLE_OPTIONAL_KINDS`, operator ruling 2026-11-09: a title that failed at formation is stored NULL and
+logged at the source, no fallback) is retitled like any other: its title version 0 is None.
 
 A CARD'S KEY (`attributes.target`) is moved alone by `world_model_alias.rekey_world_model` through
 `rekey_card_in_place` (operator 2026-11-08: an interest's card is keyed on its title's subject head, so a retitled
@@ -62,7 +64,7 @@ import os
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-from .canonical_text import canonical_text
+from .canonical_text import canonical_text, record_title
 from .journal import UnderstandingVersion, VERSION_FIELDS, utc_now_iso
 from .records import resolve_digest_assertion
 
@@ -237,8 +239,9 @@ def _version_attr(field: str) -> str:
             "target": "target_version"}.get(field, "digest_version")
 
 
-def _title(attrs: Mapping[str, Any]) -> str:
-    return str(attrs.get("title") or "")
+def _title(attrs: Mapping[str, Any]) -> Optional[str]:
+    """The record's title, None when it is untitled (operator ruling 2026-11-09: a failed title is stored NULL)."""
+    return record_title(attrs)
 
 
 def _current_version(attrs: Mapping[str, Any], field: str) -> int:
@@ -591,7 +594,7 @@ def _version_zero(a: Any, field: str) -> UnderstandingVersion:
     return UnderstandingVersion(
         record_id=str(a.subject), assertion_id=str(a.assertion_id), version=0, field=field,
         text=str(a.object or ""), scope=str(a.scope), owner_id=str(a.owner_id or ""),
-        title=str(attrs.get("title") or ""), keywords=tuple(attrs.get("keywords") or ()),
+        title=record_title(attrs), keywords=tuple(attrs.get("keywords") or ()),
         digest_method=str(attrs.get("digest_method") or ""), author=reading["author"], reader=reading["reader"],
         cause={"cause": reading["cause"] or "formation", "formation_provenance": _json_safe(provenance, "provenance")},
         understood_at=reading["understood_at"] or str(a.observed_at or ""),
@@ -605,7 +608,8 @@ def _understanding_attr(n: int, field: str, author: Dict[str, Any], reader: Dict
             "sources": list(sources), "derived_from": list(derived_from), "understood_at": at}
 
 
-def _version_row(a: Any, n: int, *, field: str, text: str, title: str, keywords: Sequence[str], digest_method: str,
+def _version_row(a: Any, n: int, *, field: str, text: Optional[str], title: Optional[str], keywords: Sequence[str],
+                 digest_method: str,
                  author: Dict[str, Any], reader: Dict[str, Any], sources: Tuple[Dict[str, Any], ...],
                  derived_from: Tuple[str, ...], cause: Dict[str, Any], magnitude: Mapping[str, Any],
                  task_id: str, at: str) -> UnderstandingVersion:
@@ -618,10 +622,11 @@ def _version_row(a: Any, n: int, *, field: str, text: str, title: str, keywords:
     )
 
 
-def _title_version_row(a: Any, n: int, *, title: str, author: Dict[str, Any], reader: Dict[str, Any],
+def _title_version_row(a: Any, n: int, *, title: Optional[str], author: Dict[str, Any], reader: Dict[str, Any],
                        sources: Sequence[Dict[str, Any]], cause: Dict[str, Any], task_id: str, at: str,
                        method: str) -> UnderstandingVersion:
-    """One title version: the title is the row's `text` (and its `title`); keywords are the record's."""
+    """One title version: the title is the row's `text` (and its `title`); keywords are the record's. An untitled
+    record's title row holds None (version 0 of its first retitle, or a revert to that version)."""
     return _version_row(a, n, field="title", text=title, title=title, keywords=tuple(_attrs(a).get("keywords") or ()),
                         digest_method=method, author=dict(author), reader=dict(reader), sources=tuple(sources),
                         derived_from=(), cause=dict(cause), magnitude={}, task_id=task_id, at=at)
@@ -728,7 +733,7 @@ def rewrite_digest(
     if closures:
         return _refusal("closed", f"the record is closed ({closures[0].kind}); rewrite its current replacement",
                         replaced_by=_replaced_by(closures), **base)
-    new_title = str(title).strip() if title is not None and str(title).strip() else str(attrs.get("title") or "")
+    new_title = str(title).strip() if title is not None and str(title).strip() else record_title(attrs)
     new_keywords = [str(k).strip() for k in keywords if str(k or "").strip()] if keywords is not None else list(
         attrs.get("keywords") or ())
     at = str(understood_at or "").strip() or utc_now_iso()
@@ -778,10 +783,12 @@ def retitle(
     keyword-index entry and the vector are replaced in the same transaction, like `rewrite_digest`. The title is
     stored exactly as given (stripped), never cut. `expected_version` is the compare-and-set on `title_version` (0
     for a record never retitled). The first retitle captures version 0 (the title the record held, with the
-    provenance of the reading that wrote it). Returns the `rewrite_digest` result shape with `field="title"`;
-    `outcome="unchanged"` (no version) when the title is already the current one. Refusal reasons (nothing
-    written): `unknown_record`, `empty_title`, `hash_chained` (an owner-direct diary entry whose `entry_hash`
-    attests its title), `closed`, `stale`, `embedder_unavailable`. Invalid arguments raise ValueError, as in
+    provenance of the reading that wrote it). An UNTITLED record (its title failed at formation and was stored NULL,
+    operator ruling 2026-11-09) is retitled like any other: version 0 holds None (text and title), version 1 the
+    authored title; reverting to version 0 makes it untitled again. Returns the `rewrite_digest` result shape with
+    `field="title"`; `outcome="unchanged"` (no version) when the title is already the current one. Refusal reasons
+    (nothing written): `unknown_record`, `empty_title`, `hash_chained` (an owner-direct diary entry whose
+    `entry_hash` attests its title), `closed`, `stale`, `embedder_unavailable`. Invalid arguments raise ValueError, as in
     `rewrite_digest`.
     """
     author_d = _author(author)
@@ -808,7 +815,7 @@ def retitle(
                           expected=int(expected_version), method=RETITLE_METHOD, hooks=_hooks, after=_after)
 
 
-def _retitle_apply(system: Any, a: Any, words: str, author_d: Dict[str, Any], reader_d: Dict[str, Any],
+def _retitle_apply(system: Any, a: Any, words: Optional[str], author_d: Dict[str, Any], reader_d: Dict[str, Any],
                    sources_t: Sequence[Dict[str, Any]], cause_d: Dict[str, Any], *, task_id: str, at: str,
                    expected: int, method: str, hooks: Sequence[Callable[[Any], None]] = (),
                    after: Sequence[Callable[[Dict[str, Any]], None]] = ()) -> Dict[str, Any]:
@@ -869,7 +876,7 @@ def narrate_dream(
         return out
 
     def version(rec: Any, n: int) -> UnderstandingVersion:
-        return _version_row(rec, n, field="narration", text=words, title=str(_attrs(rec).get("title") or ""),
+        return _version_row(rec, n, field="narration", text=words, title=record_title(_attrs(rec)),
                             keywords=(), digest_method="narration", author=author_d, reader=reader_d,
                             sources=sources_t, derived_from=(), cause=cause_d, magnitude={}, task_id=tid, at=at)
 
@@ -1022,7 +1029,7 @@ def author_card_in_place(
         return out
 
     def version(rec: Any, n: int) -> UnderstandingVersion:
-        return _version_row(rec, n, field="card", text=words, title=str(_attrs(rec).get("title") or ""),
+        return _version_row(rec, n, field="card", text=words, title=record_title(_attrs(rec)),
                             keywords=tuple(_attrs(rec).get("keywords") or ()), digest_method="authored-card-v1",
                             author=author_d, reader=reader_d, sources=sources_t, derived_from=tuple(known),
                             cause=cause_d, magnitude={}, task_id=tid, at=at)
@@ -1199,7 +1206,7 @@ def record_understanding(system: Any, record_id: str) -> Dict[str, Any]:
     replaced = _replaced_by(closures)
     out: Dict[str, Any] = {
         "record_id": str(record_id), "graph_id": str(a.subject), "assertion_id": str(a.assertion_id or ""),
-        "kind": kind, "title": str(attrs.get("title") or ""), "digest": str(a.object or ""),
+        "kind": kind, "title": record_title(attrs), "digest": str(a.object or ""),
         "keywords": list(attrs.get("keywords") or ()), "payload_ref": attrs.get("payload_ref"),
         "observed_at": str(a.observed_at or ""), "closed": closures[0].kind if closures else None,
     }

@@ -85,6 +85,25 @@ A record's understanding can be rewritten in place, and every earlier reading is
 
 ### Changed
 
+- **Untitled records** (operator ruling 2026-11-09, root backlog 1146: "we shouldn't need a fallback; if the title
+  fails, add information to a temporary error file in untracked/ so we know what's failing and fix it at the
+  source"). `MemoryRecordInput` accepts `title=None` for the kinds the runtime forms from the entity's own election
+  blocks, `TITLE_OPTIONAL_KINDS` (interest, lesson, realization, observation, and every diary entry kind); `""` and
+  whitespace become `None`, and the record stores `attributes.title = None`. Every other kind still refuses an empty
+  title. Every read serves the absent title as `None`, never `""`, a placeholder or words from the body: recall
+  handles (`MemoryHandle.title` is `Optional[str]`; a formed record no longer falls back to its "s p o" preview),
+  replay display blocks, `record_understanding`, `recent_records`, `explain_recall`'s origin, the identity card's
+  briefs, `alive_drives`, the identity review, probe hits, situate rows, task-queue items and tend seeds;
+  `short_title(None)` is `None`. The canonical text (keyword index, FTS, vector) is the body alone. An untitled
+  interest's world-model card is keyed `topic:<the interest's graph id>` (new `world_model.interest_target`): the
+  id is stable and none of his words, where the pass used to read the digest when the title was empty; once the
+  interest is retitled its election moves to the title's subject head, and `rekey_world_model` carries the card
+  there. The candidate miner lets an untitled interest own no theme, and an interest offer's "(e.g. ...)" example
+  quotes the first titled evidence record (none: no example). `retitle` of an untitled record is an ordinary
+  retitle: title version 0 holds `None` (`UnderstandingVersion.text` and `.title` are `None` there; the SQLite
+  journal's NOT NULL columns store `""` and read it back as `None`), and reverting to version 0 makes it untitled
+  again. The wake-cue dedup pass no longer tokenizes a missing title as "None". `tests/test_untitled_records.py`
+  (101 cases, both substrate pairs; 12 mutants red).
 - `world_model_pass`: an interest whose title heads to an alias of a card counts as an election of the card's
   primary key (it keeps clearing the evidence floor there), as its evidence already did.
 - `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is

@@ -67,7 +67,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .attention import AttentionConfig
-from .canonical_text import handle_digest, token_estimate
+from .canonical_text import handle_digest, record_title, token_estimate
 from .folds import activation_inputs, closure_exclusions
 from .records import ReconstructConfig
 from .store import TripleQuery
@@ -166,7 +166,7 @@ def _historical_handle(assertion: Any, config: ReconstructConfig) -> Dict[str, A
         "record_id": str(assertion.assertion_id or ""),
         "graph_id": str(assertion.subject or ""),
         "kind": config.kind_of(assertion),
-        "title": str(attrs.get("title") or ""),
+        "title": record_title(attrs),
         "digest": digest,
         "observed_at": str(assertion.observed_at or ""),
         "token_estimate": token_estimate(digest),

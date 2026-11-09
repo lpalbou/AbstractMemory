@@ -373,7 +373,12 @@ def mine_candidates_pass(
             if kind == "interest":
                 if lifecycle_of.get(a.subject, "") in _CLOSED_INTEREST_LIFECYCLES:
                     continue  # a parked interest does not own its theme
-                head = _interest_subject_head(str(attrs.get("title") or a.object or ""))
+                # An untitled interest (title NULL, operator ruling 2026-11-09)
+                # declares no theme in words: it owns none (its card key is
+                # its graph id, world_model.interest_target), and its body is
+                # never cut into a head.
+                title = str(attrs.get("title") or "").strip()
+                head = _interest_subject_head(title) if title else ""
                 if head:
                     standing_interest_heads.add(head)
             elif kind == "lesson":
@@ -588,10 +593,13 @@ def mine_candidates_pass(
                  "title": f"Interest candidate: {theme}",  # whole (ADR 0054)
                  "sessions": n_sessions}
         out["interest_candidates"].append(entry)
-        example = evidence[rids[0]]["title"] if rids else ""
+        # The example is the first TITLED evidence record (an untitled one has
+        # no title to quote, operator ruling 2026-11-09); none titled: no example.
+        example = next((evidence[r]["title"] for r in rids if evidence[r]["title"]), "")
+        example_clause = f" (e.g. {example!r})" if example else ""
         digest = (
-            f"You returned to {theme!r} across {n_sessions} distinct sessions "
-            f"(e.g. {example!r}) without electing it as an interest. This "
+            f"You returned to {theme!r} across {n_sessions} distinct sessions"
+            f"{example_clause} without electing it as an interest. This "
             "candidate stands for review: adopting it mints the interest in "
             "your own words; rejecting it is an honest no.")
         _mint("interest",
