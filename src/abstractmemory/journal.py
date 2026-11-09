@@ -411,8 +411,10 @@ class ValenceEvent:
 #: `attributes.target` (`world_model_alias.rekey_world_model`), whose version row holds the key as its `text`; a
 #: `pending` row is a declaration that a stored record's title and/or summary is still being written
 #: (`understanding.declare_pending`), whose `text` names the fields it declared ("title, summary") and whose cause
-#: carries its provenance (cause, reason, the tasks it queued, the reading it made provisional). A declaration is
-#: never a reading: it is not reverted, and the reading it made provisional is never restored.
+#: carries its provenance (cause, reason, the tasks it queued, the reading it made provisional); a re-arm
+#: (`understanding.rearm_pending`: fresh tasks for a pending field whose tasks all ran out) is a `pending` row too,
+#: its cause carrying `rearmed` and the exhausted tasks. A declaration is never a reading: it is not reverted, and
+#: the reading it made provisional is never restored.
 VERSION_FIELDS = frozenset({"digest", "card", "narration", "title", "target", "pending"})
 
 

@@ -15,8 +15,9 @@ __all__ = ["UnderstandingOps"]
 
 
 class UnderstandingOps:
-    """rewrite_digest / retitle / declare_pending / rekey_world_model / narrate_dream / revert_digest / versions /
-    current_of / record_understanding, and the queue reads understanding_debt / enqueue_debt / task_packet (0060)."""
+    """rewrite_digest / retitle / declare_pending / rearm_pending / rekey_world_model / narrate_dream / revert_digest /
+    versions / current_of / record_understanding, and the queue reads understanding_debt / enqueue_debt /
+    pending_records / task_packet (0060)."""
 
     def rewrite_digest(
         self, record_id: str, *, text: str, author: Mapping[str, Any],
@@ -51,6 +52,13 @@ class UnderstandingOps:
         """Declare a stored record's title and/or summary still being written: formation's marker and authoring
         tasks, in one transaction (understanding.declare_pending)."""
         return _u.declare_pending(self, record_id, fields=fields, cause=cause, reason=reason)
+
+    def rearm_pending(
+        self, record_id: str, *, cause: Union[str, Mapping[str, Any]] = "repair", reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Re-arm a pending record whose authoring ran out (a pending field with no live task): fresh formation
+        tasks, the marker kept, in one transaction (understanding.rearm_pending)."""
+        return _u.rearm_pending(self, record_id, cause=cause, reason=reason)
 
     def rekey_world_model(
         self, old_key: str, new_key: str, *, scope: str, owner_id: str, author: Mapping[str, Any],
@@ -111,6 +119,14 @@ class UnderstandingOps:
 
         return enqueue_debt(self, scopes=scopes, cause=cause, priority=priority, dry_run=dry_run,
                             methods=methods, kinds=kinds)
+
+    def pending_records(self, *, scopes: Optional[Sequence[Any]] = None,
+                        live_task: Optional[bool] = False) -> List[Dict[str, Any]]:
+        """The records still marked pending; by default those with a pending field no live task owns, the ones
+        `rearm_pending` re-arms (memory_tasks.pending_records)."""
+        from .memory_tasks import pending_records
+
+        return pending_records(self, scopes=scopes, live_task=live_task)
 
     # -- the ripple (0061) ---------------------------------------------------------------------------------------
 

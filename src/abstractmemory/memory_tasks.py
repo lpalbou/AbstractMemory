@@ -59,6 +59,7 @@ __all__ = [
     "TASK_STATUSES",
     "WINDOWS",
     "enqueue_debt",
+    "pending_records",
     "task_id_for",
     "task_packet",
     "understanding_debt",
@@ -886,13 +887,15 @@ def plan_declared(system: Any, queue: "MemoryTaskQueue", a: Any, fields: Sequenc
 
 def enqueue_declared(queue: "MemoryTaskQueue", a: Any, plan: Mapping[str, Mapping[str, Any]], *,
                      cause: Mapping[str, Any], body_kind: str, _cur: Optional[sqlite3.Cursor] = None,
-                     ) -> Dict[str, List[str]]:
-    """`declare_pending`'s enqueue, on its transaction (SQLite) or right after its write (in-memory): per declared
-    field the task `plan_declared` named, with formation's parameters (`FORMATION_PRIORITY`, `FORMATION_STRENGTH`,
-    capability summaries); its cause is the declaration's ({cause, pending: <field>, declared: true, reason?}). A
+                     stamp: Optional[Mapping[str, Any]] = None) -> Dict[str, List[str]]:
+    """`declare_pending`'s enqueue (and `rearm_pending`'s), on its transaction (SQLite) or right after its write
+    (in-memory): per declared field the task `plan_declared` named, with formation's parameters
+    (`FORMATION_PRIORITY`, `FORMATION_STRENGTH`, capability summaries); its cause is the declaration's ({cause,
+    pending: <field>, declared: true, reason?}; `stamp` replaces {declared: true}, e.g. a re-arm's {rearmed: n}). A
     declared summary supersedes the record's live body task (`digest.rewrite`, a card's `card.author`): a pending
     summary's `digest.author` task owns the body, as at formation. Returns {enqueued, adopted, superseded}."""
     out: Dict[str, List[str]] = {"enqueued": [], "adopted": [], "superseded": []}
+    mark = {"declared": True} if stamp is None else dict(stamp)
     for fld, p in plan.items():
         if p["live"]:
             out["adopted"].append(str(p["task_id"]))
@@ -900,7 +903,7 @@ def enqueue_declared(queue: "MemoryTaskQueue", a: Any, plan: Mapping[str, Mappin
         res = queue.enqueue(
             str(p["kind"]), str(a.subject), scope=str(a.scope), owner_id=str(a.owner_id or ""),
             assertion_id=str(a.assertion_id or ""), basis=str(p["basis"]), basis_version=0,
-            strength=gate.FORMATION_STRENGTH, cause={**dict(cause), "pending": fld, "declared": True},
+            strength=gate.FORMATION_STRENGTH, cause={**dict(cause), "pending": fld, **mark},
             priority=FORMATION_PRIORITY, cost_hint=p["cost_hint"], _cur=_cur)
         out["enqueued" if res["enqueued"] else "adopted"].append(str(res["task_id"]))
     if "summary" in plan:
@@ -956,14 +959,15 @@ def enqueue_dream(system: Any, dream_id: str, *, scope: str, owner_id: str, sali
 # --------------------------------------------------------------------------- debt and backfill
 
 
-def _formed_rows(system: Any, scopes: Sequence[Tuple[str, str]]) -> List[Any]:
+def _formed_rows(system: Any, scopes: Optional[Sequence[Tuple[str, str]]]) -> List[Any]:
+    """The live (unclosed) formed records of these (scope, owner) homes; `scopes` None = every scope."""
     from .folds import closure_exclusions
     from .store import TripleQuery
 
     closed = closure_exclusions(system.journal, system.journal.current_seq())
     rows = []
     seen = set()
-    for scope, owner in scopes:
+    for scope, owner in (scopes if scopes is not None else [(None, None)]):
         for a in system.store.query(TripleQuery(scope=scope, owner_id=owner or None, limit=0)):
             attrs = a.attributes if isinstance(a.attributes, dict) else {}
             if not attrs.get("record_kind") or attrs.get("record_edge") or attrs.get("bookkeeping"):
@@ -1042,6 +1046,50 @@ def understanding_debt(system: Any, *, scopes: Sequence[Tuple[str, str]],
         if oldest:
             out["oldest_pending"] = {k: oldest[0][k] for k in ("task_id", "kind", "target_id", "enqueued_at")}
     return out
+
+
+def live_pending_tasks(queue: Optional["MemoryTaskQueue"], record_id: str,
+                       fields: Sequence[str]) -> Dict[str, Optional[str]]:
+    """{field: the oldest LIVE (pending / deferred / leased) authoring task of that pending field on the record, or
+    None}: whatever its basis (formation's, a declaration's, a re-arm's)."""
+    from .records import PENDING_TASK_KINDS
+
+    out: Dict[str, Optional[str]] = {}
+    for fld in fields:
+        live = [] if queue is None else queue.tasks(status=tuple(LIVE), kind=(PENDING_TASK_KINDS[fld],),
+                                                    target_id=str(record_id))
+        out[fld] = str(live[0]["task_id"]) if live else None
+    return out
+
+
+def pending_records(system: Any, *, scopes: Optional[Sequence[Tuple[str, str]]] = None,
+                    live_task: Optional[bool] = False) -> List[Dict[str, Any]]:
+    """The records still marked pending (`attributes.pending` says a title and/or summary is still being written),
+    PURE READ, closed records left out; `scopes` [(scope, owner_id)] or None = every scope. The sleep's repair finds
+    in one call the records `rearm_pending` would re-arm: a pending field with NO live authoring task (every task
+    it had failed after `max_attempts` claims, or was skipped / superseded), which would otherwise stay pending
+    forever. `live_task`: False (default) = those records (a pending field without a live task); True = the records
+    whose every pending field has a live task; None = every pending record.
+
+    Each item: {record_id, assertion_id, record_kind, scope, owner_id, pending (the marker), fields (the pending
+    fields), live {field: task id | None}, unowned (the pending fields with no live task), rearmed (how many times
+    re-armed)}, oldest marker first (`since`, then record id)."""
+    queue: Optional[MemoryTaskQueue] = getattr(system, "tasks", None)
+    out: List[Dict[str, Any]] = []
+    for a in _formed_rows(system, scopes):
+        marker = _pending_marker(dict(a.attributes))
+        fields = [f for f in ("title", "summary") if marker.get(f)]
+        if not fields:
+            continue
+        live = live_pending_tasks(queue, str(a.subject), fields)
+        unowned = [f for f in fields if live[f] is None]
+        if live_task is not None and bool(unowned) == bool(live_task):
+            continue
+        out.append({"record_id": str(a.subject), "assertion_id": str(a.assertion_id or ""),
+                    "record_kind": str(a.attributes.get("record_kind") or ""), "scope": str(a.scope),
+                    "owner_id": str(a.owner_id or ""), "pending": marker, "fields": fields, "live": live,
+                    "unowned": unowned, "rearmed": int(marker.get("rearmed") or 0)})
+    return sorted(out, key=lambda r: (str(r["pending"].get("since") or ""), r["record_id"]))
 
 
 def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str = "backfill",

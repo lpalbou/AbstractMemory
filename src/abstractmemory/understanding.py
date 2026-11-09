@@ -45,7 +45,9 @@ version that held none is refused. The one door back to pending is `declare_pend
 or summary was never authored (a legacy card or dream, a placeholder title): it sets the same marker and queues the
 same tasks as formation in one transaction, a declared title is stored None (its old title kept as a version), and the
 journal keeps the declaration as a version row (field `pending`); the drainer then completes it like any pending
-record.
+record. A pending record whose authoring ran out (every task of a pending field failed after `max_attempts`, or was
+skipped) is re-armed by `rearm_pending`: fresh formation tasks, the marker kept (its `rearmed` count), a `pending`
+version row; `memory_tasks.pending_records` finds them.
 
 A CARD'S KEY (`attributes.target`) is moved alone by `world_model_alias.rekey_world_model` through
 `rekey_card_in_place` (operator 2026-11-08: an interest's card is keyed on its title's subject head, so a retitled
@@ -82,6 +84,7 @@ __all__ = [
     "DECLARE_PENDING_METHOD",
     "DEFAULT_AUTHORED_METHOD",
     "ENTITY_WORDS_KINDS",
+    "REARM_PENDING_METHOD",
     "REKEY_METHOD",
     "REWRITE_CAUSES",
     "RETITLE_METHOD",
@@ -92,6 +95,7 @@ __all__ = [
     "formation_understanding",
     "narrate_dream",
     "reading_provenance",
+    "rearm_pending",
     "record_understanding",
     "retitle",
     "revert_digest",
@@ -144,6 +148,10 @@ DECLARE_PENDING_METHOD = "declare-pending-v1"
 
 #: Who writes a declaration: the verb itself, a mechanical act (the caller's reason and identity ride the cause).
 DECLARER: Mapping[str, str] = {"kind": "mechanical", "id": "declare_pending"}
+
+#: The method label of a re-arm's version row (field `pending`, `rearm_pending`), and who writes it.
+REARM_PENDING_METHOD = "rearm-pending-v1"
+REARMER: Mapping[str, str] = {"kind": "mechanical", "id": "rearm_pending"}
 
 #: The card floor's mechanical label (world_model.py): the cards the task queue owes authored words.
 MECHANICAL_CARD_METHODS = frozenset({"mechanical-card-v2"})
@@ -1133,6 +1141,115 @@ def _rekey_declared_interest_card(system: Any, a: Any, old_title: str,
                                  reason="the interest's title was declared pending")
                for scope, owner in homes]
     return results[0] if len(results) == 1 else {"results": results}
+
+
+def rearm_pending(
+    system: Any, record_id: str, *,
+    cause: Union[str, Mapping[str, Any]] = "repair",
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Re-arm a pending record whose authoring ran out: a field its marker says is pending but that has NO live
+    (pending / deferred / leased) `title.author` / `digest.author` task, because every task it had failed after
+    `max_attempts` claims, was skipped or superseded, gets a fresh one (operator rule 2026-11-09: "title + summary
+    must ALWAYS exist"; a record pending with only terminal tasks would stay pending forever, and `declare_pending`
+    answers it `already_pending`). Formation's task exactly (`plan_declared` / `enqueue_declared`: same kind,
+    capability `summaries`, `FORMATION_PRIORITY`, `FORMATION_STRENGTH`, basis_version 0, the next free basis
+    `<assertion id>@pending-<field>@<k>`; cause {cause, reason?, pending: <field>, rearmed: n}), queued in the same
+    transaction as the marker (SQLite home). A field that still has a live task keeps it (listed in `live`).
+
+    The marker stays (the title stays None, the body provisional; no embedder call): `attempts` restarts at the
+    highest claim count of its live tasks (0 for the fresh ones), `rearmed` counts the re-arms and
+    `last_rearmed_at` is now; `since` is kept. The journal keeps the re-arm as a version row of field `pending`
+    (text = the fields re-armed, author `REARMER`, method `REARM_PENDING_METHOD`, cause {cause, reason?, rearmed: n,
+    pending: [fields], tasks: {field: task id}, attempts_before, exhausted: {field: [{task_id, status, attempts,
+    max_attempts, error}]}, live?}); the opt-in replay family `revision` shows it. The drainer then completes the
+    fresh tasks with `retitle` / `rewrite_digest` exactly as for a record formed pending.
+
+    Returns {applied, outcome: rearmed | unchanged | refused, reason, detail?, record_id, assertion_id,
+    field: "pending", tasks {field: task id}, rearmed (the marker's re-arm count), pending (the marker), live
+    {field: task id}, enqueued, superseded, exhausted, version?, seq?, version_id?}. Unchanged (nothing written):
+    `not_pending` (no pending marker), `live_task` (every pending field has a live task; `tasks` names them).
+    Refusals (nothing written): `unknown_record`, `no_task_queue`, `closed` (with `replaced_by`), `stale`. A cause
+    outside `REWRITE_CAUSES` raises ValueError."""
+    from .memory_tasks import enqueue_declared, live_pending_tasks, plan_declared
+
+    cause_d = _cause(cause)
+    why = str(reason or "").strip()
+    if why:
+        cause_d["reason"] = why
+    a = _resolve(system, record_id)
+    if a is None:
+        return _refusal("unknown_record", f"no formed record {record_id!r} in this store", record_id=str(record_id))
+    attrs = _attrs(a)
+    kind = str(attrs.get("record_kind") or "").strip().lower()
+    base = {"record_id": str(a.subject), "assertion_id": str(a.assertion_id or ""), "field": "pending"}
+    queue = _queue_for(system, _backend(system))
+    if queue is None:
+        return _refusal("no_task_queue", "a pending title or summary is re-armed only with the task that writes it: "
+                        "open the home with MemorySystem(task_queue=True)", **base)
+    closures = _closures(system.journal, a.assertion_id)
+    if closures:
+        return _refusal("closed", f"the record is closed ({closures[0].kind}); its current replacement owes the "
+                        "metadata", replaced_by=_replaced_by(closures), **base)
+    marker = dict(attrs["pending"]) if isinstance(attrs.get("pending"), Mapping) else {}
+    fields = [f for f in ("title", "summary") if marker.get(f)]
+    before = int(marker.get("rearmed") or 0)
+    if not fields:
+        return {"applied": False, "outcome": "unchanged", "reason": "not_pending",
+                "detail": "the record carries no pending marker: nothing to re-arm", "tasks": {}, "live": {},
+                "rearmed": before, "pending": marker, **base}
+    live = live_pending_tasks(queue, str(a.subject), fields)
+    owned = {f: str(t) for f, t in live.items() if t is not None}
+    dead = [f for f in fields if live[f] is None]
+    if not dead:
+        return {"applied": False, "outcome": "unchanged", "reason": "live_task",
+                "detail": f"{', '.join(fields)} still owned by a live task: nothing re-armed", "tasks": owned,
+                "live": owned, "rearmed": before, "pending": marker, **base}
+    plan = plan_declared(system, queue, a, dead)
+    n = before + 1
+    at = utc_now_iso()
+    exhausted = {f: [{k: t[k] for k in ("task_id", "status", "attempts", "max_attempts", "error")}
+                     for t in queue.tasks(kind=(PENDING_TASK_KINDS[f],), target_id=str(a.subject))] for f in dead}
+    live_attempts = max([int(t["attempts"]) for f in owned for t in queue.tasks(
+        status=("pending", "deferred", "leased"), kind=(PENDING_TASK_KINDS[f],), target_id=str(a.subject))],
+                        default=0)
+    tasks = {f: str(plan[f]["task_id"]) for f in dead}
+    row_cause: Dict[str, Any] = {**cause_d, "rearmed": n, "pending": list(dead), "tasks": tasks,
+                                 "attempts_before": int(marker.get("attempts") or 0), "exhausted": exhausted}
+    if owned:
+        row_cause["live"] = dict(owned)
+
+    def reserved(old: Dict[str, Any], v: int) -> Dict[str, Any]:
+        out = dict(old)
+        held = dict(old["pending"]) if isinstance(old.get("pending"), Mapping) else {}
+        out["pending"] = {**held, "attempts": live_attempts, "rearmed": n, "last_rearmed_at": at}
+        out["pending_version"] = v
+        return out
+
+    def version(rec: Any, v: int) -> UnderstandingVersion:
+        return _version_row(rec, v, field="pending", text=", ".join(dead), title=_title(_attrs(rec)),
+                            keywords=tuple(_attrs(rec).get("keywords") or ()), digest_method=REARM_PENDING_METHOD,
+                            author=dict(REARMER), reader={}, sources=(), derived_from=(), cause=row_cause,
+                            magnitude={}, task_id="", at=at)
+
+    queued: Dict[str, List[str]] = {}
+
+    def enqueue(cur: Any) -> None:
+        queued.update(enqueue_declared(queue, a, {f: plan[f] for f in dead}, cause=cause_d, body_kind=kind,
+                                       _cur=cur, stamp={"rearmed": n}))
+
+    out = _apply(system, record_id=str(a.subject), field="pending", new_object=None, narration=None,
+                 reserved=reserved, version=version, expected_version=_current_version(attrs, "pending"),
+                 hooks=(enqueue,))
+    out.update(base)
+    if not out.get("applied"):
+        return out
+    after = _resolve(system, str(a.subject))
+    out.update({"outcome": "rearmed", "reason": None, "tasks": tasks, "rearmed": n, "live": owned,
+                "pending": dict(_attrs(after).get("pending") or {}) if after is not None else {},
+                "enqueued": queued.get("enqueued", []), "superseded": queued.get("superseded", []),
+                "exhausted": exhausted})
+    return out
 
 
 def narrate_dream(
