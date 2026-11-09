@@ -57,6 +57,7 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from .formation_authoring import author_and_shape, new_receipt, note
 from .records import MemoryRecordInput
 # Machine AUTHORSHIP set (ONE source — redigestion owns it; adversary
 # P1-1: the repair-CONSENT set excluded dedup summaries, which are
@@ -492,6 +493,7 @@ def dream_pass(
     maintenance_ops: int = 0,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
     phase_results: Optional[Dict[str, Any]] = None,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """One sleep pass: structural report → bridge proposals → at most ONE
     dream record (kind="dream", via remember_many — idempotent by report
@@ -503,6 +505,11 @@ def dream_pass(
     text is only its provisional body, the queued `title.author` /
     `digest.author` tasks author both (`retitle` / `rewrite_digest`), and a
     home without a task queue is refused before anything is written.
+    AUTHORED WITH IT (operator ruling 2026-11-09): with the host's `author`
+    callable (formation_authoring) the dream's title and summary are
+    authored from that text at formation; a failure, or no `author`, forms
+    it pending with the failure recorded (its marker and
+    `result["authoring"]`).
 
     SALIENCE (fork parity restored 2026-07-12 — the fork-comparison
     adversary caught two silently dropped terms): bridge proposals and
@@ -578,7 +585,7 @@ def dream_pass(
         # c5270 ask-2 accounting: pairs a standing/rejected dream already
         # carries, filtered out of tonight's dream content.
         "carried_suppressed": 0,
-        "dream_record_id": None, "created": False, "skipped_reason": None,
+        "dream_record_id": None, "created": False, "skipped_reason": None, "authoring": new_receipt(),
         # The night's signal stream (set when a dream forms; a quiet or
         # restful night composes none).
         "signals": [], "signals_omitted": 0,
@@ -879,8 +886,16 @@ def dream_pass(
     key = f"dream|{owner_id}|{fingerprint}"
     expected = record_id_for("dream", key, 0)
     existed = bool(store.query(TripleQuery(subject=expected, limit=1)))
+    got = None
+    if not existed:
+        # The dream's title and summary are authored WITH it from the night's composition (operator ruling
+        # 2026-11-09; formation_authoring): what failed forms pending, the failure recorded. Never on a replay.
+        dream, got = author_and_shape(author, "dream_pass", dream, scope=scopes[0][0], owner_id=owner_id,
+                                      fields=dream.pending, source_ids=[e[1] for e in dream.edges])
     [gid] = system.remember_many([dream], scope=scopes[0][0], owner_id=owner_id,
                                  idempotency_key=key)
+    if got is not None:
+        note(out["authoring"], "dream_pass", dream, got, gid)
     out["dream_record_id"] = gid
     out["created"] = not existed
     if not existed and getattr(system, "tasks", None) is not None:

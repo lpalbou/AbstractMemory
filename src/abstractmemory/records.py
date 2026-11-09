@@ -245,6 +245,10 @@ class MemoryRecordInput:
     attributes: Mapping[str, Any] = field(default_factory=dict)
     provenance: Mapping[str, Any] = field(default_factory=dict)
     pending: Tuple[str, ...] = ()
+    # Why the pending fields are pending (operator ruling 2026-11-09: a record forms pending only after a RECORDED
+    # authoring failure): {reason, error_class, message, at, fields}, written into the marker as
+    # `attributes.pending.failure` (formation_authoring; the passes always record one).
+    pending_failure: Optional[Mapping[str, Any]] = None
 
     def __post_init__(self) -> None:
         kind = str(self.kind or "").strip().lower()
@@ -261,6 +265,12 @@ class MemoryRecordInput:
             raise ValueError(
                 f"MemoryRecordInput.pending names unknown fields {unknown} (known: {sorted(PENDING_FIELDS)})")
         object.__setattr__(self, "pending", pending)
+        if self.pending_failure is not None:
+            if not isinstance(self.pending_failure, Mapping):
+                raise ValueError("MemoryRecordInput.pending_failure is a mapping {reason, error_class, message, at}")
+            if not pending:
+                raise ValueError("MemoryRecordInput.pending_failure explains pending fields: the record declares none")
+            object.__setattr__(self, "pending_failure", dict(self.pending_failure))
         title = str(self.title).strip() if self.title is not None else ""
         if not title and "title" not in pending:
             raise ValueError(
@@ -538,6 +548,8 @@ def build_formation_plan(
         if r.pending:
             attrs["pending"] = {"title": "title" in r.pending, "summary": "summary" in r.pending,
                                 "since": observed_at, "attempts": 0}
+            if r.pending_failure:
+                attrs["pending"]["failure"] = dict(r.pending_failure)
         for name, values in (("intents", r.intents), ("outcomes", r.outcomes),
                              ("keywords", r.keywords), ("participants", r.participants)):
             if values:

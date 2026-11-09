@@ -56,6 +56,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from .formation_authoring import author_and_shape, new_receipt, note
 from .records import MemoryRecordInput, record_id_for
 from .sleep_policy import DEFAULT_SLEEP_TUNING, SleepTuning
 from .store import TripleQuery
@@ -306,11 +307,18 @@ def mine_candidates_pass(
     report_only: bool = False, as_of: Optional[int] = None,
     scan_limit: int = 0,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """One mining pass: lesson candidates (resolved tensions that lived
     across sessions), interest candidates (recurring un-elected themes),
     and the question-resolution proposals — bounded, idempotent, ruled
     shape (kind=summary + proposed_kind; adoption mints HIS record).
+
+    AUTHORED WITH IT (operator ruling 2026-11-09): `author` is the host's
+    authoring callable (formation_authoring); each offer gets its title
+    and summary authored from its composed text at formation; a failure,
+    or no `author`, forms it pending with the failure recorded (its marker
+    and `result["authoring"]`).
 
     Candidates land in the FIRST scope pair (the home scope), like every
     sleep formation. The night cap counts MINTS only (adversary F1:
@@ -351,6 +359,7 @@ def mine_candidates_pass(
         "question_proposals": questions["proposals"],
         "drive_groups": [],
         "created": [], "skipped": [], "created_count": 0,
+        "authoring": new_receipt(),
     }
 
     # --- Standing exclusions (believed rows + lifecycle; adversary F9:
@@ -455,8 +464,13 @@ def mine_candidates_pass(
                 **extra,
             },
         )
+        # Authored WITH the offer from its composed text (operator ruling 2026-11-09; formation_authoring): what
+        # failed forms pending, the failure recorded in the marker and in out["authoring"].
+        candidate, got = author_and_shape(author, "mine_candidates_pass", candidate, scope=scopes[0][0],
+                                          owner_id=owner_id, fields=candidate.pending, source_ids=sources)
         [gid] = system.remember_many(
             [candidate], scope=scopes[0][0], owner_id=owner_id, idempotency_key=key)
+        note(out["authoring"], "mine_candidates_pass", candidate, got, gid)
         out["created"].append({"candidate_id": gid, "proposed_kind": kind_proposed,
                                "title": title, "source_ids": sources, "created": True})
         return gid

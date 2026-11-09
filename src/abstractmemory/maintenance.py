@@ -50,6 +50,7 @@ import hashlib
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .consolidation import COMPONENT_RELATIONS, dream_pass, structural_report
+from .formation_authoring import author_and_shape, merge_receipts, new_receipt, note
 from .records import CONSOLIDATION_PROTECTED_KINDS, MemoryRecordInput, record_id_for
 # Cadence lives in sleep_cadence.py (600-line split: "is there material" is
 # its own task); re-exported here so established import paths keep working.
@@ -535,6 +536,7 @@ def consolidation_pass(
     report_only: bool = False, as_of: Optional[int] = None,
     scan_limit: Optional[int] = None,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Phase-1's ONE write surface (fork create_consolidation_candidates):
     low-risk duplicate-title proposals become at most `max_candidates`
@@ -545,7 +547,11 @@ def consolidation_pass(
     review_required, sources byte-untouched. Idempotent by sorted source
     set; a group already covered by an existing candidate (equal or
     superset sources) is skipped. as_of anchors AUDIT reads only: writes
-    under as_of are refused loudly. Each candidate forms PENDING its
+    under as_of are refused loudly. With the host's `author` callable
+    (formation_authoring) each candidate's title and summary are authored at
+    formation (operator ruling 2026-11-09); otherwise, or on its failure, it
+    forms PENDING (the failure recorded in its marker and in
+    `result["authoring"]`) its
     authored title and summary (operator rulings 2026-11-09; the composed
     text is its provisional body); a home without a task queue is refused
     before anything is written."""
@@ -565,6 +571,7 @@ def consolidation_pass(
     out: Dict[str, Any] = {
         "pass_name": "consolidation_pass",
         "report": report, "created": [], "skipped": [], "created_count": 0,
+        "authoring": new_receipt(),
     }
     if report_only:
         out["skipped"].append({"reason": "report_only requested"})
@@ -615,8 +622,16 @@ def consolidation_pass(
                 "no_source_mutation": True,
             },
         )
+        got = None
+        if not existed:
+            # Authored WITH the candidate from its composed text (operator ruling 2026-11-09;
+            # formation_authoring): what failed forms pending, recorded. Never on a replay.
+            candidate, got = author_and_shape(author, "consolidation_pass", candidate, scope=scopes[0][0],
+                                              owner_id=owner_id, fields=candidate.pending, source_ids=sources)
         [gid] = system.remember_many(
             [candidate], scope=scopes[0][0], owner_id=owner_id, idempotency_key=key)
+        if got is not None:
+            note(out["authoring"], "consolidation_pass", candidate, got, gid)
         out["created"].append({
             "candidate_id": gid, "proposal_id": proposal["id"],
             "source_ids": sources, "created": not existed,
@@ -636,6 +651,7 @@ def sleep_pass(
     should_continue: Optional[Any] = None,
     include_dream: bool = True,
     include_identity: bool = True,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """One full sleep: RESOLVE first (the night reviews the day — standing
     dreams the day's lived experience already answered close softly,
@@ -646,6 +662,10 @@ def sleep_pass(
     night. The result names itself and its phases (self-describing shapes
     — review: three sleep verbs returned three near-miss dicts and a
     consumer confused two of them).
+
+    `author` (formation_authoring, operator ruling 2026-11-09): the host's authoring callable, handed to
+    every phase that forms records (consolidation, world models, mining, dream); `result["authoring"]`
+    sums their receipts ({authored, failures}): the host writes its authoring-failures lines from it.
 
     Ordering rationale: resolution must PRECEDE tonight's dream so a
     settled tension never feeds continuation anchors again, and a
@@ -719,13 +739,14 @@ def sleep_pass(
 
     def _cancelled_maintenance(after: str) -> Dict[str, Any]:
         return _cancelled("consolidation_pass", after,
-                          {"report": {}, "created": [], "skipped": [], "created_count": 0})
+                          {"report": {}, "created": [], "skipped": [], "created_count": 0,
+                           "authoring": new_receipt()})
 
     def _cancelled_world_models(after: str) -> Dict[str, Any]:
         return _cancelled("world_model_pass", after,
                           {"formed": [], "unchanged": [], "skipped": [], "repaired": [],
                            "targets_seen": 0, "eligible": [], "formed_count": 0,
-                           "alias_proposals": []})
+                           "alias_proposals": [], "authoring": new_receipt()})
 
     def _cancelled_dream(after: str) -> Dict[str, Any]:
         return _cancelled("dream_pass", after,
@@ -734,14 +755,14 @@ def sleep_pass(
                            "context_associated": [], "template_suppressed": 0,
                            "carried_suppressed": 0,
                            "dream_record_id": None, "created": False,
-                           "signals": [], "signals_omitted": 0})
+                           "signals": [], "signals_omitted": 0, "authoring": new_receipt()})
 
     def _cancelled_mining(after: str) -> Dict[str, Any]:
         return _cancelled("mine_candidates_pass", after,
                           {"lesson_candidates": [], "interest_candidates": [],
                            "question_proposals": [], "drive_groups": [],
                            "created": [], "skipped": [],
-                           "created_count": 0})
+                           "created_count": 0, "authoring": new_receipt()})
 
     def _cancelled_identity(after: str) -> Dict[str, Any]:
         return _cancelled("identity_review_pass", after,
@@ -765,6 +786,7 @@ def sleep_pass(
             "mining": _cancelled_mining(after),
             "identity": _cancelled_identity(after),
             "dream": _cancelled_dream(after),
+            "authoring": new_receipt(),
         }
 
     cancelled_after: Optional[str] = None
@@ -784,7 +806,7 @@ def sleep_pass(
         return _skipped_night("resolution", resolution)
     maintenance = consolidation_pass(
         system, scopes=scopes, owner_id=owner_id, max_candidates=max_candidates,
-        report_only=report_only, as_of=as_of, scan_limit=scan_limit, tuning=tuning)
+        report_only=report_only, as_of=as_of, scan_limit=scan_limit, tuning=tuning, author=author)
     # Understanding refines after tending, before the dream (0033): cards
     # are report-excluded derived artifacts, so the dream never sees them —
     # the order just keeps the night's narrative honest (review the day,
@@ -802,12 +824,12 @@ def sleep_pass(
                               "frames honest",
             "formed": [], "unchanged": [], "skipped": [], "repaired": [],
             "targets_seen": 0, "eligible": [], "formed_count": 0,
-            "alias_proposals": [],
+            "alias_proposals": [], "authoring": new_receipt(),
         }
     else:
         world_models = world_model_pass(
             system, scopes=scopes, owner_id=owner_id,
-            report_only=report_only, tuning=tuning)
+            report_only=report_only, tuning=tuning, author=author)
     # W2 MINING (wave-4 dispatch): lesson/interest candidates from repeated
     # session evidence + question-resolution proposals — after
     # understanding refines, before the dream (the dream metabolizes the
@@ -828,14 +850,14 @@ def sleep_pass(
             "lesson_candidates": [], "interest_candidates": [],
             "question_proposals": [], "drive_groups": [],
             "created": [], "skipped": [],
-            "created_count": 0,
+            "created_count": 0, "authoring": new_receipt(),
         }
     else:
         from .candidate_miner import mine_candidates_pass
         mining = mine_candidates_pass(
             system, scopes=scopes, owner_id=owner_id,
             max_candidates=max_candidates, report_only=report_only,
-            scan_limit=scan_limit or 0, tuning=tuning)
+            scan_limit=scan_limit or 0, tuning=tuning, author=author)
     # IDENTITY REVIEW (dm#124 + the R2 fold): the pure-read registrar over
     # pending realization proposals — after mining (the night's quality
     # work), before the dream. Cycle windows skip it (runtime's rule: a
@@ -895,7 +917,7 @@ def sleep_pass(
             "vectorless_pairs": 0, "trail_associated": [],
             "context_associated": [], "template_suppressed": 0,
                            "carried_suppressed": 0,
-            "dream_record_id": None, "created": False,
+            "dream_record_id": None, "created": False, "authoring": new_receipt(),
         }
     else:
         ops_count = len((maintenance.get("report") or {}).get("operations") or ())
@@ -903,7 +925,7 @@ def sleep_pass(
             system, scopes=scopes, owner_id=owner_id, salience_floor=salience_floor,
             max_sources=max_sources, embedder_similarity_floor=embedder_similarity_floor,
             report_only=report_only, as_of=as_of, maintenance_ops=ops_count,
-            tuning=tuning,
+            tuning=tuning, author=author,
             # The dream metabolizes the night's WORK phases (Q1 ruling):
             # their results become the signal stream on the dream record.
             # The IDENTITY phase is DELIBERATELY excluded (dm#124: the
@@ -922,6 +944,10 @@ def sleep_pass(
         "mining": mining,
         "identity": identity,
         "dream": dream,
+        # Every record the night formed with its title and summary authored, and every one formed pending with
+        # its recorded failure (formation_authoring): the host writes its authoring-failures lines from this.
+        "authoring": merge_receipts([maintenance.get("authoring"), world_models.get("authoring"),
+                                     mining.get("authoring"), dream.get("authoring")]),
     }
     if cancelled_after is not None:
         result["cancelled_after"] = cancelled_after

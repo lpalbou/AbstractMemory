@@ -1078,7 +1078,7 @@ def declare_pending(
     def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:
         out = dict(old)
         held = dict(old["pending"]) if isinstance(old.get("pending"), Mapping) else {}
-        out["pending"] = {"title": bool(held.get("title")) or "title" in new,
+        out["pending"] = {**held, "title": bool(held.get("title")) or "title" in new,
                           "summary": bool(held.get("summary")) or "summary" in new,
                           "since": held.get("since") or at, "attempts": int(held.get("attempts") or 0)}
         out["pending_version"] = n

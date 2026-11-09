@@ -56,7 +56,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .records import MemoryRecordInput
+from .formation_authoring import author_and_shape, new_receipt, note
+from .records import MemoryRecordInput, record_id_for
 from .store import TripleQuery
 from .text_tokens import jaccard, token_set
 
@@ -88,6 +89,7 @@ def wake_cue_dedup_pass(
     jaccard_floor: float = 0.82,
     min_cluster: int = 3,
     report_only: bool = False,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Cluster near-identical SAME-DAY records of one kind and supersede
     each cluster into one day-summary. The cluster rule is deliberately
@@ -95,6 +97,12 @@ def wake_cue_dedup_pass(
     `jaccard_floor` over title+digest tokens (greedy union within a day),
     and a cluster only acts at `min_cluster`+ members — two similar
     episodes are a life, twenty near-identical ones are a loop artifact.
+
+    AUTHORED WITH IT (operator ruling 2026-11-09): `author` is the host's
+    authoring callable (formation_authoring); each day summary gets its title
+    and summary authored from its composed text at formation; a failure,
+    or no `author`, forms it pending with the failure recorded (its marker
+    and `result["authoring"]`).
 
     Each acted cluster forms ONE kind="summary" record, PENDING its
     authored title and summary (operator rulings 2026-11-09; a home without
@@ -110,8 +118,8 @@ def wake_cue_dedup_pass(
     closure reasons). report_only=True computes clusters and writes
     NOTHING (the dry-run read).
     """
-    author = str(actor or "").strip()
-    if not author:
+    actor_name = str(actor or "").strip()
+    if not actor_name:
         raise ValueError("wake_cue_dedup_pass requires a non-empty actor")
     if not report_only:
         from .memory_tasks import require_task_queue
@@ -175,7 +183,7 @@ def wake_cue_dedup_pass(
                 if not report_only:
                     system.close_record(
                         a.subject, kind="supersede", replacement_ids=[summary_gid],
-                        reason=f"wake-cue dedup by {author}: residual member healed "
+                        reason=f"wake-cue dedup by {actor_name}: residual member healed "
                                "against its existing day summary (crash-replay repair)",
                     )
                 residuals_repaired.append(str(a.subject))
@@ -208,6 +216,7 @@ def wake_cue_dedup_pass(
 
     report: Dict[str, Any] = {
         "pass_name": "wake_cue_dedup",
+        "authoring": new_receipt(),
         "scanned": len(rows),
         "clusters": [
             {
@@ -278,28 +287,37 @@ def wake_cue_dedup_pass(
             idem = f"dedup|{scope}|{owner_id}|{day}|{member_ids[0]}"
             # Title and summary authored (operator rulings 2026-11-09): formed pending, the witness's words its
             # provisional body (a member's reading, not one standing for the day's group).
-            [summary_gid] = system.remember_many(
-                [MemoryRecordInput(
-                    kind="summary",
-                    title=None,
-                    pending=("title", "summary"),
-                    digest=str(witness.object or ""),
-                    keywords=tuple(keywords),
-                    participants=tuple(participants),
-                    edges=tuple(("summarizes", mid) for mid in member_ids),
-                    attributes={
-                        "digest_method": "mechanical-dedup-v1",
-                        "dedup_members": len(c),
-                        "origin_date": day,
-                    },
-                    provenance={"actor": author, "source": DEDUP_SOURCE},
-                )],
-                scope=scope, owner_id=owner_id, idempotency_key=idem,
+            day_summary = MemoryRecordInput(
+                kind="summary",
+                title=None,
+                pending=("title", "summary"),
+                digest=str(witness.object or ""),
+                keywords=tuple(keywords),
+                participants=tuple(participants),
+                edges=tuple(("summarizes", mid) for mid in member_ids),
+                attributes={
+                    "digest_method": "mechanical-dedup-v1",
+                    "dedup_members": len(c),
+                    "origin_date": day,
+                },
+                provenance={"actor": actor_name, "source": DEDUP_SOURCE},
             )
+            got = None
+            if not system.store.query(TripleQuery(subject=record_id_for("summary", idem, 0), limit=1)):
+                # Authored WITH the day summary from the witness's words (operator ruling 2026-11-09;
+                # formation_authoring): what failed forms pending, recorded. Never on a replay.
+                day_summary, got = author_and_shape(author, "wake_cue_dedup_pass", day_summary, scope=scope,
+                                                    owner_id=owner_id, fields=day_summary.pending,
+                                                    source_ids=member_ids)
+            [summary_gid] = system.remember_many(
+                [day_summary], scope=scope, owner_id=owner_id, idempotency_key=idem,
+            )
+            if got is not None:
+                note(report["authoring"], "wake_cue_dedup_pass", day_summary, got, summary_gid)
         for mid in member_ids:
             system.close_record(
                 mid, kind="supersede", replacement_ids=[summary_gid],
-                reason=f"wake-cue dedup by {author}: {len(c)} near-identical "
+                reason=f"wake-cue dedup by {actor_name}: {len(c)} near-identical "
                        f"{kind}s from {day} consolidated into one day summary",
             )
         formed.append(summary_gid)

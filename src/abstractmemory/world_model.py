@@ -55,6 +55,7 @@ import hashlib
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .formation_authoring import author_and_shape, new_receipt, note
 from .records import MemoryRecordInput, record_id_for
 from .sleep_policy import DEFAULT_SLEEP_TUNING, SleepTuning
 from .store import TripleQuery
@@ -406,8 +407,14 @@ def world_model_pass(
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
     targets: Optional[Sequence[str]] = None,
     scan_limit: int = 0,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Form/revise orientation cards for the targets the evidence supports.
+
+    AUTHORED WITH THE CARD (operator ruling 2026-11-09; formation_authoring): `author(kind, body, context)` is the
+    host's authoring callable; each card about to form gets its title (unless an authored one carries) and its
+    summary authored from its evidence briefing. A failure, or no `author`, forms the card pending with the failure
+    recorded in its marker and in `result["authoring"]` ({authored, failures}).
 
     Deterministic and idempotent: same home state → same cards; a re-run
     forms nothing new (evidence fingerprints). Cards land in the FIRST
@@ -573,6 +580,7 @@ def world_model_pass(
         "unchanged": [],
         "skipped": [],
         "repaired": [],
+        "authoring": new_receipt(),
     }
     if targets is None and int(scan_limit) == 0:
         # SLEEP CADENCE ONLY (the full-evidence frame): heavy evidence
@@ -746,9 +754,18 @@ def world_model_pass(
             key = f"world-model|{owner}|{target}|rev{revision}|{fingerprint}"
             expected = record_id_for("world_model", key, 0)
             existed = bool(store.query(TripleQuery(subject=expected, limit=1)))
-            # remember_many queues the card's title.author / digest.author tasks with it (the pending marker).
+            got = None
+            if not existed:
+                # Authored with the card (never on a replay: the card stands); what failed forms pending, recorded.
+                card, got = author_and_shape(
+                    author, "world_model_pass", card, scope=scopes[0][0], owner_id=owner, fields=card.pending,
+                    source_ids=[e[1] for e in card.edges if e[0] == "derived_from"],
+                    known_ids=card.attributes.get("known_source_ids") or ())
+            # remember_many queues the pending fields' title.author / digest.author tasks with it (the marker).
             [gid] = system.remember_many(
                 [card], scope=scopes[0][0], owner_id=owner, idempotency_key=key)
+            if got is not None:
+                note(out["authoring"], "world_model_pass", card, got, gid)
             verdict["card_id"] = gid
             verdict["formed"] = not existed
             verdict["pending"] = list(card.pending)
@@ -884,6 +901,7 @@ def world_model_update(
     targets: Sequence[str],
     scan_limit: int = ORIENTATION_SCAN_LIMIT,
     tuning: SleepTuning = DEFAULT_SLEEP_TUNING,
+    author: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """The per-turn incremental card update (frozen API for the driver's
     background pass, 2026-07-18): revise the named targets' cards from a
@@ -902,7 +920,7 @@ def world_model_update(
             "'just update everything' call is the sleep pass's job")
     return world_model_pass(
         system, scopes=scopes, owner_id=owner_id, tuning=tuning,
-        targets=wanted, scan_limit=max(1, int(scan_limit)))
+        targets=wanted, scan_limit=max(1, int(scan_limit)), author=author)
 
 
 def author_world_model(
