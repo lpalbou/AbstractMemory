@@ -266,7 +266,12 @@ class InMemoryTripleStore:
         pending: list[TripleAssertion] = [a for a in assertions]
         if not pending:
             return []
+        return self._insert_prepared(pending, self._prepare_add(pending))[0]
 
+    def _prepare_add(self, pending: List[TripleAssertion]) -> Optional[dict[int, List[float]]]:
+        """`add`'s embedding step, outside the row lock (`SQLiteTripleStore._prepare_add` parity): the vectors by
+        position in `pending` (None when this store has no embedder or it degraded to vectorless). Formation
+        (`memory_tasks.form_with_tasks`) runs this before its transaction, then `_insert_prepared` inside it."""
         vectors: Optional[dict[int, List[float]]] = None
         if self._embedder is not None:
             # Edge assertions are graph structure, never embedded (realistic
@@ -295,8 +300,15 @@ class InMemoryTripleStore:
                             self._embedding_pin = pin
                         elif self._embedding_pin.get("dimension") is None:
                             self._embedding_pin = dict(self._embedding_pin, dimension=dim)
+        return vectors
 
+    def _insert_prepared(self, pending: List[TripleAssertion],
+                         vectors: Optional[dict[int, List[float]]]) -> tuple[List[str], List[str]]:
+        """`add`'s insert step under the row lock: (the id of every row in `pending`, the ids THIS call inserted).
+        A row whose id is already stored is skipped (parity with OR IGNORE), so a formation that loses a race to
+        another writer of the same record knows it inserted nothing and never removes the winner's rows."""
         ids: list[str] = []
+        inserted: list[str] = []
         with self._lock:
             for i, a in enumerate(pending):
                 # Honor caller-supplied ids (deterministic/import flows); default uuid4.
@@ -309,11 +321,14 @@ class InMemoryTripleStore:
                 if vectors is not None and i in vectors:
                     row[self._vector_column] = vectors[i]
                 self._rows.append(row)
-        return ids
+                inserted.append(assertion_id)
+        return ids, inserted
 
     def _discard_formed(self, assertion_ids: Iterable[str]) -> None:
         """Undo a formation batch whose other writes failed (`memory_tasks.form_with_tasks`: a formed record and the
-        tasks it owes commit together; this store has no transaction, so the rows this batch added are removed)."""
+        tasks it owes commit together; this store has no transaction, so the rows this batch added are removed).
+        `assertion_ids` are ONLY the rows that attempt inserted (`_insert_prepared`), never rows another writer
+        stored first."""
         gone = {str(a) for a in assertion_ids}
         with self._lock:
             self._rows = [r for r in self._rows if r.get("assertion_id") not in gone]

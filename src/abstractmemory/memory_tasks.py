@@ -952,8 +952,9 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
     - SQLite home (the queue shares the store's file and connection): the rows, their keyword entries, the bindings
       (when the journal is the store's own file) and the tasks are written in ONE transaction; any failure rolls
       all of them back. A journal in another file gets its bindings right after the commit (as before).
-    - in-memory pair (the queue's private database): the queue transaction opens first and commits last, around
-      the store's rows and the bindings; a failure rolls the tasks back and removes the rows this batch added.
+    - in-memory pair (the queue's private database, under the store's own lock): the queue transaction opens first
+      and commits last, around the store's rows and the bindings; a failure rolls this attempt's tasks back and
+      removes the rows and bindings THIS attempt stored (decided inside the lock), never a concurrent writer's.
 
     Idempotent like `apply_formation_plan` (existing rows skipped, bindings and tasks replay as no-ops). Returns
     the record ids in input order."""
@@ -991,23 +992,46 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
             for binding in plan.bindings:
                 journal.append_binding(binding)
         return list(plan.record_ids)
-    with queue._lock:
+    from .in_memory_store import InMemoryTripleStore
+    from .journal_memory import InMemoryJournal
+
+    if not isinstance(store, InMemoryTripleStore):
+        raise TypeError(f"form_with_tasks: an opted-in home's store is a SQLiteTripleStore or an InMemoryTripleStore "
+                        f"(got {type(store).__name__}): no other store can undo a failed formation")
+    if not isinstance(journal, (InMemoryJournal, SQLiteJournal)):
+        raise TypeError(f"form_with_tasks: an opted-in home's journal is an InMemoryJournal or a SQLiteJournal "
+                        f"(got {type(journal).__name__}): no other journal can undo a failed formation")
+    # Embedding outside every lock. `missing` is a read of COMMITTED rows: the queue holds the store's own lock (one
+    # transaction lock, finding 4), so no reader sees a batch in flight, and rows only appear between this read and
+    # the lock below. Inside the lock `_insert_prepared` skips every row stored meanwhile and names the rows THIS
+    # attempt inserted (Codex review 3 finding 3: the rollback removed every id read missing before the lock, the
+    # winning writer's included). A failure undoes exactly this attempt's own rows, bindings and tasks.
+    prepared = store._prepare_add(missing) if missing else None
+    with queue._lock, journal._lock:
         qcur = queue._conn.cursor()
         qcur.execute("BEGIN IMMEDIATE")
         added: List[str] = []
+        bound: List[str] = []
         try:
             _enqueue_planned(queue, planned, qcur)
             if missing:
-                store.add(missing)
-                added = [str(a.assertion_id) for a in missing]
-            for binding in plan.bindings:
-                journal.append_binding(binding)
+                added = store._insert_prepared(missing, prepared)[1]
+            if isinstance(journal, SQLiteJournal):
+                with journal._txn() as jcur:  # the batch's bindings: all or none
+                    for binding in plan.bindings:
+                        journal._append_binding_on(jcur, binding)
+            else:
+                for binding in plan.bindings:
+                    stored, new = journal._append_binding_tracked(binding)
+                    if new:
+                        bound.append(str(stored.binding_id))
             qcur.execute("COMMIT")
         except BaseException:
             qcur.execute("ROLLBACK")
-            discard = getattr(store, "_discard_formed", None)
-            if added and callable(discard):
-                discard(added)
+            if added:
+                store._discard_formed(added)
+            if bound:
+                journal._discard_formed_bindings(bound)
             raise
     return list(plan.record_ids)
 

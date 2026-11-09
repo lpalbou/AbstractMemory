@@ -28,7 +28,7 @@ import copy
 import threading
 import warnings
 from dataclasses import replace
-from typing import Any, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence, Tuple
 
 from .journal import (
     ALL_EVENT_KINDS,
@@ -262,6 +262,30 @@ class InMemoryJournal:
             self._bindings.append(stored)
             self._bindings_by_id[stored.binding_id] = stored
             return copy.deepcopy(stored)
+
+    def _append_binding_tracked(self, binding: ScopeBinding) -> Tuple[ScopeBinding, bool]:
+        """`append_binding` plus whether THIS call stored it (False: a replay no-op, the binding another writer of
+        the same record stored first). Formation (`memory_tasks.form_with_tasks`) undoes only the bindings it
+        stored when its batch fails (`_discard_formed_bindings`)."""
+        supplied = str(binding.binding_id or "").strip()
+        with self._lock:
+            existed = bool(supplied) and supplied in self._bindings_by_id
+            stored = self.append_binding(binding)
+        return stored, not existed
+
+    def _discard_formed_bindings(self, binding_ids: Sequence[str]) -> None:
+        """Undo the bindings a formation batch stored when its other writes failed (this journal has no
+        transaction). The batch held this journal's lock from its first binding to here, so they are the newest
+        records: the seq axis is rewound with them (gap-free, SQLiteJournal parity: its rolled-back transaction
+        never allocated them). A seq some other record took meanwhile is never reused."""
+        gone = {str(b) for b in binding_ids}
+        with self._lock:
+            seqs = [int(b.seq) for b in self._bindings if b.binding_id in gone]
+            self._bindings = [b for b in self._bindings if b.binding_id not in gone]
+            for bid in gone:
+                self._bindings_by_id.pop(bid, None)
+            if seqs and max(seqs) == self._seq and len(seqs) == self._seq - min(seqs) + 1:
+                self._seq = min(seqs) - 1
 
     def bindings(
         self,

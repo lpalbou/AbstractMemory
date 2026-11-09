@@ -148,7 +148,7 @@ def test_a_failed_store_write_queues_nothing(home, monkeypatch) -> None:
     def boom(*_a, **_kw):
         raise RuntimeError("injected store failure")
 
-    monkeypatch.setattr(home.store, "_insert_rows_on" if home.kind == "sqlite" else "add", boom)
+    monkeypatch.setattr(home.store, "_insert_rows_on" if home.kind == "sqlite" else "_insert_prepared", boom)
     with pytest.raises(RuntimeError, match="injected store failure"):
         _remember(home, "store-fail")
     monkeypatch.undo()
