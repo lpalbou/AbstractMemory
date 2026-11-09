@@ -951,4 +951,13 @@ def sleep_pass(
     }
     if cancelled_after is not None:
         result["cancelled_after"] = cancelled_after
+    elif not report_only and as_of is None and getattr(system, "tasks", None) is not None:
+        # The night (or the cycle window) ran to its end: the home records WHEN, the anchor of
+        # `records_since_maintenance` (the host's idle -> sleep threshold). A cancelled, report-only or anchored
+        # night completed nothing.
+        from .journal import utc_now_iso
+
+        system.tasks.record_maintenance(
+            scopes, kind="night" if include_dream else "cycle", completed_at=utc_now_iso(),
+            seq=int(system.journal.current_seq()), detail={"include_identity": bool(include_identity)})
     return result

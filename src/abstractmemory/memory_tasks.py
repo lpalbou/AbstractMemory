@@ -100,6 +100,26 @@ def task_id_for(kind: str, target_id: str, basis: str) -> str:
     return hashlib.sha256(f"{kind}|{target_id}|{basis}".encode("utf-8")).hexdigest()[:32]
 
 
+def _last_maintenance_rows(read: Callable[..., List[Any]], table: str,
+                           scopes: Optional[Sequence[Tuple[str, str]]], kind: str) -> Optional[Dict[str, Any]]:
+    """The newest `{prefix}maintenance` row of `kind` over the pairs (None = any): the primary key (scope, owner_id,
+    kind) is the index, one row per pair."""
+    where, params = ["kind = ?"], [str(kind)]
+    if scopes is not None:
+        pairs = sorted({(str(sc).strip().lower(), str(ow or "").strip()) for sc, ow in scopes})
+        if not pairs:
+            return None
+        where.append("(" + " OR ".join("(scope = ? AND owner_id = ?)" for _ in pairs) + ")")
+        params.extend(v for pair in pairs for v in pair)
+    rows = read(f"SELECT * FROM {table} WHERE {' AND '.join(where)} ORDER BY completed_at DESC, seq DESC LIMIT 1",
+                params)
+    if not rows:
+        return None
+    r = rows[0]
+    return {"completed_at": r["completed_at"], "seq": int(r["seq"]), "scope": r["scope"], "owner_id": r["owner_id"],
+            "kind": r["kind"], "detail": _load(r["detail_json"], {})}
+
+
 def _utc(value: Optional[Union[str, datetime]] = None) -> datetime:
     if value is None:
         return datetime.now(timezone.utc)
@@ -165,6 +185,7 @@ class MemoryTaskQueue:
         self.t_tasks, self.t_log, self.t_windows = (f"{self.prefix}tasks", f"{self.prefix}log",
                                                     f"{self.prefix}windows")
         self.t_ripples, self.t_gates = f"{self.prefix}ripples", f"{self.prefix}ripple_gates"
+        self.t_maintenance = f"{self.prefix}maintenance"
         self._ensure_schema()
 
     # ----------------------------------------------------------------- schema (opening is a read when complete)
@@ -173,7 +194,7 @@ class MemoryTaskQueue:
 
     def _expected_objects(self) -> Tuple[str, ...]:
         t = self.t_tasks
-        return (self.t_tasks, self.t_log, self.t_windows, self.t_ripples, self.t_gates,
+        return (self.t_tasks, self.t_log, self.t_windows, self.t_ripples, self.t_gates, self.t_maintenance,
                 *(i.format(t=t) for i in self._INDEXES), f"idx_{self.t_gates}_ripple", f"idx_{self.t_log}_task")
 
     def _ensure_schema(self) -> None:
@@ -230,6 +251,12 @@ class MemoryTaskQueue:
               hop INTEGER NOT NULL, via TEXT NOT NULL, potential REAL NOT NULL, activation REAL NOT NULL,
               decision TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)""")
         cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{self.t_gates}_ripple ON {self.t_gates}(ripple_id, seq)")
+        # The last COMPLETED sleep per (scope, owner, kind): `sleep_cadence.records_since_maintenance` counts the
+        # records formed after it (the host's idle -> sleep threshold).
+        cur.execute(
+            f"""CREATE TABLE IF NOT EXISTS {self.t_maintenance} (
+              scope TEXT NOT NULL, owner_id TEXT NOT NULL, kind TEXT NOT NULL, completed_at TEXT NOT NULL,
+              seq INTEGER NOT NULL, detail_json TEXT NOT NULL, PRIMARY KEY (scope, owner_id, kind))""")
 
     # ----------------------------------------------------------------- plumbing
 
@@ -441,6 +468,26 @@ class MemoryTaskQueue:
     def log(self, task_id: str) -> List[Dict[str, Any]]:
         return [{"seq": int(r["seq"]), "event": r["event"], "at": r["at"], "detail": _load(r["detail_json"], {})}
                 for r in self._read(f"SELECT * FROM {self.t_log} WHERE task_id = ? ORDER BY seq", (str(task_id),))]
+
+    def record_maintenance(self, scopes: Sequence[Tuple[str, str]], *, kind: str, completed_at: str, seq: int,
+                           detail: Optional[Mapping[str, Any]] = None) -> None:
+        """A sleep COMPLETED over these (scope, owner) pairs (`sleep_pass` calls it when a whole night, or a cycle
+        window, ran to its end): the row per pair and kind is replaced, in one transaction."""
+        pairs = sorted({(str(sc).strip().lower(), str(ow or "").strip()) for sc, ow in scopes})
+
+        def write(cur: sqlite3.Cursor) -> None:
+            for sc, ow in pairs:
+                cur.execute(f"INSERT OR REPLACE INTO {self.t_maintenance} (scope, owner_id, kind, completed_at, seq, "
+                            "detail_json) VALUES (?, ?, ?, ?, ?, ?)",
+                            (sc, ow, str(kind), str(completed_at), int(seq), _dump(dict(detail or {}))))
+
+        self._txn(None, write)
+
+    def last_maintenance(self, scopes: Optional[Sequence[Tuple[str, str]]] = None, *,
+                         kind: str = "night") -> Optional[Dict[str, Any]]:
+        """The newest completed sleep of `kind` over these pairs (None = any pair): {completed_at, seq, scope,
+        owner_id, detail}, or None when none completed."""
+        return _last_maintenance_rows(self._read, self.t_maintenance, scopes, kind)
 
     def counts(self) -> Dict[str, Dict[str, int]]:
         """{kind: {status: n}} over the whole queue."""

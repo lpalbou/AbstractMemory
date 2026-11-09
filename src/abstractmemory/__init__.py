@@ -76,6 +76,7 @@ from .maintenance import (
     maintenance_report,
     sleep_pass,
 )
+from .sleep_cadence import records_since_maintenance
 from .cognition_health import cognition_health
 from .concept_anchor import ConceptAnchorTuning, concept_terms, expand_by_concepts
 from .mind_mass import VECTOR_SCAN_LIMIT, WARNING_WORDS, mind_mass_report
@@ -371,6 +372,7 @@ __all__ = [
     "recall_history",
     "recent_records",
     "record_understanding",
+    "records_since_maintenance",
     "redigestion_candidates",
     "reembed_home",
     "reembed_store",

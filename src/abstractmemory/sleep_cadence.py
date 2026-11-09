@@ -36,7 +36,7 @@ from .store import TripleQuery
 from .store_tuning import CADENCE_FEED_PAGE
 from .text_tokens import title_key
 
-__all__ = ["last_maintenance_seq", "maintenance_due"]
+__all__ = ["last_maintenance_seq", "maintenance_due", "records_since_maintenance"]
 
 
 # -- the reference (full scan) ----------------------------------------------
@@ -319,3 +319,101 @@ def _with_tasks(answer: Dict[str, Any], tasks: Any, scopes: Sequence[Tuple[str, 
         answer["reasons"].append(
             "pending memory work only a sleep runs or ADR 0001 counts as due: "
             + ", ".join(f"{n} {k}" for k, n in sorted(due_work.items())))
+
+
+# -- the host's idle -> sleep threshold ------------------------------------------------------------------------
+
+
+def _maintenance_row(system: Any, scopes: Optional[Sequence[Tuple[str, str]]]) -> Optional[Dict[str, Any]]:
+    """The newest completed NIGHT over these pairs, read without opening (or creating) anything: the home's own
+    task queue, else (a SQLite home opened without one) the file's `memq_maintenance` table when it exists."""
+    from .memory_tasks import _last_maintenance_rows
+    from .sqlite_store import SQLiteTripleStore
+
+    queue = getattr(system, "tasks", None)
+    if queue is not None:
+        return queue.last_maintenance(scopes, kind="night")
+    store = system.store
+    if not isinstance(store, SQLiteTripleStore):
+        return None
+    table = ("memq_" if store._table == "triples" else f"memq_{store._table}_") + "maintenance"
+
+    def read(sql: str, params: Sequence[Any] = ()) -> List[Any]:
+        with store._lock:
+            cur = store._conn.cursor()
+            if cur.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone() is None:
+                return []
+            return cur.execute(sql, tuple(params)).fetchall()
+
+    return _last_maintenance_rows(read, table, scopes, "night")
+
+
+#: A formed record's row: its digest assertion (edges and bookkeeping rows are not records).
+_FORMED_SQL = ("predicate = 'dcterms:abstract' "
+               "AND json_extract(COALESCE(attributes_json, '{}'), '$.record_kind') IS NOT NULL "
+               "AND json_extract(COALESCE(attributes_json, '{}'), '$.record_edge') IS NULL "
+               "AND json_extract(COALESCE(attributes_json, '{}'), '$.bookkeeping') IS NULL")
+
+
+def _formed(a: Any) -> bool:
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+    return (str(a.predicate or "") == "dcterms:abstract" and bool(attrs.get("record_kind"))
+            and not attrs.get("record_edge") and not attrs.get("bookkeeping"))
+
+
+def _count_formed(system: Any, pairs: Optional[List[Tuple[str, str]]],
+                  after: Optional[str]) -> Tuple[int, Optional[str]]:
+    """(records formed strictly after `after` (None = ever), the oldest one's observed_at). SQLite: per pair one
+    COUNT and one MIN over the (scope, owner_id, observed_at) index range, O(rows in the range); any pair = the
+    observed_at index. Other stores read their rows."""
+    from .sqlite_store import SQLiteTripleStore
+
+    store = system.store
+    if isinstance(store, SQLiteTripleStore):
+        count, oldest = 0, None
+        targets: List[Tuple[str, List[Any]]] = (
+            [("scope = ? AND owner_id = ?", [sc, ow]) for sc, ow in pairs] if pairs is not None else [("1 = 1", [])])
+        with store._lock:
+            cur = store._conn.cursor()
+            for where, params in targets:
+                clause = f"{where} AND {_FORMED_SQL}" + (" AND observed_at > ?" if after is not None else "")
+                args = [*params, *([after] if after is not None else [])]
+                n, low = cur.execute(f"SELECT COUNT(*), MIN(observed_at) FROM {store._table} WHERE {clause}",
+                                     args).fetchone()
+                count += int(n or 0)
+                if low is not None and (oldest is None or str(low) < oldest):
+                    oldest = str(low)
+        return count, oldest
+    rows: List[Any] = []
+    for sc, ow in (pairs if pairs is not None else [(None, None)]):
+        rows.extend(a for a in store.query(TripleQuery(scope=sc, owner_id=ow or None, predicate="dcterms:abstract",
+                                                       since=after, limit=0))
+                    if _formed(a) and (after is None or str(a.observed_at or "") > after))
+    oldest_seen = min((str(a.observed_at or "") for a in rows), default=None)
+    return len(rows), oldest_seen
+
+
+def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[str, str]]] = None) -> Dict[str, Any]:
+    """How much the home lived since its last COMPLETED sleep (PURE READ; the host's idle -> sleep threshold,
+    operator 2026-11-09: sleep after 24 h or 500 events). Returns {count, last_maintenance_at, since}:
+
+    - `last_maintenance_at`: when the newest completed night over these (scope, owner) pairs ended (`sleep_pass`
+      records it when a whole night, `include_dream=True`, ran to its end: not cancelled, not report_only, not
+      anchored with `as_of`; a cycle window is recorded apart and does not count), `None` when the home never
+      completed one; `scopes=None` = any pair.
+    - `count`: the records FORMED in these scopes after that moment (a record = its digest row; edges and
+      bookkeeping rows are not records; closed ones still count: they were formed), or since birth when the home
+      never slept. The night's own formations precede its completion and never count.
+    - `since`: the moment the count starts: `last_maintenance_at`, or for a home that never slept the oldest formed
+      record's time (`None` for an empty home, `count` 0).
+
+    Cheap: the completion is one primary-key read; on the SQLite home the count is one indexed COUNT per pair over
+    the (scope, owner_id, observed_at) range after the completion, so it reads only the records formed since.
+    Nothing is written or created (a home whose queue tables predate this read answers `last_maintenance_at`
+    None)."""
+    pairs = (None if scopes is None
+             else sorted({(str(sc).strip().lower(), str(ow or "").strip()) for sc, ow in scopes}))
+    row = _maintenance_row(system, pairs)
+    at = row["completed_at"] if row is not None else None
+    count, oldest = _count_formed(system, pairs, at)
+    return {"count": count, "last_maintenance_at": at, "since": at if at is not None else oldest}
