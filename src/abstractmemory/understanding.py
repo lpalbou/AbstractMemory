@@ -26,7 +26,12 @@ a narration beside it); a world-model card outside `author_world_model` (which k
 record (its replacement is the current one: `current_of`); a ripple's consolidation record (`summary_role:
 re-understanding`) except by an operator. A dream or card formed with its summary PENDING (operator rulings
 2026-11-09: the pass's bookkeeping text is only its provisional body) takes its authored summary through
-`rewrite_digest` like any pending record; a card's goes through the card's own write (`author_card_in_place`).
+`rewrite_digest` like any pending record; a card's goes through the card's own write (`author_card_in_place`). So
+does a PUBLIC diary projection formed with its summary pending (operator rule 2026-11-09: title + summary always
+exist, authored): its body is the book's entry (the runtime's hash-chained ledger, `attributes.entry_id`), so the
+record's digest is only its summary and the write touches neither the body nor a chain; a private, owner-direct or
+chained entry stays refused (`diary.diary_summary_refusal`). Its summary versions are sealed in replay like its
+title versions.
 
 A TITLE is changed alone by `retitle` (operator 2026-11-08, root ADR 0054: a title is an explicit, complete,
 readable phrase, and stored text is never cut): for EVERY kind, the entity's own acts included, because a title the
@@ -779,7 +784,9 @@ def rewrite_digest(
     is replaced in place (its signals, proposals and narration untouched); a card's goes through the card's own
     reading (`author_card_in_place`: field `card`, the summary becomes its authored lead, evidence and key
     untouched). Outside a pending summary they keep their own doors (`use_narrate_dream`,
-    `use_author_world_model`).
+    `use_author_world_model`). A PUBLIC diary projection formed with its summary pending is completed here too (its
+    digest is only the summary: the body is the book's entry); every other diary write refuses `protected_kind`
+    (a private, owner-direct or chained entry, or a summary not pending).
     """
     author_d = _author(author)
     reader_d = _reader(reader, author_d["kind"])
@@ -797,7 +804,15 @@ def rewrite_digest(
     kind = str(attrs.get("record_kind") or "").strip().lower()
     base = {"record_id": str(a.subject), "assertion_id": str(a.assertion_id or ""), "field": "digest"}
     summary_pending = bool(isinstance(attrs.get("pending"), Mapping) and attrs["pending"].get("summary"))
-    if kind in UNDERSTANDING_PROTECTED_KINDS:
+    if kind == "diary" and summary_pending:
+        # A PUBLIC projection's pending summary (its body is the book's entry): authored here like any record's.
+        from .diary import diary_summary_refusal
+
+        provenance = a.provenance if isinstance(getattr(a, "provenance", None), Mapping) else {}
+        refusal = diary_summary_refusal(attrs, provenance)
+        if refusal is not None:
+            return _refusal("protected_kind", f"{refusal[1]} ({refusal[0]})", **base)
+    elif kind in UNDERSTANDING_PROTECTED_KINDS:
         return _refusal("protected_kind", f"kind {kind!r} is the entity's own act; it is never rewritten", **base)
     if kind == "dream" and not summary_pending:
         return _refusal("use_narrate_dream",

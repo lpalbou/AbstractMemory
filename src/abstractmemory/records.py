@@ -210,6 +210,24 @@ def _str_tuple(values: Any) -> Tuple[str, ...]:
     return tuple(str(v).strip() for v in (values or ()) if str(v or "").strip())
 
 
+def _check_authored_summary(stamp: Any) -> None:
+    """A public diary projection's authored summary at formation carries its reading's provenance
+    (`attributes.understanding`, the shape `formation_authoring.authored_record` writes): field `digest`, an author
+    (never `mechanical`: an authored summary), and a model author's reader and ledger sources (ADR 0003)."""
+    from .understanding import _author, _reader, _sources  # lazy: understanding imports this module
+
+    if not isinstance(stamp, Mapping):
+        raise ValueError("kind='diary' attributes.understanding is the authored summary's reading {field, author, "
+                         "reader, sources, cause, understood_at}")
+    if str(stamp.get("field") or "").strip() != "digest":
+        raise ValueError(f"kind='diary' attributes.understanding.field must be 'digest' (got {stamp.get('field')!r})")
+    author = _author(stamp.get("author"))
+    if author["kind"] == "mechanical":
+        raise ValueError("kind='diary': an authored summary is never mechanical (author.kind)")
+    _reader(stamp.get("reader") or None, author["kind"])
+    _sources(stamp.get("sources") or (), author["kind"])
+
+
 @dataclass(frozen=True)
 class MemoryRecordInput:
     """One record the runtime asks the package to remember (formation
@@ -221,7 +239,11 @@ class MemoryRecordInput:
     declares what is still being written: `pending=("title",)` with title None
     (or "") forms the record untitled with a queued `title.author` task;
     "summary" marks the given digest provisional with a queued `digest.author`
-    task (never on a protected kind, whose body is the entity's own words)."""
+    task (never on a protected kind, whose body is the entity's own words,
+    except a PUBLIC diary projection: its body is the book's entry, so its
+    digest is only a summary, authored like any record's — pending, or
+    authored at formation with `attributes.understanding`; see
+    `diary.diary_summary_refusal`)."""
 
     kind: str
     title: Optional[str]
@@ -279,7 +301,7 @@ class MemoryRecordInput:
         if title and "title" in pending:
             raise ValueError("MemoryRecordInput.pending=('title',) declares the title is still being written, but a "
                              "title was given")
-        if "summary" in pending:
+        if "summary" in pending and kind != "diary":  # a diary entry: its own rule below (diary_summary_refusal)
             from .understanding import UNDERSTANDING_PROTECTED_KINDS  # lazy: understanding imports this module
 
             if kind in UNDERSTANDING_PROTECTED_KINDS:
@@ -389,6 +411,22 @@ class MemoryRecordInput:
                     "diary projections (provenance.source='diary-projection') must carry "
                     "attributes.entry_id — the graph record must be verifiable against the book"
                 )
+            # The SUMMARY of a PUBLIC projection is authored like any record's (operator rule 2026-11-09: title +
+            # summary always exist, authored, never a stand-in such as his first line): its body is the book's
+            # entry, so the digest is only its summary. Authored at formation (`attributes.understanding`, the
+            # authored reading's provenance) or pending with its digest.author task. A private entry (act-only,
+            # content-free), an owner-direct one (the digest IS his words) or a chained one (entry_hash attests the
+            # digest) refuses both (diary.diary_summary_refusal).
+            stamp = attributes.get("understanding")
+            if "summary" in pending or stamp is not None:
+                from .diary import diary_summary_refusal
+
+                refusal = diary_summary_refusal(attributes, self.provenance)
+                if refusal is not None:
+                    state = "pending" if "summary" in pending else "authored"
+                    raise ValueError(f"kind='diary': its summary cannot be {state} ({refusal[0]}): {refusal[1]}")
+                if stamp is not None:
+                    _check_authored_summary(stamp)
 
         if kind in ("lesson", "instruction"):
             # 0035 conventions — optional-but-validated (absence is honest;

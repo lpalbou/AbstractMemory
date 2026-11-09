@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import warnings as _warnings
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .journal_common import normalize_iso_ts
 from .store import TripleQuery
@@ -38,6 +38,7 @@ from .text_tokens import TOKEN_RE, fold_text
 
 __all__ = [
     "diary_entry_hash",
+    "diary_summary_refusal",
     "open_commitments",
     "open_ideas",
     "open_problems",
@@ -59,6 +60,29 @@ def diary_entry_hash(title: str, digest: str, observed_at: str) -> str:
     the convention + verification)."""
     payload = f"{str(title or '')}\n{str(digest or '')}\n{str(observed_at or '')}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def diary_summary_refusal(attributes: Mapping[str, Any],
+                          provenance: Optional[Mapping[str, Any]]) -> Optional[Tuple[str, str]]:
+    """Whether a diary record's SUMMARY may be authored (operator rule 2026-11-09: "the title + summary must ALWAYS
+    exist for any memory", authored, never a stand-in). None = it may: a PUBLIC book projection, whose body is the
+    book's entry (the runtime's hash-chained ledger, named by `attributes.entry_id`), so the record's digest is only
+    its summary and authoring it touches neither the body nor any chain. Otherwise (code, why):
+    - `private_entry`: `attributes.private` is set (anything but absent / False): the runtime's act-only,
+      content-free projection of a private entry; unchanged until the operator rules;
+    - `owner_direct`: not a projection: an owner-direct entry has no book, its digest IS his words;
+    - `hash_chained`: `prev_entry_hash` / `entry_hash`: `diary_entry_hash` attests the digest itself."""
+    attrs = attributes if isinstance(attributes, Mapping) else {}
+    private = attrs.get("private")
+    if not (private is None or private is False):
+        return ("private_entry", "a private diary entry is projected act-only, content-free: its summary is never "
+                "authored (pending the operator's ruling)")
+    if str(dict(provenance or {}).get("source") or "").strip() != "diary-projection":
+        return ("owner_direct", "an owner-direct diary entry has no book: its digest is his words, the body itself, "
+                "never replaced by an authored summary")
+    if "prev_entry_hash" in attrs or attrs.get("entry_hash") is not None:
+        return ("hash_chained", "this diary entry's entry_hash attests its digest (diary_entry_hash)")
+    return None
 
 
 def verify_diary_chain(store: Any, *, scope: str, owner_id: str) -> Dict[str, Any]:

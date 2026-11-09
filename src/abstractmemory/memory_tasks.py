@@ -1337,7 +1337,7 @@ def task_packet(system: Any, task_id: str, *, token_budget: int = 56_000) -> Dic
         return {"task": t, "target_state": "gone"}
     attrs_t = a.attributes if isinstance(a.attributes, dict) else {}
     if attrs_t.get("record_kind") == "diary":
-        # A pending diary title: the entry's words are read through the book (entry_id), never served here.
+        # A pending diary title or summary: the entry's words are read through the book (entry_id), never served here.
         from .understanding import _closures
 
         closures = _closures(system.journal, a.assertion_id)

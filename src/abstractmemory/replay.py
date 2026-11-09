@@ -49,8 +49,9 @@ families: its version row is shown only to a consumer that asks for the
 OPT-IN family "revision" (`OPT_IN_FAMILIES`; `families=None` keeps the six),
 whose envelopes carry the version verbatim as payload, its digest text in
 the display block, and the run id of its first ledger source. A diary
-entry's revision envelopes (its title versions, `retitle`) are sealed like
-its display block: payload `text`/`title`/`keywords` emptied, `redacted`.
+entry's revision envelopes (its title versions, `retitle`; a public entry's
+summary versions, `rewrite_digest`) are sealed like its display block:
+payload `text`/`title`/`keywords` emptied, `redacted`.
 """
 
 from __future__ import annotations
@@ -370,7 +371,8 @@ def _enrich(family: str, record: Any, store: Any,
 
 
 def _seal_diary_revision(payload: Dict[str, Any], assertion: Any) -> None:
-    """A diary entry's version rows (its title versions: `retitle`) carry the entry's words; its revision envelope
+    """A diary entry's version rows (its title versions: `retitle`; a public entry's summary versions:
+    `rewrite_digest`) carry the entry's words; its revision envelope
     is sealed like its display block (topology and act-frame visible, words in the book): `text`, `title` and
     `keywords` emptied, `redacted: "diary"` set. The version row itself stays whole in the journal."""
     attrs = getattr(assertion, "attributes", None)
