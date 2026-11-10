@@ -190,6 +190,16 @@ class MemorySystem(ValenceOps, AccessOps, UnderstandingOps):
         (`MemorySystem(task_queue=True)`)."""
         return self._task_queue
 
+    def write_barrier(self, *, timeout: Optional[float] = None) -> Any:
+        """A context manager holding this home's write locks (store, task queue, graph tables, journal; one BEGIN
+        IMMEDIATE per SQLite file) for the caller's block: a transaction whose commit guard passed commits before the
+        block, none commits during it. The host's Stop wraps its generation bump in it (host lock -> barrier ->
+        bump). `timeout` seconds (None = wait) -> `WriteBarrierTimeout`. LanceDB stores are not coverable. See
+        `write_barrier.py`."""
+        from .write_barrier import write_barrier as _write_barrier
+
+        return _write_barrier(self, timeout=timeout)
+
     def add(self, assertions: Iterable[TripleAssertion]) -> List[str]:
         """Layer-1 write passthrough (the seam keeps MEMORY_KG_* effects working)."""
         return self._store.add(assertions)

@@ -205,6 +205,7 @@ from .spreading import SpreadParams
 from .sqlite_store import SQLiteTripleStore, read_embedding_pin
 from .store import TripleQuery, TripleStore
 from .system import MemorySystem
+from .write_barrier import WriteBarrierTimeout, write_barrier
 from .graph import (
     InvalidSourceRef,
     MemoryGraph,
@@ -309,6 +310,7 @@ __all__ = [
     "ValenceEvent",
     "WARNING_WORDS",
     "WINDOWS",
+    "WriteBarrierTimeout",
     "absence_diagnosis",
     "alias_candidates",
     "alias_map",
@@ -407,4 +409,5 @@ __all__ = [
     "wake_cue_dedup_pass",
     "world_model_pass",
     "world_model_update",
+    "write_barrier",
 ]
