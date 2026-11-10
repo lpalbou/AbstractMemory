@@ -4,7 +4,8 @@
 - Created: 2026-11-10 (residual of the 0.5.0 Stop fence hooks)
 - Status: Proposed
 - Completed: N/A
-- Target: abstractmemory 0.5.1 (the two SQLite points); the LanceDB window needs a decision first
+- Target: the next abstractmemory patch (the two SQLite points; 0.5.1 shipped without them); the LanceDB window
+  needs a decision first
 - Priority: P2
 
 ## ADR status
@@ -35,6 +36,9 @@ Upgrading section and the `write_barrier.py` docstring name three windows the ba
   RuntimeWarning is emitted. At most one write per concurrent writer lands after the bump; its next write is refused.
 - Production exposure today is low: the runtime opens one SQLite file per home (`abstractruntime/identity/chat.py`),
   live homes are pinned, and the entity homes are SQLite (ADR 0003 decision 3).
+- Refresh (2026-11-10, `f5fdee0`, after 0.5.1): unchanged; 0.5.1 touched none of `write_barrier.py`,
+  `sqlite_store.py` or `graph/` (its source changes are `communities.py`, `community_index.py`, `memory_tasks.py`,
+  `understanding.py`).
 
 ## Problem or opportunity
 A Stop that must mean "nothing after this lands" has three documented exceptions. Each is at most one write per
@@ -55,7 +59,7 @@ The runtime fence's guarantee ("after Stop, no memory write lands") becomes unco
 LanceDB case stops being a silent-but-warned exception.
 
 ## Promotion criteria
-Promote with the next memory patch (0.5.1) for the SQLite half; the LanceDB half when a host fences a LanceDB home.
+Promote with the next memory patch (0.5.1 shipped without it) for the SQLite half; the LanceDB half when a host fences a LanceDB home.
 
 ## Validation ideas
 - In `tests/test_write_barrier.py`: a pinless store's first embedded write and an off-file `mark_journal_applied`,

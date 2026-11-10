@@ -7,9 +7,10 @@ Items are written as standalone implementation briefs for future coding agents.
 They should be treated as planning memory, not as authority over the codebase:
 inspect the current code first, then update the item if reality has changed.
 
-## Current Status (counts recounted on disk 2026-11-10, after the 0.5.0 closure; first reconciled 2026-07-20 — the shipped tree audited item by item)
+## Current Status (counts recounted on disk 2026-11-10 after the 0.5.1 tag, unchanged since the 0.5.0 closure; first reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 10 — `planned/0069` (runtime recall stamps use `community_keys_of`, added 2026-11-10) and
+- Planned: 10 — `planned/0069` (runtime recall stamps use `community_keys_of`, added 2026-11-10; its memory half
+  shipped in 0.5.1, the runtime switch remains) and
   `planned/knowledge_graph_convergence/` 0050-0058 (0050-0055 added
   2026-10-27, ADR 0002; 0056-0058, ADR 0003; 0056 in progress, first slice
   on `feat/memory-graph-provenance`; 0053 has its communities slice shipped in
@@ -27,12 +28,14 @@ inspect the current code first, then update the item if reality has changed.
 - Recurrent: 0
 
 GENUINELY OPEN (the honest desk, 2026-07-20; convergence track added 2026-10-27; 0.5.0 follow-ups added 2026-11-10):
-- 0.5.0 follow-ups (filed 2026-11-10 from the release's documented residuals and the Fable pre-tag review):
-  `proposed/0062` write barrier residual windows (`_write_pin`, `mark_journal_applied`, LanceDB; 0.5.1),
-  `proposed/0066` placement index misses a dissolve-only version (0.5.1), `proposed/0067` `communities()` is
-  not one snapshot (0.5.1), `proposed/0068` api.md queue-less list (0.5.1 docs), `proposed/0064` `merged_into`
-  in the community facts, `proposed/0065` `embed_missing`'s `vector_generation` bump (skipped, reason kept),
-  `proposed/ripple_wave/0063` ripple v1's consumer seam (nothing seeds a ripple yet).
+- 0.5.0 follow-ups (filed 2026-11-10 from the release's documented residuals and the Fable pre-tag review; 0.5.1
+  shipped without the four aimed at it, so their target is now the next memory patch):
+  `proposed/0062` write barrier residual windows (`_write_pin`, `mark_journal_applied`, LanceDB; SQLite half next
+  patch), `proposed/0066` placement index misses a dissolve-only version (next patch; 0.5.1's `community_keys_of`
+  inherits it), `proposed/0067` `communities()` is not one snapshot (next patch), `proposed/0068` api.md queue-less
+  list (next docs pass), `proposed/0064` `merged_into` in the community facts, `proposed/0065` `embed_missing`'s
+  `vector_generation` bump (skipped, reason kept), `proposed/ripple_wave/0063` ripple v1's consumer seam (nothing
+  seeds a ripple yet).
 - `planned/knowledge_graph_convergence/` (0050-0055) — operator ruling
   2026-10-27 (ADR 0002): AbstractMemory IS the semantic temporal memory
   graph and owns all of its processing. Absorb what AbstractNote built over a
@@ -154,15 +157,18 @@ cross-package pre-commit gate for this package. Design corpus: a2a thread
 - Medium: retrieval telemetry and deterministic recall helpers.
 - Low: observer-facing read-only conveniences that depend on earlier contracts.
 
-## Next Recommended Work (2026-11-10)
+## Next Recommended Work (2026-11-10, after the 0.5.1 tag)
 
-1. Publish 0.5.0 when the operator gives the go (release commit `5c6136b` is local:
-   untagged, unpushed; the wave and its order are root backlog 1179).
-2. The 0.5.1 patch, smallest first: `proposed/0066` (placement mark as a pair),
-   `proposed/0067` (one snapshot for `communities()`), the SQLite half of
-   `proposed/0062` (the two autocommit points under `BEGIN IMMEDIATE`) and the
-   `proposed/0068` docs nit. Each self-heals or is rare today; none blocks 0.5.0.
-3. The convergence track in its README's reading order (0056 and 0058 first).
+1. Both releases are out: 0.5.0 (tag `v0.5.0` on `8624137`, which adds the topic-priority fix on top of the release
+   commit `5c6136b`; PyPI 2026-11-10 03:06 UTC) and 0.5.1 (tag `v0.5.1` on `f5fdee0`; Release and CI workflows
+   green, PyPI 2026-11-10 16:51 UTC). The wave and its order are root backlog 1179.
+2. `planned/0069`'s runtime half (AbstractRuntime owns it): the switch is drafted, uncommitted, in the runtime's
+   working tree (0.19.2 in preparation, floor `AbstractMemory>=0.5.1`); 0069 closes when that runtime release lands.
+3. The next memory patch, smallest first: `proposed/0066` (placement mark as a pair; the same fix covers 0.5.1's
+   `community_keys_of` / `community_memberships_of`), `proposed/0067` (one snapshot for `communities()`), the SQLite
+   half of `proposed/0062` (the two autocommit points under `BEGIN IMMEDIATE`) and the `proposed/0068` docs nit.
+   Each self-heals or is rare today; none blocked 0.5.1.
+4. The convergence track in its README's reading order (0056 and 0058 first).
 
 The earlier list (001, 002, 003) was resolved by the 2026-07-20 reconciliation:
 002 completed, 001 and 003 deprecated.
@@ -176,7 +182,7 @@ superseding pointer).
 
 | Item | Priority | Notes |
 | --- | --- | --- |
-| [`0069_runtime_recall_stamps_use_community_keys_of.md`](planned/0069_runtime_recall_stamps_use_community_keys_of.md) | P1 | Memory side shipped on `main` (0.5.1 material); the runtime's `_stamp_recall_topics` switches from the full `communities()` read (190 ms at 20k records) to `community_keys_of` (22 µs). |
+| [`0069_runtime_recall_stamps_use_community_keys_of.md`](planned/0069_runtime_recall_stamps_use_community_keys_of.md) | P1 | Memory side published in 0.5.1 (`f66ef28`, tag `v0.5.1`, PyPI); the runtime's `_stamp_recall_topics` switches from the full `communities()` read (190 ms at 20k records) to `community_keys_of` (22 µs): drafted, uncommitted, in the runtime's tree (0.19.2 prep). |
 
 ### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0061)
 
@@ -210,17 +216,18 @@ this table to keep the track whole.
 ### 0.5.0 follow-ups (filed 2026-11-10)
 
 From the 0.5.0 release's documented residuals (CHANGELOG `[0.5.0]` Upgrading, `write_barrier.py`, `01ff4e2`) and the
-Fable pre-tag review (framework root `untracked/finish-plan-2026-11-09/graph-topics/REVIEW-memory-0.5.0.md`).
+Fable pre-tag review (framework root `untracked/finish-plan-2026-11-09/graph-topics/REVIEW-memory-0.5.0.md`). Targets
+re-set 2026-11-10: 0.5.1 shipped without the four aimed at it.
 
 | Item | Target | Notes |
 | --- | --- | --- |
-| [`0062_write_barrier_residual_windows.md`](proposed/0062_write_barrier_residual_windows.md) | 0.5.1 (SQLite half) | `_write_pin` without a cursor and the off-file `mark_journal_applied` are autocommit points outside another handle's barrier; LanceDB takes no write lock. |
+| [`0062_write_barrier_residual_windows.md`](proposed/0062_write_barrier_residual_windows.md) | next patch (SQLite half) | `_write_pin` without a cursor and the off-file `mark_journal_applied` are autocommit points outside another handle's barrier; LanceDB takes no write lock. |
 | [`0063_ripple_v1_consumer_seam.md`](proposed/ripple_wave/0063_ripple_v1_consumer_seam.md) | with root 1172 | Nothing seeds a ripple yet; memory's checks and calibration run when the runtime starts. |
 | [`0064_community_facts_merged_into.md`](proposed/0064_community_facts_merged_into.md) | when asked | A dissolved community's destination is not in the facts (`split_from` is). |
 | [`0065_embed_missing_vector_generation_bump_batching.md`](proposed/0065_embed_missing_vector_generation_bump_batching.md) | if measured | Skipped in `01ff4e2`: a deferred bump would hide committed vectors from other handles after a Stop. |
-| [`0066_placement_index_misses_dissolve_only_versions.md`](proposed/0066_placement_index_misses_dissolve_only_versions.md) | 0.5.1 | The catch-up mark is the store rowid only; a dissolve-only version never reloads the index. |
-| [`0067_communities_read_is_not_one_snapshot.md`](proposed/0067_communities_read_is_not_one_snapshot.md) | 0.5.1 | Three statements; one read can serve a version with no communities. |
-| [`0068_api_doc_queue_less_list_omits_communities.md`](proposed/0068_api_doc_queue_less_list_omits_communities.md) | 0.5.1 docs | `docs/api.md:226` omits `communities_pass` and `embed_missing`. |
+| [`0066_placement_index_misses_dissolve_only_versions.md`](proposed/0066_placement_index_misses_dissolve_only_versions.md) | next patch | The catch-up mark is the store rowid only; a dissolve-only version never reloads the index. 0.5.1's membership reads share the catch-up and inherit it. |
+| [`0067_communities_read_is_not_one_snapshot.md`](proposed/0067_communities_read_is_not_one_snapshot.md) | next patch | Three statements; one read can serve a version with no communities. |
+| [`0068_api_doc_queue_less_list_omits_communities.md`](proposed/0068_api_doc_queue_less_list_omits_communities.md) | next docs pass | `docs/api.md:226` omits `communities_pass` and `embed_missing` (still true at `v0.5.1`). |
 
 ### Memory System v1 track (`proposed/memory_system_v1/`)
 
@@ -281,7 +288,8 @@ promotion time.
 
 | Completed | Item | Evidence |
 | --- | --- | --- |
-| 2026-11-10 | [`completed/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md`](completed/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md) (was `planned/knowledge_graph_convergence/`, created 2026-11-07) | abstractmemory 0.5.0 (`5c6136b`, local, unpublished). Engine `3fbaf10`; plus read-time provenance `e74c29c`, stored text never cut `8ac6df4` `566f174` `20cd1f4`, `retitle` `d4fc7e4`, `rekey_world_model` `6e4ca13`, identical words settle `15ef176`. Release suite `abstractmemory/untracked/release-0.5.0/pytest-full.log` 2291 passed, 3 skipped, 2 xfailed; 17 feature modules re-run 2026-11-10: 605 passed, 2 skipped; mutants per test docstring; Fable pre-tag review GO. |
+| 2026-11-10 | 0.5.1 work, no item closed (tag `v0.5.1` on `f5fdee0`): `community_keys_of` / `community_memberships_of` (`f66ef28`), the memory half of planned 0069, which stays planned for the runtime switch; standing pending topics authored in place and their legacy tasks moved up (`7e83d2b`, from Castor's second topics night: 10 of 11 topics titled, the 11th's first-night tasks at priority 5 behind ~267 repair tasks). Also `8624137` (topic tasks at `COMMUNITY_PRIORITY` 3, the pass's budget to the topics), committed after the 0.5.0 release commit and tagged as `v0.5.0`. | `f66ef28`: `tests/test_community_keys_of.py` (37), mutants K1-K8 red (`abstractmemory/untracked/community-keys-of/`), full suite 2356 passed, 3 skipped, 2 xfailed; 20 µs / 22 µs per call at 2,000 / 20,000 records. `7e83d2b`, `8624137`: `tests/test_communities.py`; CHANGELOG `[0.5.1]` and `[0.5.0]`. All three are communities-slice work of planned 0053 (progress note added). |
+| 2026-11-10 | [`completed/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md`](completed/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md) (was `planned/knowledge_graph_convergence/`, created 2026-11-07) | abstractmemory 0.5.0 (`5c6136b`; recorded here as local and unpublished, published the same day: tag `v0.5.0` on `8624137`, PyPI). Engine `3fbaf10`; plus read-time provenance `e74c29c`, stored text never cut `8ac6df4` `566f174` `20cd1f4`, `retitle` `d4fc7e4`, `rekey_world_model` `6e4ca13`, identical words settle `15ef176`. Release suite `abstractmemory/untracked/release-0.5.0/pytest-full.log` 2291 passed, 3 skipped, 2 xfailed; 17 feature modules re-run 2026-11-10: 605 passed, 2 skipped; mutants per test docstring; Fable pre-tag review GO. |
 | 2026-11-10 | [`completed/knowledge_graph_convergence/0060_memory_task_queue.md`](completed/knowledge_graph_convergence/0060_memory_task_queue.md) (was `planned/knowledge_graph_convergence/`, created 2026-11-07) | 0.5.0. Queue `5997b68`; pending contract `c4ffc45` `4f3a77e` `c46b4cd` `11687df` `8ceb511` `71de051` `8235daf` `82178c9` (engram author); one commit for a record and its tasks `39e479e` `b403c0d` `1cd854e` `3a5810c`; sleep cadence `645d94e` `26503e3` `7ccc605` `d1c1d9a` `9dae0d7` `f310865`. Mutants Q1-Q12, F5-F8 red; Codex reviews 2 and 3 findings closed (framework root `untracked/entity-phases-2026-11-08/review/`). |
 | 2026-11-10 | [`completed/knowledge_graph_convergence/0061_ripple_v1_over_the_task_queue.md`](completed/knowledge_graph_convergence/0061_ripple_v1_over_the_task_queue.md) (was `planned/knowledge_graph_convergence/`, created 2026-11-07) | 0.5.0. Engine `09686e0`, `tests/test_ripple_v1.py`, mutants R1-R8 red. Consumers DEFERRED: nothing outside memory seeds a ripple (root 1172 / 1171 paused); `proposed/ripple_wave/0063`. |
 | 2026-11-10 | 0.5.0 work with no item of its own: the Stop fence hooks (`commit_guard` `4074406` `3a5810c`, `write_barrier` `85ecf75`) and the communities slice of planned 0053 (`3082695` `aac9476` `c07f5e9` `d550551` `7ccc605` `d1c1d9a` `01ff4e2`) | Fence: `tests/test_commit_guard.py`, `tests/test_write_barrier.py`, mutants in `abstractmemory/untracked/commit-guard/mutants.txt` and B1-B7 (commit `85ecf75`); residual windows filed as `proposed/0062`. Communities: Fable reviews `REVIEW-memory-m1.md` (all should-fixes fixed in `01ff4e2`) and `REVIEW-memory-0.5.0.md` (framework root `untracked/finish-plan-2026-11-09/graph-topics/`); progress recorded in 0053; follow-ups `proposed/0064`-`0068`. The other no-item work (provenance, titles, pending, cadence) is recorded in the 0059 and 0060 reports. |

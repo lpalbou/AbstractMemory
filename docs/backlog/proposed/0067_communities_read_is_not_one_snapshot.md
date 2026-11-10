@@ -4,7 +4,7 @@
 - Created: 2026-11-10 (Fable pre-tag review of 0.5.0, should-fix 2)
 - Status: Proposed
 - Completed: N/A
-- Target: abstractmemory 0.5.1
+- Target: the next abstractmemory patch (0.5.1 shipped without it)
 - Priority: P2 (no data loss; one wrong read, self-heals at the next read)
 
 ## ADR status
@@ -23,6 +23,12 @@ should-fix 2; probe p3 under `abstractmemory/untracked/review-050/`) found a tor
 - A version committed between them (p3, both substrates) serves `version_seq` v1 with `communities: []` and
   `first_sleep_pending: false` for one read; the entity's topics tool then says "no topics".
 - The next read is correct.
+- Refresh (2026-11-10, `f5fdee0`, after 0.5.1): unchanged. `communities()` (`community_index.py:815-863`) reads the
+  heads (`_community_heads`), then `_fold` (`261-289`) reads the closures (`_closed_ids`) and the rows (`_load`),
+  each its own statement. 0.5.1's membership reads do not fold per call, but their index reload
+  (`_catch_up_on`, `459-479`) runs the same heads-then-fold sequence under the store's in-process `RLock`, which
+  does not hold off another process's commit. Not examined for a tear; the fix should cover that reload too or
+  record why it cannot tear.
 
 ## Problem or opportunity
 A reader can be told the home has no topics during the seconds a sleep commits its new version.
@@ -36,7 +42,7 @@ deferred read transaction on the shared SQLite file (`BEGIN` ... `COMMIT`, a sna
 The served payload must never contradict itself (a version with no communities and no first-sleep flag).
 
 ## Promotion criteria
-The 0.5.1 memory patch.
+The next memory patch (0.5.1 shipped without it).
 
 ## Validation ideas
 Red test from p3 on both substrates: commit a version between the heads read and the rows read (a hook or a paused

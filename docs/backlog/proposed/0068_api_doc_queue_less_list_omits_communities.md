@@ -4,7 +4,7 @@
 - Created: 2026-11-10 (Fable pre-tag review of 0.5.0, nit)
 - Status: Proposed
 - Completed: N/A
-- Target: abstractmemory 0.5.1 docs pass
+- Target: the next abstractmemory docs pass (0.5.1 shipped without it)
 - Priority: P3 (docs)
 
 ## ADR status
@@ -22,6 +22,9 @@ root `untracked/finish-plan-2026-11-09/graph-topics/REVIEW-memory-0.5.0.md`, nit
 `dream_pass`, `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass`, `sleep_pass`, `declare_pending` /
 `rearm_pending`, the ripple verbs and `engram`; `communities_pass` and `embed_missing` are missing.
 
+Refresh (2026-11-10, `f5fdee0`): still true at `v0.5.1`, line 226 unchanged (0.5.1's `api.md` edits were the
+`communities_pass` and `community_keys_of` entries).
+
 ## Proposed direction
 Add both to that bullet, then regenerate `llms-full.txt` (coredoc pass) so the mirror matches.
 
@@ -29,7 +32,7 @@ Add both to that bullet, then regenerate `llms-full.txt` (coredoc pass) so the m
 The api page is the reference a host reads before opening a home.
 
 ## Promotion criteria
-The next memory docs pass (0.5.1).
+The next memory docs pass.
 
 ## Validation ideas
 `grep -n "communities_pass" docs/api.md` finds the bullet; `llms-full.txt` regenerated identically on a rerun.

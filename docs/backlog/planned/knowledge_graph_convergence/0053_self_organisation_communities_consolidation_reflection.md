@@ -39,7 +39,8 @@ and provenance; mutation tests per rule.
 
 ## Progress (2026-11-10): the communities slice shipped in abstractmemory 0.5.0
 
-Built and released in 0.5.0 (release commit `5c6136b`, local `main`, not yet published), from COMMUNITIES-DESIGN
+Built and released in 0.5.0 (release commit `5c6136b`; written as not yet published, published the same day: tag
+`v0.5.0` on `8624137`, PyPI), from COMMUNITIES-DESIGN
 (framework root `untracked/finish-plan-2026-11-09/graph-topics/COMMUNITIES-DESIGN.md`, with the Fable deltas of
 `FABLE-REVIEW-communities-design.md`):
 - `3082695` the `community` record kind (one record per version, a stable `attributes.community_key`),
@@ -64,6 +65,24 @@ Filed from that work: `proposed/0064` (`merged_into` in the facts), `proposed/00
 observations not filed: the 10k layout step is the slowest (1.9 s), the γ 1.5 split fragments a merged block (never
 armed on castor), the neighbour vote's owner check has no red test (mutant m2 survived), and an off-file journal
 costs one `selected_count` query per digest row in `communities()` (the runtime opens one file).
+
+## Progress (2026-11-10): topics after the 0.5.0 release commit (the `v0.5.0` tag and 0.5.1)
+
+- `8624137` (committed after the release commit, tagged as `v0.5.0`): a topic's `title.author` / `digest.author`
+  tasks are queued at `COMMUNITY_PRIORITY` (3, ahead of `FORMATION_PRIORITY` 5); `communities_pass`'s `budget` goes
+  to the topics, largest first, one call per topic; the receipt carries `budget` / `budget_spent`.
+- `7e83d2b` (0.5.1): what the budget leaves goes to the STANDING topics still pending, written in place on their
+  current record (`rewrite_digest` / `retitle`); every standing topic's live authoring task waiting behind
+  `COMMUNITY_PRIORITY` moves up (`MemoryTaskQueue.prioritize`); the receipt's `pending` is read back. Found on
+  Castor's second topics night: 10 of 11 topics titled, the 11th's first-night tasks at priority 5 behind ~267
+  repair tasks.
+- `f66ef28` (0.5.1): `community_keys_of` / `community_memberships_of`, the membership-only read the runtime's recall
+  stamps switch to (planned 0069): 20 µs / 22 µs per call at 2,000 / 20,000 records. It shares placement's
+  catch-up, so it inherits `proposed/0066`.
+- 0.5.1 shipped without `proposed/0066`, `0067`, `0068` and the SQLite half of `0062`; their target is now the next
+  memory patch.
+- Evidence: `tests/test_communities.py`; `tests/test_community_keys_of.py` (37; mutants K1-K8 red,
+  `abstractmemory/untracked/community-keys-of/`); full suite at `f66ef28` 2356 passed, 3 skipped, 2 xfailed.
 
 Still open in this item: topic normalisation (one spelling per topic), the consolidation stages for document
 knowledge, deterministic reflection candidates and their insight records, the review list. The item stays planned.

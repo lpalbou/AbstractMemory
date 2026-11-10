@@ -1,7 +1,7 @@
 # A persistent queue of memory tasks in the home: what still needs understanding, leased and drained by the host
 
-Status: Completed · Completed: 2026-11-10 · Shipped in: abstractmemory 0.5.0 (commit `5c6136b`, local `main`; not
-yet tagged, pushed or published on 2026-11-10) · Original path: `planned/knowledge_graph_convergence/0060_memory_task_queue.md`
+Status: Completed · Completed: 2026-11-10 · Shipped in: abstractmemory 0.5.0 (commit `5c6136b`; written as
+not yet tagged, pushed or published, then published 2026-11-10: tag `v0.5.0` on `8624137`, PyPI) · Original path: `planned/knowledge_graph_convergence/0060_memory_task_queue.md`
 (a one-line pointer since 2026-11-10; see the overview's planning note) · Item history: written with the code in
 `5997b68` (2026-11-08), closed by the backlog commit that created this file.
 
