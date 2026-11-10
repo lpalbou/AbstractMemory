@@ -154,6 +154,14 @@ last_maintenance_seq(store, journal, scopes=scopes)   # 0 = never slept
 
 A quiet night is also a valid outcome of a pass that did run: `dream_pass` forms nothing when nothing crossed its floors, and says why.
 
+### `ValueError: ... open the home with MemorySystem(task_queue=True)`
+
+A title or summary still being written is always stored beside the task that writes it, so the verbs that form pending records refuse a home without a task queue, before writing anything: memory's own passes (`world_model_pass`, `dream_pass`, `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass`, `sleep_pass`, `communities_pass`, `embed_missing`), a `remember_many` record with `pending=...`, the ripple verbs, and an `engram` whose unnamed spark items get no authored title. Open the home with `MemorySystem(store=..., journal=..., task_queue=True)`. `report_only` reads still run without it.
+
+### A record's title is `None`
+
+The title is still being written: the record formed pending (its author was missing or failed; `attributes.pending.failure` says why) and its `title.author` task waits in `system.tasks`. Reads serve the missing title as `None` on purpose, never a placeholder. Pass an `author` callable to the passes so records form authored, drain the queue with `retitle` / `rewrite_digest`, and use `pending_records(...)` and `rearm_pending(...)` for a record whose tasks ran out.
+
 ### A cancelled night left work unfinished
 
 By design. `sleep_pass(..., should_continue=...)` checks at sub-phase boundaries; the running sub-phase always completes rather than being torn, later ones skip with a stated `skipped_reason`, and the night carries `cancelled_after`. Sub-phases are idempotent, so the next sleep resumes the work.

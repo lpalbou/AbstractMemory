@@ -5,259 +5,191 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
-## [Unreleased]
+## [0.5.0] - 2026-11-10
 
-A record's understanding can be rewritten in place, and every earlier reading is kept (backlog 0059;
+Every memory now carries an authored title and summary, a home keeps a persistent queue of what still needs
+understanding, a record's understanding is rewritten in place with every earlier reading kept, the home's topics are
+formed during sleep, and a host can fence every memory write behind its Stop (backlogs 0059, 0060, 0061;
+[ADR 0001](docs/adr/0001-altered-memories-ripple.md),
 [ADR 0003](docs/adr/0003-one-graph-ledger-provenance-and-revisions.md) decision 6a).
 
-### Added
+### Upgrading
 
-- **`MemorySystem.write_barrier(*, timeout=None)` / `write_barrier(system, *, timeout=None)`: the lifecycle bump serializes with every COMMIT** (the bumper's half of the Stop fence; Codex review 4, finding 2: the commit guard runs inside the write transaction while the runtime bumps its generation under its home lock, so "guard passes -> another process bumps -> COMMIT lands" was a real interleaving). The runtime wraps its bump: home lock -> `write_barrier()` -> write the generation -> release; a guard that passed inside a transaction is then always followed by its COMMIT before the bump can land, and every later transaction calls its guard after it. A context manager (`write_barrier.py`, exported with `WriteBarrierTimeout`) holding, in a FIXED order and released in reverse, the in-process locks in the writers' own nesting order (store lock, which the SQLite task queue and graph share and the in-memory queue and graph transaction take; a queue's own lock; the in-memory graph tables' lock; the journal's lock) and then one `BEGIN IMMEDIATE` per distinct SQLite file (store, then journal when it is another file: waits for every other connection's write transaction, in any process); it writes nothing (ROLLBACK) and takes no runtime lock. The order follows the writers (formation holds the store/queue lock, then the journal's): the journal's lock first would deadlock with an in-memory formation. Re-entrant within one thread (a held file is not locked again); refused with `RuntimeError` inside a memory write transaction of its own thread (SQLite). `timeout` (None = wait) -> `WriteBarrierTimeout(.waiting_for, .timeout)` naming the lock or file a writer still holds, everything released. Zero writer cost: no flag, counter or call added to any commit. **LanceDB not coverable** (no write lock): a LanceDB write whose guard passed before the bump may land after it, at most one per concurrent writer in any process, the next one refused; named in `BarrierHold.uncovered` with a `#FALLBACK` warning. Also uncovered through another handle or process: the two SQLite autocommit commit points (`_write_pin` without a cursor, the off-file graph's `mark_journal_applied`) call the guard before their statement takes the write lock (one such write may land after the bump; the same handle's barrier covers them). tests/test_write_barrier.py: 31 cases (a writer paused after its guard makes a barrier from another thread, another handle and another process wait for its COMMIT, then the next guard refuses: formation, journal, store, task queue, graph on the in-memory, one-file and off-file homes; a writer in another process times the barrier out; the lock order against a real in-memory formation; racing barriers and writers; re-entry; the hot path; the LanceDB window), mutants B1-B7 red in-process. docs/api.md, llms-full.txt
-- **Communities at formation and in reads** (`abstractmemory.community_index`; the memory half of the topics map that rides other records, COMMUNITIES-DESIGN with the 2026-11-10 review deltas). A community is a formed record of kind `community` written by the sleep pass (`communities_pass`): a new graph id per version, the stable `attributes.community_key` across versions, `basis.version_seq` per version; never embedded, never recalled. **Placement**: `form_with_tasks` places every non-community record it forms in its provisional community INSIDE the formation transaction (`place_record`: the nearest current centroid by cosine; a record without a vector, or a home whose centroids were computed in another embedding space, takes the majority community of the records its formation edges name; neither: unplaced until the next sleep) and writes ONE journal event `placed` (new audit kind, inert for scoring; `provenance` = `{community_key, community_id, how, score, provisional: true, version_seq}`); the community record is never rewritten at formation. A Stop refusing the formation leaves no record and no event; a replay writes no second event; no version yet = nothing placed, no error. The store's community index (centroids + membership map) is caught up once per formation from the store's row high-water mark, inside the transaction, and reloads only when a community row appeared above it, so the gateway's and the loop's long-lived homes place against the version the store holds now; placing reads no store row. **Reads** (pure): `communities(system, *, scopes, owner_id, version=None)` = the payload v2 a host serves (`{version: 2, version_seq, first_sleep_pending, algorithm, communities: [{id, key, title, summary, pending, verdict, size, kinds, members, provisional_ids, cohesion, layout, centroid_stale, facts}], links}`; `placed` events after the version folded in as `provisional_ids`; `facts` = `span`, `activity` (members' uses in the last 7 days), `hub`, `bridges`, `paths` (top 5 co-used member pairs in the last 7 days), `changed_since_last_sleep`) and `community_of(system, record_id)`. **Replay**: a community record replays like any formed record, its display block adds `community_key`, `version_seq`, `size`, and its binding envelope draws only `refines` (never an edge per member); `placed` events arrive in the `event` family. `SQLiteJournal._append_events_on` (an event batch on a caller's transaction) and `InMemoryJournal._append_events_tracked` / `_discard_formed_events` support it. tests/test_community_placement.py (three substrate pairs).
-- **`records_since_maintenance(...)["fragmented"]`** = `{count, share, provisional, unvectored, pending}`: how much of the home a sleep would make whole: records placed in a community provisionally since the last completed night, live records without a vector, live records with a title or summary still being written (a vector-less record whose every engraved relation names a closed record, the pass's `unplaced_closed`, is left out); `share` = count / live formed records (0.0 for an empty home). The host may sleep early when the share passes its threshold. SQLite home: one COUNT over the pairs' records (closures folded as a subquery) and one COUNT of `placed` events above the night; `None` on a store that cannot say which rows carry a vector.
-- **`MemorySystem(..., commit_guard=None)`: one integer compare before every COMMIT** (the memory half of the runtime's Stop fence: after an operator's Stop no memory write may land, even from a loop whose kill was refused or a night whose host never passed `cancelled=`). The host passes a callable `guard(where)`; the runtime passes its lifecycle fence's `check` (an in-process int compare). `MemorySystem` installs it on its store and journal (`commit_guard.install_commit_guard`: all or none; a store/journal type whose writes do not call a guard is a `TypeError`, a second different guard on a guarded store a `ValueError`), so every write through them is guarded whoever makes it: the facade, `MemoryGraph(store, journal)`, the task queue (it rides the store), the sleep passes. The guard is called INSIDE every write transaction immediately before its COMMIT, once per outermost transaction (a write on its caller's cursor, or inside a composed in-memory write, `deferred_to_caller`, does not call it again); raising -> ROLLBACK, nothing lands, nothing is recorded about the refusal, the exception propagates unchanged. The closed set of commit points: `SQLiteJournal._txn` (`journal`), `InMemoryJournal._write` (every append), `SQLiteTripleStore.add` / `close_assertion` / `narrow_assertion` / `replace_vectors` and the autocommit first-write `_write_pin` (`store.*`), `InMemoryTripleStore._write` / `_write_pin`, `LanceDBTripleStore.add`, the graph's `transaction()` on the SQLite, in-memory (undo log, before it keeps its changes) and LanceDB (before the log row) connectors and their autocommit `mark_journal_applied` (`graph`, `graph.mark_journal_applied`), `MemoryTaskQueue._txn` (`tasks`; `record_maintenance` names `tasks.record_maintenance`), `form_with_tasks` (both branches, `tasks.form_with_tasks`) and `understanding._apply` (both branches, `understanding.<field>`: `rewrite_digest`, `retitle`, `declare_pending`, `rearm_pending`, cards, narration, reverts). Exempt, each with its reason in the test: schema creation and open-time upgrades, read snapshots, the offline `journal_cold_cut`. An in-memory double has no COMMIT: it calls the guard under its lock before its first mutation. Memory adds an attribute read and one call (no file read, stat, flock or subprocess). tests/test_commit_guard.py (58 cases, both substrate pairs and LanceDB): every refused write leaves every table row-identical and surfaces the guard's own exception; a passing guard commits like no guard; one call per outermost write; a generation moved inside the transaction body is seen at COMMIT; a refused `record_maintenance` leaves a night uncompleted; the graph's off-file journal mark refused leaves the revision for `repair()`; 200 guarded formations make exactly the I/O calls 200 unguarded ones make (dispatch ~0.4 us); I6 closed-set introspection (every guard call site listed, every transaction/write statement in the package a commit point or an exemption, every method of the in-memory and LanceDB doubles classified). Mutants G1-G24 red on a scratch copy; full suite 1998 passed. docs/api.md, llms-full.txt
-- **`form_with_tasks` checks the commit guard immediately before its COMMITs** (Stop fence review F8): its in-memory branch called the guard before its first row, so a Stop raised between that row and the queue's COMMIT still landed the records, their bindings and their tasks. The guard now runs after the rows, bindings and tasks, immediately before the COMMITs; a `SQLiteJournal` beside an in-memory store keeps the batch's bindings in a transaction held open until then (it committed them on its own before). Refused -> the journal and queue roll back and this attempt's rows and bindings are removed. The SQLite home already checked immediately before its COMMIT. `tests/test_commit_guard.py`: a fence that admits the formation and is bumped right after the first row refuses it with no row, binding or task left (in-memory and SQLite journal), and the admitted retry forms the record; mutants G25 (guard back before the first row) and G26 (the SQLite journal's bindings committed before the guard) red.
-- **A legacy public diary entry's summary is declared pending and authored** (operator rule 2026-11-09: "the title + summary must ALWAYS exist for any memory"; gap the runtime owner verified against 71de051: `declare_pending` answered `protected_kind` for the summary of an EXISTING public diary projection, so the entries formed before 71de051 kept his first line standing in as their summary while their titles were repaired). `declare_pending(record_id, fields=("summary",) or ("title", "summary"))` now declares a PUBLIC projection's summary under exactly the 71de051 rule (`diary.diary_summary_refusal`): the marker and formation's `digest.author` task in one transaction, the first line kept as the provisional digest (version 0, never restored), and `rewrite_digest` completes it like a summary formed pending (task done, marker cleared). The body (the book's entry: `entry_id`, the provenance with the chain's record hash) and every attribute the write does not own stay byte-equal; no chain is touched. Still refused `protected_kind`, nothing written: an owner-direct entry (chained or not), a projection that claims a chain position (`prev_entry_hash` / `entry_hash`) and a private entry (`attributes.private` anything but absent/False); the refusal's `detail` names the rule (`owner_direct`, `hash_chained`, `private_entry`). A declared title was already allowed on a public projection (only an `entry_hash`-attested title answers `hash_chained`). tests/test_diary_summary_authored.py: 6 more cases, both substrate pairs, 8/8 mutants red on a scratch copy.
-- **A public diary entry's summary is authored like any record's** (operator rule 2026-11-09: "the title + summary must ALWAYS exist for any memory", authored, no fallback; runtime 7dd32e1, Codex review 2 finding 10: memory refused any pending or authored summary on a diary record, so the runtime stood his first line in). A PUBLIC book projection's body is the book's entry (the runtime's hash-chained ledger, named by `attributes.entry_id` and the provenance's `diary_entry` source with the chain's record hash); its record's digest is only a summary. It now takes an authored summary at formation (`attributes.understanding` = the reading's `{field: "digest", author, reader, sources, cause, understood_at}`, checked: never a mechanical author, a model author with its reader and ledger step), `pending=("summary",)` with its `digest.author` task, and `rewrite_digest` completing it (the task done, the marker cleared, the provisional words kept whole as version 0 and never restored). The body is untouched and no chain is affected: memory's own `entry_hash` chain covers title + digest + observed_at of OWNER-DIRECT chained entries only, and those stay refused. Refused as before, at formation (`ValueError`) and in `rewrite_digest` (`protected_kind`): a private entry (`attributes.private` anything but absent/False: the act-only, content-free projection, pending the operator's ruling), an owner-direct one (no book: its digest is his words) and a chained one (`prev_entry_hash` / `entry_hash`); a diary summary that is not pending (a legacy public entry's summary is declared through `declare_pending`, entry above). `diary.diary_summary_refusal(attributes, provenance)` is the one rule. Its summary versions are sealed in the replay `revision` stream like its title versions; the task packet serves it redacted. tests/test_diary_summary_authored.py: 38 cases, both substrate pairs, 11/11 mutants red on a scratch copy.
-- **`records_since_maintenance(..., after=None)`** and `boundary_source`: the host passes its own last maintenance (the gateway's last `maintenance_done` from its state history) as `after`, so a home that slept before memory recorded completions is not sent to sleep again at the first sweep. The count runs from the later of `after` and memory's `last_maintenance_at`; `since` reports the boundary used (normalized to memory's UTC microsecond format, any offset style accepted, naive = UTC, unparseable -> `ValueError`) and `boundary_source` names it: `memory` (also on a tie), `after` or `birth`. tests: 8 more cases (after later, earlier, equal, None, never slept, offset styles), 5/5 mutants red.
-- **`records_since_maintenance(system, *, scopes=None) -> {count, last_maintenance_at, since}`** (sleep_cadence; exported): the host's idle → sleep threshold (operator 2026-11-09: sleep after 24 h or 500 events). Memory recorded no sleep completion before (the cadence anchor is the newest dream or candidate, which a quiet night never forms). `sleep_pass` now records when a whole night ran to its end in the queue's new `memq_maintenance` table (one row per scope pair and kind; a cancelled, report-only or anchored night records nothing; a cycle window is kind `cycle` and does not reset the count); the read answers when the newest completed night ended (`None` if never), how many records formed after it (digest rows only; since birth for a home that never slept) and `since` (that moment, or the oldest record's time). Pure read; on the SQLite home one indexed COUNT per pair over `(scope, owner_id, observed_at)`. `MemoryTaskQueue.record_maintenance` / `last_maintenance`. tests/test_records_since_maintenance.py: 14 cases, both substrate pairs, 10/10 mutants red on a scratch copy.
-- **A record's title and summary are authored WITH it; pending only after a RECORDED failure** (operator ruling 2026-11-09; Codex review 2026-11-09, finding 10: the passes formed pending without attempting authoring). Memory has no model access, so `world_model_pass` / `world_model_update`, `dream_pass`, `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass` and `sleep_pass` (handing it to its phases) take an optional host `author(kind, body, context) -> {title, summary, author, reader, sources}` callable (`formation_authoring`): `body` is the pass's provisional text, `context` = `{pass, record_kind, scope, owner_id, fields, title, source_ids, attributes}`. Authored fields are stored with their provenance (`title_provenance`, `understanding`, version 0, cause `formation`; `authored-v1`, a card `authored-card-v1` with its lead fields) and owe no task. Otherwise the record forms pending with `attributes.pending.failure = {reason, error_class, message, at, fields}`: `no_author_supplied` (explicit, never silent), `author_raised`, or `invalid_result` (not a mapping, a wanted field empty, a mechanical author, a model author without reader or ledger sources). Every pass result carries `authoring = {authored, failures}` (`sleep_pass` sums its phases'), from which the host writes its authoring-failures lines; a standing record is never authored again. `MemoryRecordInput.pending_failure` carries the failure into the marker (it needs pending fields); `declare_pending` keeps a marker's failure. tests/test_formation_authoring.py: 24 cases, both substrate pairs, 11/11 mutants red on a scratch copy.
-- **`rearm_pending`** and **`pending_records`** (on `MemorySystem` and as module functions): a pending record whose authoring ran out is re-armed, never left pending forever (operator rule 2026-11-09: "title + summary must ALWAYS exist"). A host bug made every authoring attempt fail for a while, so records stayed marked pending with every `title.author` / `digest.author` task terminal (failed after `max_attempts`, or skipped), and `declare_pending` answered them `already_pending` with nothing queued. `rearm_pending(record_id, *, cause="repair", reason=None)` queues formation's task again for each pending field no live (`pending` / `deferred` / `leased`) task owns (same kind, capability, `FORMATION_PRIORITY`, strength, `basis_version` 0, next free basis `<assertion id>@pending-<field>@<k>`, cause `{cause, reason?, pending, rearmed: n}`), in one transaction with the marker; the marker stays (`attempts` restarts at the live tasks' highest claim count, `rearmed` counts, `last_rearmed_at`), and the journal keeps a `pending` version row (author `rearm_pending`, method `rearm-pending-v1`, cause with the exhausted tasks and `attempts_before`). Returns `{applied, outcome: rearmed | unchanged | refused, reason, record_id, tasks: {field: task id}, rearmed, ...}`; unchanged `live_task` / `not_pending`; refusals `unknown_record`, `no_task_queue`, `closed`, `stale`. `pending_records(*, scopes=None, live_task=False)` lists the records still marked pending (closed ones left out): by default those with a pending field no live task owns, `live_task=True` those fully owned, `None` all; each item names its marker, fields, live tasks and `unowned` fields, so the runtime's sleep repair finds them in one call. `memory_tasks.enqueue_declared` takes a `stamp` for the task cause. tests/test_rearm_pending.py: 18 cases, both substrate pairs, 15/15 mutants red on a scratch copy.
-- **`declare_pending`** (on `MemorySystem` and as a module function): a STORED record whose title or summary was
-  never authored is declared pending, the same state a record formed pending is in (operator rule 2026-11-09:
-  "title + summary must ALWAYS exist for every memory; authored, never cut, no fallback"; the runtime owner's
-  option, one rule). Its use: the runtime's sleep repair found legacy cards ("World model: <subject>",
-  `mechanical-card-v2`) and dreams ("Dream: ...") whose summaries `rewrite_digest` refused (`use_author_world_model`
-  / `use_narrate_dream`) because nothing could make a stored record pending. Any kind; `fields` defaults to
-  `("title", "summary")`, `cause` to `repair`, with an optional `reason`. It writes formation's marker
-  (`attributes.pending = {title, summary, since, attempts}`) and queues formation's tasks (`title.author` /
-  `digest.author`, capability `summaries`, `FORMATION_PRIORITY`, strength 1.0, basis `<assertion id>@pending-<field>`,
-  `basis_version` 0) in one transaction on the SQLite home; a live task queued earlier with that identity and no
-  marker is adopted, and a field authored once and declared again gets a fresh `...@pending-<field>@<k>` task. A
-  declared title is stored `None` (its old title kept as title versions 0 and 1 = `None`; canonical text, keyword
-  entry and vector replaced), and an interest's standing card moves to `topic:<graph id>` (`card_rekey`; a card other
-  active interests elect stays, `shared_card`). A declared summary keeps the body as its provisional digest, calls
-  no embedder and supersedes the record's live `digest.rewrite` / `card.author` task. `rewrite_digest` (a card's
-  summary through the card's own write, its structure untouched; a dream's in place) and `retitle` then complete the
-  tasks exactly as for a record formed pending. Idempotent: every asked field already pending returns
-  `outcome="unchanged"`, reason `already_pending`, nothing written. Refusals: `unknown_record`, `no_task_queue`,
-  `closed` (with `replaced_by`), `protected_kind` (a summary of the entity's own act), `consolidation_record`,
-  `hash_chained` (a declared title), `stale`, `embedder_unavailable`. The journal keeps each declaration as a version
-  row of the new field `pending` (`VERSION_FIELDS`; `pending_version` on the row; author
-  `{"kind": "mechanical", "id": "declare_pending"}`, cause `{cause, reason, pending, tasks, provisional}`), shown by
-  the opt-in replay family `revision`. `revert_digest` refuses a declaration (`not_revertible`) and the reading a
-  declaration made provisional (`provisional_summary`). `tests/test_declare_pending.py` (22 cases, both substrate
-  pairs; 18 mutants red on a scratch copy).
-- **`rewrite_digest`** (on `MemorySystem` and as a module function): replaces a record's digest, title and keywords
-  in place. The record keeps its graph id, digest assertion id, edges, usage counts and journal; its keyword entry
-  and vector are replaced in the same transaction. A compare-and-set on `digest_version` (`expected_version`)
-  refuses a stale writer. Provenance is recorded per reading: `author` (`AUTHOR_KINDS`: `entity-mind`,
-  `capability-model`, `operator`, `mechanical`), `reader` (`{provider, model, thinking}`), `sources` (ADR 0003
-  `SourceRef` dicts; mandatory for a model author), `cause` (`REWRITE_CAUSES`). Refusals are named results
-  (`stale`, `protected_kind`, `empty_text`, `embedder_unavailable`, `closed`, ...) and write nothing.
-- **`narrate_dream`**: a narration beside a dream's mechanical summary (`attributes.narration`), versioned; the
-  digest, the signals, the keyword index and the vector are untouched.
-- **`revert_digest`**, **`versions`**, **`current_of`**, **`record_understanding`**, **`understanding_fields`**.
-- **The journal's version family** `UnderstandingVersion` (`{prefix}versions`, on the journal's seq axis; version 0
-  is the original, captured at the first rewrite), with `versions(...)` and `revision_records(...)` on both journal
-  backends.
-- **Replay**: the opt-in family `revision` (`OPT_IN_FAMILIES`; the default six families are unchanged). Display
-  blocks of formed records carry `digest_method`, `digest_version`, `version_count`, `authored_by`, `reader`,
-  `understood_at`, `cause`; cards add `target`, `target_type`, `card_revision`, `source_count`; dreams `narrated`,
-  `narration_version`; superseded records `replaced_by`. Binding and revision envelopes carry the digest text.
+- **Open homes that form records with `MemorySystem(..., task_queue=True)`.** A missing title or summary is always
+  stored beside the task that writes it, so these refuse a home without a task queue, before writing anything:
+  `world_model_pass`, `dream_pass`, `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass`,
+  `sleep_pass`, `communities_pass`, `embed_missing`, the ripple verbs, a `remember_many` record with `pending=...`,
+  and an `engram` whose unnamed spark items get no authored title (`report_only` reads still run). `declare_pending`
+  and `rearm_pending` answer `no_task_queue`. The queue adds its tables (`memq_*`) to the home's file on first open.
+- **Pass an `author` callable.** Memory calls no model: `world_model_pass` / `world_model_update`, `dream_pass`,
+  `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass`, `sleep_pass`, `communities_pass` and `engram`
+  take `author(kind, body, context) -> {title, summary, author, reader, sources}`. Without it, or when it fails, the
+  records still form, pending, and every result's `authoring = {authored, failures}` names the failures
+  (`no_author_supplied`, `author_raised`, `invalid_result`).
+- **Treat a title as optional while it is pending.** `MemoryRecordInput.title` may be `None` with
+  `pending=("title",)`, and every read serves a pending title as `None` (`MemoryHandle.title` is `Optional[str]`,
+  display blocks and `record_understanding` carry `pending`), never a placeholder or words from the body. A host's
+  drainer completes `title.author` / `digest.author` tasks with `retitle` / `rewrite_digest`; records stored before
+  0.5.0 without an authored title or summary are brought into the same state with `declare_pending`.
+  `MemoryRecordInput` raises `ValueError` for an empty title without `pending=("title",)`, and for a title given
+  with it.
+- **Memory's passes no longer store their own titles or summaries.** Cards, dreams, offers, consolidation candidates
+  and the dedup day summary form authored or pending; their bookkeeping text ("World model: ...", "Dream: ...") is
+  only the provisional body their tasks author from. `world_model_pass` no longer queues `card.author` for new cards
+  (`digest.author` owns the body; `card.author` remains for legacy cards).
+- **Hosts that fence writes** pass `commit_guard=` and wrap the moment they flip it in `system.write_barrier()`.
+  Two residual windows remain: a LanceDB store takes no write lock (a LanceDB write whose guard passed before the
+  flip may land after it, at most one per concurrent writer; `BarrierHold.uncovered` names it with a `#FALLBACK`
+  warning), and the two SQLite autocommit commit points (`SQLiteTripleStore._write_pin` without a cursor, the
+  off-file graph's `mark_journal_applied`) are covered only by a barrier taken on the same handle.
+- **Community records are never embedded and never recalled**: a store's embedding paths, recall shelves, keyword
+  indexes and memory scans skip kind `community` (`canonical_text.NON_EMBEDDED_KINDS`).
+- `CANONICAL_TEXT_VERSION` is 3 (stored text is never cut). Record digests render as before; a plain assertion
+  with an `original_context` longer than 400 characters keeps its earlier text and vector until `reembed_store`
+  re-derives it.
+- `version_count` is 1 for a record that was never rewritten (was 0); `digest_version` stays 0.
+- `apply_redigestion` is deprecated (it forms a new record with zero usage); use `rewrite_digest`.
 
-- **The memory task queue** (backlog 0060): `MemorySystem(task_queue=True)` keeps `memq_tasks` / `memq_log` /
-  `memq_windows` in the home's file. Formation enqueues `digest.rewrite` for labelled-mechanical records,
-  `world_model_pass` enqueues `card.author`, `dream_pass` enqueues `dream.narrate`. `system.tasks`
-  (`MemoryTaskQueue`): `enqueue`, `select_for_window(budget_seconds, sensitivity)` (activation-driven: the ADR 0001
-  logistic gate over each task's strength, strongest first, bounded by the wall-time budget and a hard cap, every
-  live task selected or left out with a reason), `claim` / `ack` / `release` (leases, attempts, defer without
-  spending an attempt), `left_out`. `understanding_debt`, `enqueue_debt` (the backfill, dry-run by default) and
-  `task_packet` on `MemorySystem`. The understanding verbs accept `task_id=` and settle the task in their own
-  transaction. `activation_gate.py` holds the gate and every threshold with its calibration.
-- `maintenance_due(..., tasks=)` reports pending memory tasks and is due when ripple or night-only work is pending.
-- **Ripple v1** (backlog 0061, [ADR 0001](docs/adr/0001-altered-memories-ripple.md)): `seed_ripple` (the entity's
-  revise election, or a rewrite whose reader reported `revised` / `overturned`; surprise kept as words),
-  `settle_reconsideration`, `form_consolidation` (night only), `refresh_ripples`, `revert_ripple`, reads `ripples` /
-  `ripple`. Candidates by relation, by the cards built on a memory and by vector similarity; potential = impact x
-  reliance x 0.5, accumulated per ripple, gated by the logistic (floor 0.1); at most 2 hops and 20 reconsiderations
-  per ripple and per window, each memory once per ripple; protected kinds never reconsidered; every gate decision
-  stored with its potential (`memq_ripples`, `memq_ripple_gates`).
-- `rewrite_digest` results carry `cosine_distance` between the old and new vectors when both exist.
-- **`retitle`** (on `MemorySystem` and as a module function; operator 2026-11-08, root ADR 0054: a title is an
-  explicit, complete, readable phrase): changes ONLY a record's title, in place, for every kind, interest, lesson,
-  realization and every diary entry included (their protection covers the body; a title the runtime cut at formation
-  is not the entity's words). The body, keywords and the digest's reading stay byte-identical; the canonical text,
-  keyword-index entry and vector follow the new title in the same transaction. The previous title is kept as a
-  version (field `title`, version 0 = the title the record held, with the provenance of the reading that wrote it);
-  `title_version` is the compare-and-set; `title_provenance` records author, reader, sources and cause. Refusals:
-  `empty_title`, `hash_chained` (an owner-direct diary entry whose `entry_hash` attests its title), `closed`,
-  `stale`, `embedder_unavailable`; an unchanged title is `unchanged` with no version. `revert_digest(...,
-  field="title")` restores an earlier title. This is the verb the repair of the runtime's cut titles needs (170
-  interests, 38 lessons, 222 diary entries, 35 cards, 51 episodes in the live homes).
-- A digest or card reading that changes the title (`rewrite_digest(..., title=...)`, a revert) writes the title
-  version too, in the same transaction (the result carries `title_version`), so `versions(record_id,
-  field="title")` lists every title; a concurrent title change makes such a write `stale` instead of putting back the
-  title it read. A revert of a record's words keeps a title retitled since its current reading (undoing words never
-  re-cuts a repaired title).
-- Replay: a diary entry's `revision` envelopes (its title versions) are sealed like its display block (payload
-  `text`, `title` and `keywords` emptied, `redacted: "diary"`); the version row stays whole in the journal.
-- **`rekey_world_model`** (module function in `world_model_alias`, and `MemorySystem.rekey_world_model`; operator
-  2026-11-08, the title repair): moves the standing card keyed `old_key` to `new_key` IN PLACE and keeps `old_key`
-  as an alias. An interest's card is keyed on the subject head of the interest's title, so a retitled interest made
-  the next `world_model_pass` form a second card beside the standing one (63 standing cards held in ephemeral and
-  nerin); `alias_world_model` could not move a card onto a key with no card. The card keeps its record id,
-  assertion id, revision, evidence fingerprint, sources, text, title, keywords, vector, edges, versions and usage;
-  the old key resolves to it (`alias_map`, mentions, `world_model_update`), and the pass groups evidence under either
-  key onto it, so it forms no new card. The move is a version row in the journal (new version field `target`:
-  version 0 the old key, version N+1 the new one with author, reader, sources, cause, reason and `rekey: {from,
-  to}`; `target_version` / `target_provenance` on the row). No embedder is called and pending `card.author` tasks
-  stay. Refusals: `unknown_card`, `target_taken` (a different card already stands on the new key: merging is not
-  this verb), `alias_bound_elsewhere`, `stale`; a replay is `unchanged`. `revert_digest(..., field="target")` refuses
-  with `use_rekey_world_model`. Proof on a copy of nerin's pilot home: before the re-key a report-only pass would
-  form 3 cards on the new keys; after it, none (3 of 3 `unchanged`, 15 standing cards before and after, same ids).
-- `REWRITE_CAUSES` gains `repair`: a correction of what a process wrote wrong (a title cut at formation, a card key
-  derived from it), so the title repair no longer rides `backfill` with a `repair` sub-key.
+### Added: titles and summaries are always authored
+
+- `MemoryRecordInput(pending=(), pending_failure=None)`: `pending` is a subset of `PENDING_FIELDS`
+  (`{"title", "summary"}`). A pending record carries `attributes.pending = {title, summary, since, attempts}` (plus
+  `failure` when authoring failed) and `remember_many` queues its authoring task (`PENDING_TASK_KINDS`:
+  `title.author` / `digest.author`, capability `summaries`, `FORMATION_PRIORITY`). A pending summary is refused on
+  the entity's own words (`UNDERSTANDING_PROTECTED_KINDS`), except a public diary projection's summary.
+- The host's `author` callable on every pass (`formation_authoring`): authored fields are stored with their
+  provenance (`title_provenance`, `understanding`, version 0, cause `formation`) and owe no task; a standing record is
+  never authored again.
+- `engram(..., author=None)`: a spark item without a `name` has its title authored before it forms (it was
+  `<section>-<ordinal>`, such as `trait-0`), else it forms pending; a `name` stays the title. `EngramResult.authoring`.
+- `retitle(record_id, *, title, author, cause, expected_version, ...)`: changes only a record's title, in place, for
+  every kind; the body and the reading stay byte-identical, the previous title is kept as a version, `title_version`
+  is the compare-and-set. Refusals: `empty_title`, `hash_chained` (an owner-direct diary entry whose `entry_hash`
+  attests its title), `closed`, `stale`, `embedder_unavailable`. A digest or card reading that changes the title
+  writes the title version too.
+- `declare_pending(record_id, *, fields=("title", "summary"), cause="repair", reason=None)`: a stored record whose
+  title or summary was never authored gets exactly the state of a record formed pending (marker and tasks in one
+  transaction; a declared title is stored `None`, its old title kept as a version). Idempotent (`already_pending`).
+- `rearm_pending(record_id, ...)` re-queues the authoring task of a pending field whose tasks all ran out, and
+  `pending_records(*, scopes=None, live_task=False)` lists the records still pending, with their live and unowned
+  fields.
+- A public diary entry's summary is authored like any record's (at formation, or declared pending for an existing
+  entry); its body, the book's entry and every hash chain are untouched. Owner-direct, hash-chained and private
+  entries stay protected (`diary.diary_summary_refusal`).
+- `rekey_world_model(old_key, new_key, *, scope, owner_id, author, cause, ...)`: moves a standing card to a new key
+  in place and keeps the old key as an alias, so a retitled interest's next `world_model_pass` forms no second card.
+  An untitled interest's card is keyed `topic:<graph id>` and `retitle` re-keys it when the title lands
+  (`card_rekey` in the result).
+- `REWRITE_CAUSES` gains `repair` (a correction of what a process wrote wrong).
+
+### Added: understanding rewritten in place (0059)
+
+- `rewrite_digest`: replaces a record's digest, title and keywords in place. The record keeps its graph id, digest
+  assertion id, edges, usage counts and journal; its keyword entry and vector are replaced in the same transaction.
+  `expected_version` is a compare-and-set; each reading records `author` (`AUTHOR_KINDS`), `reader`
+  (`{provider, model, thinking}`), `sources` (mandatory for a model author) and `cause`. Refusals are named results
+  that write nothing. Results carry `cosine_distance` between the old and new vectors.
+- `narrate_dream` (a narration beside a dream's summary), `revert_digest`, `versions`, `current_of`,
+  `record_understanding`, `understanding_fields`; `author_world_model` rewrites a card in place by default (accepts
+  `reader`, `sources`, `expected_fingerprint`; `in_place=False` keeps the revision path).
+- The journal's version family `UnderstandingVersion`, and the opt-in replay family `revision`
+  (`OPT_IN_FAMILIES`; the default six families are unchanged). Display blocks carry the reading's provenance
+  (`digest_method`, `digest_version`, `version_count`, `authored_by`, `reader`, `understood_at`, `cause`).
+- Every record says who wrote its words, when and why, even when its writer stamped nothing: a row without a stamp
+  reads as its formation reading, derived from its origin (`understanding.reading_provenance`); `remember_many`
+  records that reading at formation.
+
+### Added: the memory task queue (0060) and ripple v1 (0061)
+
+- `MemorySystem(task_queue=True)` keeps its queue in the home's file (`memq_tasks`, `memq_log`, `memq_windows`,
+  `memq_ripples`, `memq_ripple_gates`, `memq_maintenance`; a private in-memory database for the in-memory store). `system.tasks` (`MemoryTaskQueue`): `enqueue`, `select_for_window(budget_seconds, sensitivity)` (activation
+  through ADR 0001's logistic gate, strongest first, bounded by the window's time; every live task selected or left
+  out with a reason), `claim` / `ack` / `release` (leases, attempts, defer without spending an attempt), `left_out`.
+  `understanding_debt`, `enqueue_debt` (the backfill, dry-run by default) and `task_packet` on `MemorySystem`. The
+  understanding verbs accept `task_id=` and settle the task in their own transaction.
+- A formed record and the tasks it owes commit together (`memory_tasks.form_with_tasks`): one transaction on the
+  SQLite home; on the in-memory pair a failure rolls back exactly that attempt's rows, bindings and tasks.
+- `maintenance_due(..., tasks=)` reports pending tasks and is due when ripple or night-only work is pending.
+- Ripple v1: `seed_ripple`, `settle_reconsideration`, `form_consolidation` (night only), `refresh_ripples`,
+  `revert_ripple`, and the reads `ripples` / `ripple`. Candidates by relation, by the cards built on a memory and by
+  vector similarity; impact decays per hop through the logistic gate (floor 0.1), at most 2 hops and 20
+  reconsiderations per ripple and per window; protected kinds are never reconsidered; every gate decision is stored
+  with its potential.
+
+### Added: communities (topics)
+
+- A community is a formed record of kind `community` (`abstractmemory.communities.COMMUNITY_KIND`), one record per
+  version, with a stable `attributes.community_key` across versions. `communities_pass(system, *, scopes, owner_id,
+  author, cancelled, ...)`, which a host runs during its sleep, detects them (deterministic warm-started Louvain over
+  the vectored records, at most 5 rounds), attaches vector-less records through their engraved relations, lays them
+  out, authors the changed ones and writes the version in one guarded transaction. `embed_missing(...)` embeds the
+  formed records that have no vector with the store's own embedder.
+- Placement at formation: on a `task_queue=True` home, `remember_many` places every record it forms in its
+  provisional community inside the formation's transaction (nearest centroid, else the majority community of its
+  formation edges) and writes one `placed` journal event (an audit kind, never scored).
+- Reads (`abstractmemory.community_index`): `communities(system, *, scopes, owner_id, version=None)` (the payload
+  version 2 a host serves, with each community's `facts`: span, activity, hub, bridges, paths,
+  `changed_since_last_sleep`) and `community_of(system, record_id)`. A community record replays like any formed
+  record; its binding envelope draws only `refines`.
+
+### Added: sleep cadence
+
+- `records_since_maintenance(system, *, scopes=None, after=None) -> {count, last_maintenance_at, since,
+  boundary_source, fragmented}`: the host's idle → sleep threshold. `sleep_pass` records when a whole night ran to
+  its end (a cancelled, `report_only` or anchored night records nothing; a cycle window is recorded as kind `cycle`
+  and does not reset the count); `after` is the host's own last maintenance, and the later of the two is the
+  boundary. `fragmented = {count, share, provisional, unvectored, pending}` says how much of the live home a sleep
+  would make whole. `MemoryTaskQueue.record_maintenance` / `last_maintenance`.
+- `sleep_pass(..., cancelled=None)`: the host's Stop check, read at every sub-phase boundary and immediately before
+  the completion marker; a stopped night records no completion and carries `cancelled_after`.
+
+### Added: the Stop fence hooks
+
+- `MemorySystem(..., commit_guard=None)`: the host's `guard(where)` is installed on the store and journal and called
+  inside every write transaction immediately before its COMMIT, once per outermost transaction, whoever writes (the
+  facade, `MemoryGraph`, the task queue, the sleep passes). Raising rolls the write back; nothing of it lands and the
+  exception reaches the caller unchanged. A store or journal type whose writes do not call a guard is refused
+  (`TypeError`), and so is a second, different guard (`ValueError`).
+- `MemorySystem.write_barrier(*, timeout=None)` / `write_barrier(system, *, timeout=None)`: a context manager the
+  host wraps around its flip of the guard. It holds this home's in-process locks in the writers' own order and one
+  `BEGIN IMMEDIATE` per distinct SQLite file, so every transaction whose guard passed commits before the block and
+  every later one calls its guard after it. It writes nothing; `WriteBarrierTimeout` names the lock or file still
+  held.
 
 ### Changed
 
-- **`engram(..., author=None)`: birth titles are authored, never `trait-N`** (operator rule 2026-11-09/10: every
-  memory's title and summary is authored; castor carries two `trait-0` from 2026-07-07). A spark item without a
-  `name` was titled `<section stem>-<ordinal>` (`value-N`, `purpose-N`, `trait-N`, `limit-N`). It now has its title
-  authored BEFORE it forms by the passes' `author(kind, body, context)` callable (`formation_authoring`; body = the
-  statement, `context.pass = "engram"`, `fields = ["title"]`), stored with `title_provenance`; on a failure or with
-  no `author` it forms PENDING (title None, its `title.author` task, `pending.failure` reason `author_raised` /
-  `invalid_result` / `no_author_supplied`). A `name` stays the title as given (operator `spark-v<N>`). The summary
-  is never asked for (the statement is a protected body). A replay never authors again and repeats the stored
-  title, so it queues no task. `EngramResult.authoring` = `{authored, failures}`, also in `to_dict()`. Behaviour
-  change: an unnamed item with no authored title needs a home opened with `task_queue=True` (every runtime and
-  gateway home is); a queue-less home refuses that birth before writing anything. docs/api.md names the exact
-  legacy label pattern the host's sleep repair treats as a placeholder. tests/test_engram.py (both substrate
-  pairs), mutants E1-E8 red on a scratch copy.
-- **A title and a summary are mandatory; a missing one is PENDING, with its task** (operator rulings 2026-11-09,
-  root backlog 1146: "the title + summary must ALWAYS exist for any memory. those are mandatory metadata of all
-  memories"; "no fallback; log the failure to untracked/ and fix it at the source"). `MemoryRecordInput` gains
-  `pending` (a subset of `PENDING_FIELDS` = {"title", "summary"}): `pending=("title",)` with title None (or "")
-  forms the record untitled, `"summary"` marks the given digest provisional (refused on a protected kind, whose body
-  is the entity's own words). The record carries the marker `attributes.pending = {title: bool, summary: bool,
-  since: <formation time>, attempts: <claims so far>}` (reserved: a host attribute never sets it), and the same
-  `remember_many` queues the authoring task (`PENDING_TASK_KINDS`: `title.author` / `digest.author`, capability
-  `summaries`, strength 1.0, `FORMATION_PRIORITY` 5, ahead of every `digest.rewrite`). A null title not declared
-  pending, or a pending record on a home without a task queue, is refused before anything is written. Each claim
-  of a pending task mirrors its attempt into the marker. `retitle` / `rewrite_digest` (named task or not) complete
-  the live pending tasks and clear the marker (`pending_cleared` in the result); a revert to a null title
-  (`null_title`) or to the provisional digest (`provisional_summary`) is refused. `understanding_debt`, `enqueue_debt`, `select_for_window` and `task_packet` handle both
-  kinds (a diary target's packet is redacted: its words come through the book by `entry_id`). Reads serve the
-  missing title as `None`, never `""`, a placeholder or words from the body: recall handles (`MemoryHandle.title` is
-  `Optional[str]`; a formed record no longer falls back to its "s p o" preview), replay display blocks (plus
-  `pending`, diary blocks too), `record_understanding` (plus `pending`), `recent_records`, `explain_recall`'s
-  origin, identity-card briefs, `alive_drives`, the identity review, probe hits, situate rows, task items and tend
-  seeds; `short_title(None)` is `None`; the canonical text (keyword index, FTS, vector) is the body alone. An
-  untitled interest's world-model card is keyed `topic:<the interest's graph id>` (new
-  `world_model.interest_target`; the pass used to read the digest when the title was empty), and when its title
-  lands `retitle` re-keys the card to the title's subject head through `rekey_world_model` (`card_rekey` in the
-  result; the id key stays an alias), so the next pass forms no second card. The candidate miner lets an untitled
-  interest own no theme. Title version 0 of a record formed pending holds `None` (`UnderstandingVersion.text` and
-  `.title` may be `None`; the SQLite journal's NOT NULL columns store `""` and read it back as `None`). The
-  wake-cue dedup pass no longer tokenizes a missing title as "None". `tests/test_untitled_records.py` (117 cases,
-  both substrate pairs; 15 mutants red).
-- **Memory's own passes never write a title or a summary: what they form is PENDING** (the same rulings; the
-  runtime's request after it moved its own formation to authored metadata). Every record a memory pass forms is
-  either authored or formed with `pending` and its `title.author` / `digest.author` tasks, its bookkeeping text kept
-  only as the provisional body those tasks author from; no "World model: <subject>", "Dream: …", "Lesson candidate:
-  …", "Consolidated: …" or "Day …: N near-identical …" title is stored any more.
-  - `world_model_pass` (both cadences): each card forms `pending=("title", "summary")`; its evidence briefing
-    (`mechanical-card-v2`, or the carried authored lead plus "Since then", `authored-card-v1+delta`) is the
-    provisional body. An AUTHORED title (one carrying `title_provenance`: written by `retitle` or a card reading)
-    carries to the next revision with `title_provenance.carried_from` (`pending=("summary",)`); the legacy
-    "World model: <subject>" label never carries. Target, evidence fingerprint, sources, revision, aliases and the
-    authored-lead bookkeeping are unchanged, and the card key never depends on the title. The pass no longer queues
-    `card.author` (the `digest.author` task owns the body; `card.author` stays for legacy cards); a revision
-    supersedes the prior card's live `title.author` / `digest.author` / `card.author` tasks
-    (`memory_tasks.supersede_revised_card`, replacing `enqueue_card`). Verdicts carry `pending`.
-  - `author_world_model`: in place, the authored text completes a pending summary (the marker clears, the
-    `digest.author` task is done) and leaves a pending title pending; handing back the provisional body itself
-    raises. `in_place=False` forms the authored summary with the prior's authored title, else `pending=("title",)`.
-  - `alias_world_model` carries the card's authored title and summary; what is not authored forms pending.
-  - `dream_pass`: the dream forms `pending=("title", "summary")`, the night's composed text its provisional body;
-    signals, proposals, questions and the `dream.narrate` task are unchanged.
-  - `mine_candidates_pass`, `consolidation_pass`, `wake_cue_dedup_pass`: offers, consolidation candidates and the
-    dedup day summary form `pending=("title", "summary")`; the passes' labels stay in their results only. The dedup
-    pass recognizes its own summary by `provenance.source` (`doctoring.DEDUP_SOURCE`) once its authored summary
-    replaced the `mechanical-dedup-v1` label.
-  - `apply_redigestion` hands a source's pending title on to the new record (it used to refuse the entry).
-  - These passes, and `sleep_pass` once for the whole night, refuse a home without a task queue before writing
-    anything (`memory_tasks.require_task_queue`); `report_only` reads still run.
-  - The drainer's seam: `rewrite_digest` completes a pending card summary (routed to the card's own in-place write,
-    field `card`: authored lead, `authored-card-v1`, evidence and key untouched; new refusal `card_keywords`) and a
-    pending dream summary (in place); outside a pending summary a card and a dream keep `use_author_world_model` /
-    `use_narrate_dream`. `author_card_in_place` takes an optional `title`. A card's pending summary clears on a
-    `card` reading, and its provisional body is never restored (`revert_digest` → `provisional_summary`).
-    `understanding_debt` / `enqueue_debt` count a card whose summary is pending as `title.author` /
-    `digest.author` debt, never `card.author`. Display blocks and `record_understanding` already carry `pending`.
-  - `tests/test_pending_formations.py` (32 cases, both substrate pairs; 19 mutants red on a scratch copy); the test
-    homes that run these passes open with `task_queue=True` (the shared `system` fixture too).
+- Stored text is never cut: a world-model card quotes its evidence whole, a dream signal's `fragment` is kept whole
+  (`dream_signals.FRAGMENT_CAP` is gone), an assertion's `original_context` renders whole in the canonical text, a
+  plain assertion's "s p o" display title and an imported file's prose are kept whole. Readers shorten text at
+  display time (`canonical_text.short_title`).
+- Titles are explicit and whole: a card formed from an interest keeps the interest's whole subject head as its
+  target; lesson-candidate, interest-candidate and group-offer titles are no longer bounded.
 - `world_model_pass`: an interest whose title heads to an alias of a card counts as an election of the card's
-  primary key (it keeps clearing the evidence floor there), as its evidence already did.
-- `author_world_model` rewrites the card in place by default (same id, revision and evidence; the previous text is
-  kept as a version). It accepts `author` as `{kind, id}` with `reader` / `sources`, and `expected_fingerprint`
-  (refused when the card's evidence changed since). `in_place=False` keeps the revision-N+1 path.
-- `dream_pass` returns `signals` and `signals_omitted`, the same stream the dream record carries (empty on a quiet
-  night).
+  primary key.
+- `dream_pass` returns `signals` and `signals_omitted`.
 - `journal_cold_cut` copies the version family and the task queue.
-- Stored text is never cut (root ADR 0054): a world-model card quotes its evidence gists whole (was 150
-  characters), a dream signal's `fragment` is kept whole on the dream record and in its digest (was 200; signals no
-  longer carry `fragment_truncation`, and `dream_signals.FRAGMENT_CAP` is gone), and an assertion's
-  `original_context` renders whole in the canonical text (was 400). `CANONICAL_TEXT_VERSION` is 3: record digests
-  render as before; a plain assertion with a longer context keeps its earlier text and vector until
-  `reembed_store` re-derives it. Readers shorten text at display time.
-- Also kept whole: a plain assertion's "s p o" title in context-snapshot display rows (`display_title`, was 120
-  characters; the new read-side `canonical_text.short_title` gives shelf handles their compact title), and an
-  archive-imported file's prose as its record digest (was 480; imported records no longer carry `_truncation`).
-- Titles are explicit and whole (root ADR 0054; operator 2026-11-08, nerin's Interests panel: "the title of any
-  lesson, question, interest, world model must be explicit and easy to read"): a world-model card formed from an
-  interest keeps the interest's whole subject head as its target and its title "World model: <head>" (was cut at 8
-  words, e.g. "first-person accounts as the bridge between aggregate crisis"; no existing card re-keys, since every
-  interest title stored so far is the runtime's 8-word cut); a lesson candidate's title carries the resolved
-  question's words whole (was a 90-character head inside a 120-character title), and interest-candidate and
-  group-offer titles are no longer bounded at 120 characters.
+- The identity card's `lessons` section also counts the lessons written in the diary (`diary_type='lesson'`), once
+  each when a lesson record derives from the entry.
+- The identity card's record briefs carry the reading fields (`authored_by`, `understood_at`, `cause`,
+  `digest_version`, `version_count`); diary-redacted replay blocks carry `authored_by`, `understood_at` and `cause`,
+  never the entry's words.
 
 ### Fixed
 
-- **A night stopped during its final stage records no completion** (Codex review 3 2026-11-09, finding 2, memory half): `sleep_pass` recorded a completed night in `{prefix}maintenance` after the dream stage even when the host had stopped the night while the dream was being authored, resetting the idle -> sleep boundary (`records_since_maintenance`). New `sleep_pass(..., cancelled=None)`: an optional zero-arg callable, True once the host stopped the night (the runtime passes its turn cancellation check). It ends the night at every sub-phase boundary like `should_continue`, and is checked again immediately before the completion marker: a stopped night records nothing and its result carries `cancelled_after` = the last stage that ran (`dream` for a Stop during the dream's authoring). Cycle windows likewise. Tests in `tests/test_records_since_maintenance.py`, both substrate pairs.
-- **Identical authored words settle a pending field** (Codex review 3 2026-11-09, finding 7): `understanding._apply` (every in-place verb: `rewrite_digest`, `retitle`, a card's authored reading) answered `unchanged` for byte-identical words BEFORE it cleared the pending marker or completed the task. The runtime's drainer takes `unchanged` as success, so the summary stayed pending and its `digest.author` task stayed leased; the lease expired, the task was claimed again (or re-armed once exhausted) and the same words came back, forever. Clearing a pending marker now counts as a change: the write is `applied` with `pending_cleared`, the authored reading is recorded as a version (model author, reader, sources; version 0 keeps the provisional words), the marker cleared and the task completed in one transaction (named or not). The canonical text is unchanged, so no embedder is called and the vector stands (`vector_rewritten: false`). Identical words on a record with nothing pending stay `unchanged`. `tests/test_identical_authoring_settles.py`, both substrate pairs.
-- **A failed formation undoes only its own writes** (Codex review 3 2026-11-09, finding 3): on the in-memory pair `form_with_tasks` read which rows were missing BEFORE its lock and, when a later write failed, removed every one of them, so a writer that lost the race to another writer of the same record and then failed deleted the winner's record (its tasks and binding stayed); a failing second binding of a two-record batch left the first binding behind. Now the rows embed outside the lock (`InMemoryTripleStore._prepare_add`) and are inserted inside it (`_insert_prepared`, which names the rows THIS call inserted, a row stored meanwhile skipped); the bindings this attempt stored are tracked (`InMemoryJournal._append_binding_tracked`; a `SQLiteJournal` beside an in-memory store appends the batch's bindings in one transaction); a failure rolls back this attempt's tasks and removes exactly its rows and bindings, the in-memory seq axis rewound with them (gap-free, SQLite parity). Another store or journal type on an opted-in in-memory home raises `TypeError` (none can undo a failed formation). The SQLite home was already one transaction. `tests/test_formation_concurrency.py`: a loser that read every row missing, then replays the winner's first binding and fails its second, leaves the winner's two records whole; two concurrent writers of one record form it once; a batch whose second binding fails persists nothing and leaves no seq hole; three pairs (both substrate pairs and an in-memory store over a SQLite journal).
-- **Formation and rewriting no longer deadlock on the in-memory pair** (Codex review 3 2026-11-09, finding 4): the store and its task queue had two locks taken in opposite orders. Formation (`form_with_tasks`) held the queue's lock and then took the store's; a rewrite (`rewrite_digest`, `retitle`, every `understanding._apply` write) held the store's while its task hook (`on_rewrite`) took the queue's. A `MemoryTaskQueue` over an `InMemoryTripleStore` now takes the store's own reentrant lock: one transaction lock for store and queue on both pairs (the SQLite home's queue always rode the store's lock). `tests/test_formation_concurrency.py` forces the race with a barrier at each side's lock boundary (a deadlock fails a join timeout, never hangs the run).
-- **A formed record and the tasks it owes commit together** (Codex review 2026-11-09, finding 11): `remember_many` stored the records before it queued their tasks, so a failed enqueue left a pending record (title `None`, `attributes.pending`) with no task, pending forever. On a `task_queue=True` home formation now goes through `memory_tasks.form_with_tasks`: the tasks are planned first (`plan_formed`, a pure read; a summary depends on its batch siblings' rewrites, cost hints read the batch's own rows), then the rows, their keyword entries, the bindings (journal in the store's file) and the tasks are written in ONE transaction on the SQLite home; on the in-memory pair the queue transaction opens first and commits last, a failure rolling the tasks back and removing the batch's new rows. `declare_pending` no longer answers `already_pending` with a null task id: an already-pending field no live task owns is repaired (through `rearm_pending` when nothing new is declared, outcome `rearmed`; in the declaration's own transaction beside a new field), and a healthy record stays idempotent. Internals: `SQLiteTripleStore._prepare_add` / `_insert_rows_on` / `_after_add_commit` (`add` unchanged), `SQLiteJournal._append_binding_on`, `InMemoryTripleStore._discard_formed`.
-- **A done task carries no stale error**: `ack` and a write completing a task (named by `task_id`, or a pending field's task completed unnamed) clear the task's `error`, which a failed attempt had set, so a completed authoring task no longer reads as failed; each failure reason stays in the task log (`retry` / `defer` rows).
-- `tests/test_phase_artifact_pin.py` pins abstractentity's phase spec v25 (814c574): `initial_phase` is `idle`, a status with no phase key (the newborn is idle; v1-v24 ruled sleep).
-
-- The identity card's `lessons` section counts the lessons he wrote in his book: diary entries with
-  `diary_type='lesson'` join the `kind=lesson` records (same brief shape, plus `source: "diary"`), newest first,
-  and `total` counts both. A book lesson that a believed lesson record was derived from (a `derived_from` edge to
-  the entry, or the record's `entry_id`) shows once, as that record. Before, an entity whose lessons were all in
-  his book (nerin: 16) showed none.
-- Every record says who wrote its words, when and why, even when its writer stamped nothing (operator
-  2026-11-08: a lesson nerin elected at a visit close read "Who wrote it was not recorded · why: not computed
-  yet"). One derivation, `understanding.reading_provenance`, serves `record_understanding`, the replay display
-  blocks (binding and revision rows), the version 0 a first rewrite keeps, the identity card's briefs and
-  formation. The writer's stamp (`attributes.understanding`: a rewrite, a backfill, a ripple consolidation) always
-  wins. A row nobody stamped reads as its formation reading: `cause: "formation"`, `understood_at` = its
-  `observed_at`, and `authored_by` from its origin: a `mechanical*` digest_method gives `{kind: "mechanical", id:
-  <method>}`; a spark identity record (`attributes.spark_version`) `{kind: "operator", id: "spark-v<N>"}`; a row
-  whose provenance names the operator as actor (an archive import) `{kind: "operator", id: <source>}`; a kind only
-  the entity writes (`ENTITY_WORDS_KINDS`: lesson, interest, realization, observation, question, every diary entry,
-  a value, purpose or trait he elected) `{kind: "entity-mind", id: <owner>}`; anything else stays `unrecorded`.
-  Stored rows are not rewritten. `remember_many` now records the same reading at formation
-  (`attributes.understanding`, version 0) when the caller stamped none and the author is known.
-- `version_count` is 1 for a never-rewritten record (it was 0: the record has one reading); `digest_version` stays
-  0. The identity card's record briefs (interests, lessons, questions, problems, first moments) carry the reading
-  fields (`authored_by`, `understood_at`, `cause`, `digest_version`, `version_count`, ...); diary-redacted replay
-  blocks carry `authored_by`, `understood_at` and `cause`, never the entry's words.
+- `records_since_maintenance(...)["fragmented"]["count"]` counts each live record once: a record both vector-less
+  and pending, or placed and pending, is one fragmented record, and a placement whose record has been closed since
+  counts in `provisional` only, so `share` never exceeds 1.0. The per-kind counts are unchanged.
+- Identical authored words settle a pending field: an in-place write whose words equal the provisional ones clears
+  the marker, completes the task and records the reading (it answered `unchanged` and left the task leased).
+- On the in-memory pair, formation and rewriting share one lock (they could deadlock), and a failed formation
+  removes only its own rows and bindings, never a concurrent writer's.
+- `form_with_tasks` calls the commit guard immediately before its COMMITs, after the rows, bindings and tasks.
+- A completed task no longer carries the error of an earlier failed attempt (the failure stays in the task log).
+- The wake-cue dedup pass no longer tokenizes a missing title as "None".
 
 ### Deprecated
 
-- `apply_redigestion` (emits `DeprecationWarning`): it forms a new record with zero usage. Use `rewrite_digest`.
+- `apply_redigestion` (emits `DeprecationWarning`): use `rewrite_digest`.
 
 ## [0.4.0] - 2026-10-27
 

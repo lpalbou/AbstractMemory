@@ -121,7 +121,7 @@ def main() -> int:
     store = SQLiteTripleStore(db, embedder=born_embedder,
                               embedding_pin={"model_id": born_embedder.model})
     journal = SQLiteJournal(db)
-    system = MemorySystem(store=store, journal=journal, embedder=born_embedder)
+    system = MemorySystem(store=store, journal=journal, embedder=born_embedder, task_queue=True)
     engram(system, DEFAULT_SPARK_TEMPLATE, scope="self", owner_id=CLEAN_OWNER)
     [ep1] = system.remember_many(
         [MemoryRecordInput(kind="episode", title="Harbor walk",
@@ -182,7 +182,7 @@ def main() -> int:
     # ---- M2 + M1b: lease windows around the reembed repair ---------------
     store = SQLiteTripleStore(db, embedder=born_embedder)
     journal = SQLiteJournal(db)
-    system = MemorySystem(store=store, journal=journal, embedder=born_embedder)
+    system = MemorySystem(store=store, journal=journal, embedder=born_embedder, task_queue=True)
     try:
         from abstractruntime.identity.lease import (
             HomeLeaseHeld, acquire_home_lease, read_home_lease)

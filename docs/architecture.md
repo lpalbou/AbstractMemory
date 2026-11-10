@@ -66,7 +66,7 @@ There is no delete surface anywhere in the package:
 - Visibility is a `ScopeBinding` fold (latest per record/scope/owner wins): `hidden` removes a record from ranked retrieval in that scope pair only; re-binding `indexed` restores it.
 - Forgetting is decay of retrieval strength plus closures and silencing. Storage never decays; only the temporal-access signal does. The global access count (`selected_count`) never decays at all.
 
-A record's understanding is the one mutable cell. `rewrite_digest` replaces a record's digest (its summary text, title and keywords) in place: the record keeps its graph id, its digest assertion id, its edges, its usage counts and every journal record, and the previous reading stays in the journal as a version with its author, model, sources and cause (`versions`, `revert_digest`). `author_world_model` does the same for a card's text, and `narrate_dream` adds a narration beside a dream's summary. The verbatim behind a record is never touched, and nothing is compacted or summarized-and-replaced.
+A record's understanding is the one mutable cell. `rewrite_digest` replaces a record's digest (its summary text, title and keywords) and `retitle` its title alone, in place: the record keeps its graph id, its digest assertion id, its edges, its usage counts and every journal record, and the previous reading stays in the journal as a version with its author, model, sources and cause (`versions`, `revert_digest`). `author_world_model` does the same for a card's text, and `narrate_dream` adds a narration beside a dream's summary. The verbatim behind a record is never touched, and nothing is compacted or summarized-and-replaced.
 
 ## Determinism and honesty
 
@@ -89,7 +89,11 @@ A record's understanding is the one mutable cell. `rewrite_digest` replaces a re
 | Formation | `records.py` (`MemoryRecordInput`, encoding, payload tiers), `canonical_text.py` |
 | Selection | `selection.py` (commit derivations) |
 | Identity | `spark.py`, `engram.py`, `diary.py`, `gradation.py` |
-| Facade | `system.py` (`MemorySystem`), `system_access.py`, `system_valence.py` |
+| Facade | `system.py` (`MemorySystem`), `system_access.py`, `system_valence.py`, `system_understanding.py` |
+| Understanding | `understanding.py` (`rewrite_digest`, `retitle`, `declare_pending`, `rearm_pending`, versions), `formation_authoring.py` (the host's `author` callable) |
+| Task queue and ripple | `memory_tasks.py` (`MemoryTaskQueue`), `activation_gate.py`, `ripple.py` |
+| Sleep | `maintenance.py` (`sleep_pass`, tending), `sleep_cadence.py` (`maintenance_due`, `records_since_maintenance`), `world_model.py`, `communities.py` and `community_index.py` (topics) |
+| Stop fence | `commit_guard.py` (the host's check before every COMMIT), `write_barrier.py` |
 | Derived reads | `consolidation.py` (sleep/dreams), `replay.py` (stream), `entity_card.py` |
 
 ## One graph surface, connectors behind it

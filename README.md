@@ -13,6 +13,15 @@ Storage never decays and nothing is ever deleted; only retrieval strength change
 - The authoritative export list is [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py); [`docs/api.md`](docs/api.md) documents it.
 - Requires Python 3.10+.
 
+## What's new in 0.5.0
+
+- Every memory's title and summary is authored: memory's passes take a host `author` callable, and a record whose authoring failed forms pending, with its task, until a reader completes it (`retitle`, `rewrite_digest`, `declare_pending`, `rearm_pending`).
+- A persistent task queue per home (`MemorySystem(task_queue=True)`), ripple v1, and understanding rewritten in place with every earlier reading kept as a version.
+- Topics: `community` records formed during sleep, with provisional placement of each new record at formation.
+- The sleep cadence read `records_since_maintenance`, and the Stop fence hooks `commit_guard` and `write_barrier`.
+
+Upgrading from 0.4.x: see the "Upgrading" notes in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Ecosystem (AbstractFramework)
 
 AbstractMemory is a component of the **AbstractFramework** ecosystem. It has no dependency on AbstractCore or AbstractRuntime; embeddings for semantic retrieval can come from any OpenAI-compatible `/embeddings` endpoint (`OpenAICompatTextEmbedder`), from an AbstractGateway deployment (`AbstractGatewayTextEmbedder`), or from your own `TextEmbedder` implementation.
@@ -139,7 +148,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 
 ## Design principles
 
-- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted/merged); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless. The one mutable cell is a record's understanding: `rewrite_digest` rewrites a digest in place and keeps every earlier reading as a version.
+- **Append-only, no deletion**: updates are new assertions; belief revision is closure records (retract/supersede/reinterpreted/merged); forgetting is decay of retrieval strength plus closures and silencing — the substrate is lossless. The one mutable cell is a record's understanding: `rewrite_digest` and `retitle` rewrite a digest or a title in place and keep every earlier reading as a version.
 - **Reads are pure**: reconstruction, inspection, replay, and the entity card deposit nothing. `commit_selection` is the only strengthening path.
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.
