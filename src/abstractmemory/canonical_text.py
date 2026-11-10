@@ -90,6 +90,19 @@ def is_record_edge(a: TripleAssertion) -> bool:
     return bool(attrs.get("record_edge"))
 
 
+#: Record kinds whose digest is never embedded (Fable review D4, 2026-11-10): a `community` is engine state served by
+#: `communities.community_records` / the communities read, never a vector-channel hit nor a kNN neighbour.
+NON_EMBEDDED_KINDS = frozenset({"community"})
+
+
+def never_embedded(a: TripleAssertion) -> bool:
+    """True for the assertions no embedding path embeds: record edges and the digests of `NON_EMBEDDED_KINDS`."""
+    if is_record_edge(a):
+        return True
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+    return str(attrs.get("record_kind") or "").strip().lower() in NON_EMBEDDED_KINDS
+
+
 def handle_digest(a: TripleAssertion) -> str:
     """The serialize-ready digest a handle/payload carries: the clean digest
     LITERAL for formed records (title travels separately on the handle),

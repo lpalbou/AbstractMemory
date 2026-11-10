@@ -97,7 +97,12 @@ MEMORY_RECORD_KINDS = frozenset(
      # inactive_candidate; enactment rides journal bindings + a
      # derived_from edge from the supersession record (append-only law —
      # never an attribute mutation on the resting proposal).
-     "realization"}
+     "realization",
+     # A topic of the home (COMMUNITIES-DESIGN 2026-11-10, communities.py): formed by the sleep's communities_pass,
+     # revised like a card (refines -> previous, previous closed supersede), its stable identity the
+     # `community_key` attribute. Engine state, never a memory: bookkeeping (off every recall shelf and scan) and
+     # never embedded (canonical_text.NON_EMBEDDED_KINDS).
+     "community"}
 )
 
 # 0020 kind priority (lower rank orders earlier): identity kinds (value <
@@ -125,6 +130,8 @@ KIND_RANKS: Mapping[str, int] = MappingProxyType({
     # identity kinds it may one day amend (dm#124: surface-only).
     "plan": 4, "summary": 5, "interest": 5, "dream": 5, "world_model": 5,
     "realization": 5,
+    # community = derived-artifact band (never on a shelf: it is bookkeeping; the rank only completes the registry).
+    "community": 5,
     "answer": 6, "question": 7, "claim": 8, "memory": 9,
 })
 
@@ -428,6 +435,10 @@ class MemoryRecordInput:
                 if stamp is not None:
                     _check_authored_summary(stamp)
 
+        if kind == "community":
+            from .communities import validate_community_attributes  # lazy: communities imports this module
+
+            attributes = validate_community_attributes(attributes)
         if kind in ("lesson", "instruction"):
             # 0035 conventions — optional-but-validated (absence is honest;
             # presence is checked; nothing here ever gates recall):
