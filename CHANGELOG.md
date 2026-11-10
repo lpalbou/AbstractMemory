@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added: `community_keys_of`, the membership-only read for recall stamping
+
+The runtime stamps every recalled record with its topic by reading the whole `communities()` payload per recall, which
+computes every topic's facts: 19 ms at 2,000 records and 190 ms at 20,000 on its synthetic home.
+
+- `community_index.community_keys_of(system, record_ids, *, scopes, owner_id) -> {record_id: key | None}` and
+  `community_memberships_of(...)` -> `{record_id: {key, provisional} | None}`: the answer `communities()` gives for
+  those records (member, provisional since the version, or none), read from the in-memory community index. The hot
+  path is the formation's catch-up compare (`MAX(rowid)` on the open connection against the index's mark) and a dict
+  lookup per id: no fold, no facts, no file opened, stat'ed or locked. Measured for 50 ids (54 topics, SQLite home):
+  20 µs per call at 2,000 records, 22 µs at 20,000 (`communities()` on the same homes: 12 ms and 65 ms). After a
+  formation, the `placed` events above the last read are fetched once per scope pair; a new version reloads the
+  index. A dissolve-only version is seen at the next version, as at placement (backlog 0066).
+- The runtime switches its recall stamps to it: backlog 0069.
+
 ### Fixed: a standing topic still pending is authored, and its old tasks move up
 
 Castor's second topics night (2026-11-10): 10 of 11 topics got titles; the 11th stood unchanged, its title and

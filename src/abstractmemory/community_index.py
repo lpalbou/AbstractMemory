@@ -27,6 +27,12 @@ record one pass writes carries the same one), ``attributes.members`` = ``[{id, v
   what its version changed), one query each over data memory already holds.
   Eventual consistency: a record formed after the last sleep is provisional until the next sleep; before a home's
   first sleep with communities there is no version and the read says ``first_sleep_pending: true``.
+- the membership reads `community_keys_of` / `community_memberships_of` (what a host stamps on every recalled record):
+  the same answer as `communities()` gives for those records (member, provisional, or none), served from the
+  community index under the store's lock. The hot path is the formation's one compare (the store's row high-water,
+  ``MAX(rowid)`` on the open connection, against the index's mark): no fold, no facts, no layout, no vector, no file
+  opened or stat'ed. Only when the mark moved are the ``placed`` events above the last read fetched (one journal read
+  per scope pair), and only when a community row appeared does the index reload.
 
 Community records are not embedded and never recalled (the pass forms them without a vector): nothing here reads a
 community record's vector. A centroid is an attribute (base64 float32, ``centroid_dim``, ``centroid_pin`` = the
@@ -43,7 +49,7 @@ import threading
 import warnings
 import weakref
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .canonical_text import is_record_edge, record_title
@@ -60,6 +66,8 @@ __all__ = [
     "PLACED_EVENT_KIND",
     "PreparedPlacement",
     "communities",
+    "community_keys_of",
+    "community_memberships_of",
     "community_of",
     "place_record",
 ]
@@ -352,11 +360,19 @@ class _CommunityIndex:
         self.batch: Dict[str, str] = {}
         self.centroids: Dict[str, _Centroids] = {}
         self.disabled: Optional[str] = None
+        # The membership reads' state: bumped at every load (a new version read), the newest version seq of each
+        # (scope, owner) pair (every record, closed ones included, as `communities()` folds it), and each pair's
+        # `placed` events since its version (`_PlacedRead`), dropped at every load.
+        self.generation = 0
+        self.pair_version: Dict[Tuple[str, str], int] = {}
+        self.placed_reads: Dict[Tuple[str, str], "_PlacedRead"] = {}
 
     def community_for(self, record_id: str) -> Optional[str]:
         return self.batch.get(record_id) or self.provisional.get(record_id) or self.members.get(record_id)
 
-    def load(self, current: Sequence[_Community], version_seq: Optional[int], pin_id: Optional[str]) -> None:
+    def load(self, current: Sequence[_Community], version_seq: Optional[int], pin_id: Optional[str],
+             heads: Sequence[_Head] = ()) -> None:
+        """`heads`: every community record the fold read (checked by it), for the per-pair version seqs."""
         self.communities = {c.key: c for c in current}
         self.version_seq = version_seq
         self.members = {str(m["id"]): c.key for c in current for m in c.attrs["members"]}
@@ -374,6 +390,13 @@ class _CommunityIndex:
                 continue  # centroids of several dimensions in one home: none is comparable, neighbours only
             keys = sorted(units)
             self.centroids[owner] = _Centroids(keys, [units[k] for k in keys], dims.pop())
+        self.pair_version = {}
+        for h in heads:
+            pair, vs = (h.scope, h.owner_id), int(h.version_seq)
+            if vs > self.pair_version.get(pair, -1):
+                self.pair_version[pair] = vs
+        self.placed_reads = {}
+        self.generation += 1
         self.disabled = None
         self.loaded = True
 
@@ -442,8 +465,8 @@ def _catch_up_on(system: Any, idx: _CommunityIndex, cur: Any, journal_cur: Any) 
         idx.mark, idx.rows_ref = mark, rows_ref
         return idx
     try:
-        current, version_seq, _bound, _newest = _fold(store, system.journal, _community_heads(store, cur), cur=cur,
-                                                      journal_cur=journal_cur)
+        heads = _community_heads(store, cur)
+        current, version_seq, _bound, _newest = _fold(store, system.journal, heads, cur=cur, journal_cur=journal_cur)
     except CommunitySchemaError as exc:
         # Formation never fails on a community version it cannot read: it forms unplaced, loudly, and the read
         # (`communities`) raises the same error.
@@ -451,7 +474,7 @@ def _catch_up_on(system: Any, idx: _CommunityIndex, cur: Any, journal_cur: Any) 
         idx.load([], None, None)
         idx.disabled = str(exc)
     else:
-        idx.load(current, version_seq, _space_id(store))
+        idx.load(current, version_seq, _space_id(store), heads)
     idx.mark, idx.rows_ref = mark, rows_ref
     return idx
 
@@ -570,6 +593,10 @@ class FormationPlacement:
             idx = _index(self.system.store)
             idx.provisional.update(idx.batch)
             idx.batch.clear()
+            # A journal in another file got this formation's events after the store's COMMIT: a membership read
+            # that ran in between saw the new rows and no event yet. Its next read fetches them.
+            for read in idx.placed_reads.values():
+                read.mark = None
 
     def aborted(self) -> None:
         if self.records:
@@ -874,6 +901,110 @@ def community_of(system: Any, record_id: str) -> Dict[str, Any]:
                        how=e.provenance.get("how"), score=e.provenance.get("score"))
     return out
 
+
+
+# --------------------------------------------------------------------------- membership reads (recall stamping)
+
+
+@dataclass
+class _PlacedRead:
+    """One (scope, owner) pair's ``placed`` events as the membership reads fold them: record graph id -> (seq,
+    community key) of its newest event above `floor` (a version seq), read up to `seen_seq` (the journal's seq before
+    the last read) while the store's mark was `mark`."""
+
+    generation: int
+    floor: int
+    seen_seq: int
+    mark: Any = None
+    newest: Dict[str, Tuple[int, str]] = field(default_factory=dict)
+
+
+def _placed_reads(system: Any, idx: _CommunityIndex, pairs: Sequence[Tuple[str, str]],
+                  version_seq: int) -> List[Dict[str, Tuple[int, str]]]:
+    """Each pair's newest ``placed`` event per record above `version_seq` (caller holds the store's lock). The
+    journal is read only when the store's mark moved since the pair's last read (a formation wrote rows, and with
+    them its events), from the seq that read stopped at; a new version (a reload) starts every pair again."""
+    journal = system.journal
+    out: List[Dict[str, Tuple[int, str]]] = []
+    for pair in pairs:
+        read = idx.placed_reads.get(pair)
+        if read is None or read.generation != idx.generation or read.floor > version_seq:
+            read = idx.placed_reads[pair] = _PlacedRead(idx.generation, version_seq, version_seq)
+        if read.mark != idx.mark:
+            mark, top = idx.mark, int(journal.current_seq())  # every event at or below `top` is committed
+            for rid, (seq, e) in _placed_since(journal, [pair], since_seq=read.seen_seq + 1, until_seq=None).items():
+                prev = read.newest.get(rid)
+                if prev is None or seq > prev[0]:
+                    read.newest[rid] = (seq, str(e.provenance["community_key"]))
+            read.seen_seq, read.mark = max(read.seen_seq, top), mark
+        out.append(read.newest)
+    return out
+
+
+def community_memberships_of(system: Any, record_ids: Iterable[str], *, scopes: Sequence[Tuple[str, str]],
+                             owner_id: str) -> Dict[str, Optional[Dict[str, Any]]]:
+    """The community each record is in now, membership only: ``{record_id: {key, provisional} | None}``.
+
+    `record_ids` are record graph ids (the ids community members carry: a recalled record's
+    ``provenance.record_id``). The answer is the one `communities(system, scopes=, owner_id=)` gives for each record:
+    a member of a current community of these pairs (``provisional: false``), a record placed at formation since
+    the version (its newest ``placed`` event, ``provisional: true``), else None (unplaced, unknown, a community
+    record, another owner's record, or no version yet).
+
+    COST: read from the store's community index under the store's lock. The hot path is one ``MAX(rowid)`` compare
+    with the index's mark (the formation's catch-up) and a dict lookup per id: no fold, no facts, no layout, no
+    vector, no file opened or stat'ed. When the mark moved (rows were formed), the ``placed`` events above the last
+    read are fetched once per pair; when a community row appeared, the index reloads (once a night). Shares the
+    formation's catch-up, so a version that only dissolves communities is seen at the next one (backlog 0066).
+    Raises `CommunitySchemaError` when the current version is unreadable (as `communities()` does), TypeError for a
+    store other than SQLite or in-memory."""
+    from .in_memory_store import InMemoryTripleStore
+    from .sqlite_store import SQLiteTripleStore
+
+    store = system.store
+    if not isinstance(store, (SQLiteTripleStore, InMemoryTripleStore)):
+        raise TypeError(f"community memberships read a SQLiteTripleStore or an InMemoryTripleStore "
+                        f"(got {type(store).__name__})")
+    owner = str(owner_id or "").strip()
+    asked = sorted({(str(s or "").strip().lower(), str(o or "").strip()) for s, o in scopes})
+    asked = [p for p in asked if p[1] == owner]
+    wanted = set(asked)
+    ids = [str(r) for r in record_ids]
+    with store._lock:
+        idx = _catch_up(system)
+        if idx.disabled:
+            raise CommunitySchemaError(idx.disabled)
+        versions = [idx.pair_version[p] for p in asked if p in idx.pair_version]
+        if not versions:
+            return {rid: None for rid in ids}
+        version_seq = max(versions)
+        placed = _placed_reads(system, idx, asked, version_seq)
+        live = idx.communities
+        out: Dict[str, Optional[Dict[str, Any]]] = {}
+        for rid in ids:
+            gid = rid.strip()
+            key = idx.members.get(gid)
+            c = live.get(key) if key is not None else None
+            if c is not None and (c.scope, c.owner_id) in wanted:
+                out[rid] = {"key": key, "provisional": False}
+                continue
+            best: Optional[Tuple[int, str]] = None
+            for newest in placed:
+                hit = newest.get(gid)
+                if hit is not None and (best is None or hit[0] > best[0]):
+                    best = hit
+            c = live.get(best[1]) if best is not None and best[0] > version_seq else None
+            out[rid] = ({"key": best[1], "provisional": True}
+                        if best is not None and c is not None and (c.scope, c.owner_id) in wanted else None)
+        return out
+
+
+def community_keys_of(system: Any, record_ids: Iterable[str], *, scopes: Sequence[Tuple[str, str]],
+                      owner_id: str) -> Dict[str, Optional[str]]:
+    """``{record_id: community key | None}``: `community_memberships_of` without the provisional flag (same read,
+    same cost)."""
+    return {rid: (m["key"] if m is not None else None)
+            for rid, m in community_memberships_of(system, record_ids, scopes=scopes, owner_id=owner_id).items()}
 
 def display_relations(kind: Any, edges: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
     """The formation edges a binding envelope draws for a record of `kind`: a community record's revision chain only,

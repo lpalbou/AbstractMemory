@@ -9,7 +9,8 @@ inspect the current code first, then update the item if reality has changed.
 
 ## Current Status (counts recounted on disk 2026-11-10, after the 0.5.0 closure; first reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 9 — `planned/knowledge_graph_convergence/` 0050-0058 (0050-0055 added
+- Planned: 10 — `planned/0069` (runtime recall stamps use `community_keys_of`, added 2026-11-10) and
+  `planned/knowledge_graph_convergence/` 0050-0058 (0050-0055 added
   2026-10-27, ADR 0002; 0056-0058, ADR 0003; 0056 in progress, first slice
   on `feat/memory-graph-provenance`; 0053 has its communities slice shipped in
   0.5.0). The track folder also holds three one-line pointer files (0059-0061,
@@ -172,6 +173,10 @@ The 2026-07-20 reconciliation moved every earlier planned item to
 `completed/` (001-007 standalone, subconscious_wave 0032-0035,
 extension_wave 0037-0039) or `deprecated/` (001/003/006, each with the
 superseding pointer).
+
+| Item | Priority | Notes |
+| --- | --- | --- |
+| [`0069_runtime_recall_stamps_use_community_keys_of.md`](planned/0069_runtime_recall_stamps_use_community_keys_of.md) | P1 | Memory side shipped on `main` (0.5.1 material); the runtime's `_stamp_recall_topics` switches from the full `communities()` read (190 ms at 20k records) to `community_keys_of` (22 µs). |
 
 ### Knowledge graph convergence track (`planned/knowledge_graph_convergence/`, 0050-0061)
 
