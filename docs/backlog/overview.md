@@ -17,9 +17,9 @@ inspect the current code first, then update the item if reality has changed.
   0.5.0). The track folder also holds three one-line pointer files (0059-0061,
   see the planning note), not counted. Before 2026-10-27 every planned item had
   shipped (moved to `completed/`) or was superseded (moved to `deprecated/`).
-- Proposed: 21 GENUINELY open: 4 in `memory_system_v1`, 9 in `extension_wave`,
-  2 in `ripple_wave` (0001, 0063) and 6 standalone 0.5.0 follow-ups (0062,
-  0064-0068). The 2026-07-20 count (13) left out `ripple_wave/0001`.
+- Proposed: 22 GENUINELY open: 4 in `memory_system_v1`, 9 in `extension_wave`,
+  2 in `ripple_wave` (0001, 0063), 6 standalone 0.5.0 follow-ups (0062,
+  0064-0068) and 0070 (topic-version churn, memory half of root 1201, 2026-11-10). The 2026-07-20 count (13) left out `ripple_wave/0001`.
 - Completed: 36 (12 standalone/wave items + 20 `memory_system_v1`
   engine-wave items + `extension_wave/0049` + `knowledge_graph_convergence`
   0059-0061, closed 2026-11-10 with abstractmemory 0.5.0)
@@ -228,6 +228,7 @@ re-set 2026-11-10: 0.5.1 shipped without the four aimed at it.
 | [`0066_placement_index_misses_dissolve_only_versions.md`](proposed/0066_placement_index_misses_dissolve_only_versions.md) | next patch | The catch-up mark is the store rowid only; a dissolve-only version never reloads the index. 0.5.1's membership reads share the catch-up and inherit it. |
 | [`0067_communities_read_is_not_one_snapshot.md`](proposed/0067_communities_read_is_not_one_snapshot.md) | next patch | Three statements; one read can serve a version with no communities. |
 | [`0068_api_doc_queue_less_list_omits_communities.md`](proposed/0068_api_doc_queue_less_list_omits_communities.md) | next docs pass | `docs/api.md:226` omits `communities_pass` and `embed_missing` (still true at `v0.5.1`). |
+| [`0070_topic_versions_churn_small_deltas_and_via_promotion.md`](proposed/0070_topic_versions_churn_small_deltas_and_via_promotion.md) | next minor, with root 1201 | A `via` promotion or a one-record delta marks a topic `changed`: 64 versions / 261 closed topic records / 247 link rows in one day on a busy home (castor: 4). Versions are already incremental; add an ids-only compare and a rewrite floor. |
 
 ### Memory System v1 track (`proposed/memory_system_v1/`)
 
@@ -364,7 +365,7 @@ said "none yet" until 2026-11-10.)
   live item, it is not counted, and it keeps older links valid (ADR 0001 and ADR 0003 still link to the planned
   paths of 0061 and 0059). A later pass that is allowed to delete files may remove the pointers after updating
   those links.
-- Numbering audit (2026-11-10): new items use the next global four-digit prefix (0062-0068 filed here). Known legacy
+- Numbering audit (2026-11-10): new items use the next global four-digit prefix (0062-0068 and 0070 filed here). Known legacy
   collision, not renamed: `deprecated/001_...` (three digits) and `proposed/ripple_wave/0001_...` share the numeric
   id 1; refer to the ripple item by its path.
 - Draft ids (2026-11-10): "runtime 0867-0870", "gateway 1012/1013" and "root 1137" in the 0059-0061 texts are the
