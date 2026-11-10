@@ -1016,25 +1016,35 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
         qcur.execute("BEGIN IMMEDIATE")
         added: List[str] = []
         bound: List[str] = []
+        jcur: Optional[sqlite3.Cursor] = None
         try:
             _enqueue_planned(queue, planned, qcur)
-            # The formation's one commit point, before its first row: the store's rows have no COMMIT and a
-            # SQLiteJournal commits the bindings on its own, so the guard cannot wait for the queue's COMMIT below.
-            guard_commit(store, "tasks.form_with_tasks")
             with deferred_to_caller(store):
                 if missing:
                     added = store._insert_prepared(missing, prepared)[1]
                 if isinstance(journal, SQLiteJournal):
-                    with journal._txn() as jcur:  # the batch's bindings: all or none
-                        for binding in plan.bindings:
-                            journal._append_binding_on(jcur, binding)
+                    # The batch's bindings in one journal transaction, held open until the commit point below.
+                    c = journal._conn.cursor()
+                    c.execute("BEGIN IMMEDIATE")
+                    jcur = c
+                    for binding in plan.bindings:
+                        journal._append_binding_on(jcur, binding)
                 else:
                     for binding in plan.bindings:
                         stored, new = journal._append_binding_tracked(binding)
                         if new:
                             bound.append(str(stored.binding_id))
+            # The formation's one commit point, immediately before its COMMITs, after every row, binding and task
+            # (Stop fence F8: a guard before the first row let a Stop raised mid-formation land). Refused -> the
+            # journal and queue roll back, this attempt's in-memory rows and bindings are removed below.
+            guard_commit(store, "tasks.form_with_tasks")
+            if jcur is not None:
+                jcur.execute("COMMIT")
+                jcur = None
             qcur.execute("COMMIT")
         except BaseException:
+            if jcur is not None:
+                jcur.execute("ROLLBACK")
             qcur.execute("ROLLBACK")
             if added:
                 store._discard_formed(added)

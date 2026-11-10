@@ -24,7 +24,7 @@ inside every write transaction immediately before its COMMIT. Pinned here:
 LanceDB: tested locally (lancedb is a test extra); skipped where it is not installed.
 
 MUTATION LIST (each applied to a scratch COPY of src/, this file run against it, all red; G1-G21 also red
-test_the_commit_points_are_a_closed_set; G22-G24 change no call site, so only their behavioural cases go red):
+test_the_commit_points_are_a_closed_set; G22-G26 change no call site, so only their behavioural cases go red):
 - G1 SQLiteJournal._txn without its guard        -> test_journal_appends_roll_back[sqlite-*] (7),
                                                     ..._inside_the_transaction_is_seen[journal], graph journal mark
 - G2 InMemoryJournal._write                      -> test_journal_appends_roll_back[memory-*] (7)
@@ -57,6 +57,10 @@ test_the_commit_points_are_a_closed_set; G22-G24 change no call site, so only th
                                                     ..._inside_the_transaction_is_seen[journal]
 - G24 deferred_to_caller defers nothing          -> test_one_guard_call_per_outermost_write[memory], the in-memory
                                                     formation, rewrite and graph counts
+- G25 form_with_tasks, in-memory branch, guard   -> test_a_stop_after_the_first_formed_row_refuses_the_in_memory_
+      back before its first row (Stop fence F8)     formation[memory, sqlite]
+- G26 form_with_tasks commits a SQLite journal's -> test_a_stop_after_the_first_formed_row_refuses_the_in_memory_
+      bindings before its guard                     formation[sqlite]
 """
 
 from __future__ import annotations
@@ -536,6 +540,54 @@ def test_a_generation_moved_inside_the_transaction_is_seen(site, tmp_path, monke
     with pytest.raises(Refused):
         fn()
     assert state(h) == before
+
+
+@pytest.mark.parametrize("journal_kind", ["memory", "sqlite"])
+def test_a_stop_after_the_first_formed_row_refuses_the_in_memory_formation(journal_kind, tmp_path,
+                                                                           monkeypatch) -> None:
+    """Stop fence F8: form_with_tasks's in-memory branch (in-memory store, in-memory or SQLite journal) checks the
+    guard immediately before its COMMITs, after its rows, bindings and tasks. The fence still admits the formation
+    when it starts and is bumped right after the first row is inserted: a guard checked before that row would pass
+    and the formation would land; the commit-point guard refuses it and no row, binding or task remains. The same
+    call, admitted again, forms the record with its binding and task (the absence check is not vacuous)."""
+    fence = Fence()
+    emb = Embedder()
+    jpath = tmp_path / "journal.sqlite3"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        store = InMemoryTripleStore(embedder=emb, embedding_pin={"model_id": Embedder.model, "dimension": DIM})
+        journal = InMemoryJournal() if journal_kind == "memory" else SQLiteJournal(jpath)
+        system = MemorySystem(store=store, journal=journal, embedder=emb, task_queue=True, commit_guard=fence.check)
+    original = InMemoryTripleStore._insert_prepared
+
+    def first_row_then_stop(self, *a, **k):
+        out = original(self, *a, **k)
+        fence.bump()                                       # the operator's Stop, after the first formed row
+        return out
+
+    def snapshot() -> Any:
+        jstate = _public(journal) if journal_kind == "memory" else file_state(jpath)
+        return {"store": _public(store), "journal": jstate, "queue": list(system.tasks._conn.iterdump())}
+
+    try:
+        before = snapshot()
+        monkeypatch.setattr(InMemoryTripleStore, "_insert_prepared", first_row_then_stop)
+        with pytest.raises(Refused):
+            _form(system, "stopped", pending=("summary",))
+        assert fence.calls == 1                            # one check, at the commit point, after the bump
+        assert snapshot() == before
+        assert store.query(TripleQuery(limit=0)) == []     # no row
+        assert journal.bindings() == []                    # no binding
+        assert system.tasks.tasks() == []                  # no task
+        monkeypatch.setattr(InMemoryTripleStore, "_insert_prepared", original)
+        fence.admitted = fence.generation                  # admitted again (a new generation's run)
+        gid = _form(system, "stopped", pending=("summary",))
+        assert [a.assertion_id for a in store.query(TripleQuery(limit=0))]
+        assert [b.record_id for b in journal.bindings()] == [gid]
+        assert [t["kind"] for t in system.tasks.tasks(target_id=gid)] == ["digest.author"]
+    finally:
+        journal.close()
+        store.close()
 
 
 # --------------------------------------------------------------------------------------------------- installation
