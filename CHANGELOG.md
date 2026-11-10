@@ -121,6 +121,19 @@ A record's understanding can be rewritten in place, and every earlier reading is
 
 ### Changed
 
+- **`engram(..., author=None)`: birth titles are authored, never `trait-N`** (operator rule 2026-11-09/10: every
+  memory's title and summary is authored; castor carries two `trait-0` from 2026-07-07). A spark item without a
+  `name` was titled `<section stem>-<ordinal>` (`value-N`, `purpose-N`, `trait-N`, `limit-N`). It now has its title
+  authored BEFORE it forms by the passes' `author(kind, body, context)` callable (`formation_authoring`; body = the
+  statement, `context.pass = "engram"`, `fields = ["title"]`), stored with `title_provenance`; on a failure or with
+  no `author` it forms PENDING (title None, its `title.author` task, `pending.failure` reason `author_raised` /
+  `invalid_result` / `no_author_supplied`). A `name` stays the title as given (operator `spark-v<N>`). The summary
+  is never asked for (the statement is a protected body). A replay never authors again and repeats the stored
+  title, so it queues no task. `EngramResult.authoring` = `{authored, failures}`, also in `to_dict()`. Behaviour
+  change: an unnamed item with no authored title needs a home opened with `task_queue=True` (every runtime and
+  gateway home is); a queue-less home refuses that birth before writing anything. docs/api.md names the exact
+  legacy label pattern the host's sleep repair treats as a placeholder. tests/test_engram.py (both substrate
+  pairs), mutants E1-E8 red on a scratch copy.
 - **A title and a summary are mandatory; a missing one is PENDING, with its task** (operator rulings 2026-11-09,
   root backlog 1146: "the title + summary must ALWAYS exist for any memory. those are mandatory metadata of all
   memories"; "no fallback; log the failure to untracked/ and fix it at the source"). `MemoryRecordInput` gains

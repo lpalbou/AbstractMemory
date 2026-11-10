@@ -60,7 +60,7 @@ def _home(kind: str, tmp_path, name: str) -> Tuple[Any, Any, MemorySystem]:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             journal = InMemoryJournal()
-    return store, journal, MemorySystem(store=store, journal=journal)
+    return store, journal, MemorySystem(store=store, journal=journal, task_queue=True)
 
 
 @pytest.fixture(params=["memory", "sqlite"])

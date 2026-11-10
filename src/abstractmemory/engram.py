@@ -32,6 +32,22 @@ version is refused while the born core remains prompt-active.
 NO diary entry is written here BY DESIGN: the birth reflection is
 entity-authored (first-person, through the home diary channel, host-side) —
 the engram is the operator planting the seed, not the entity's first word.
+
+TITLES ARE AUTHORED, NEVER A LABEL (operator rule 2026-11-09/10: every
+memory's title and summary is authored; castor carries two "trait-0" from
+2026-07-07). A spark item's `name` is its explicit title, kept as given (the
+operator's words: the row reads operator `spark-v<N>`). An item without one
+gets its title authored BEFORE formation by the host's `author(kind, body,
+context)` callable (formation_authoring, the passes' contract; `body` = the
+item's statement, `context["pass"]` = "engram"); a failure, or no `author`,
+forms the record PENDING (title None, its `title.author` task, the failure
+in `attributes.pending.failure`) and the night's repair writes it. The
+summary is never asked for: an identity record's summary IS the spark
+statement, the operator's words, a protected body (never rewritten, never
+pending). This version never writes the legacy labels `value-N` /
+`purpose-N` / `trait-N` / `limit-N`; homes born earlier carry them and the
+host's sleep repair treats them as placeholders (docs/api.md names the
+exact pattern).
 """
 
 from __future__ import annotations
@@ -40,7 +56,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from .records import MemoryRecordInput
+from .formation_authoring import AuthorFn, author_and_shape, new_receipt, note
+from .records import MemoryRecordInput, record_id_for, resolve_digest_assertion
 from .spark import canonical_spark_hash, lint_spark
 from .store import TripleQuery
 
@@ -55,6 +72,10 @@ class EngramResult:
     binding_ids: Tuple[str, ...] = ()
     warnings: Tuple[str, ...] = ()
     created: bool = True  # False = the same spark was already engrammed (no-op)
+    # The titles this pass authored and the ones it left pending, with why (formation_authoring's receipt shape:
+    # {authored: [{record_id, record_kind, pass, fields}], failures: [{record_id, record_kind, pass, fields, reason,
+    # error_class, message, at}]}); the host writes its authoring-failures line from `failures`. Empty on a replay.
+    authoring: Dict[str, Any] = field(default_factory=new_receipt)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -62,6 +83,8 @@ class EngramResult:
             "binding_ids": list(self.binding_ids),
             "warnings": list(self.warnings),
             "created": self.created,
+            "authoring": {"authored": [dict(x) for x in self.authoring.get("authored") or ()],
+                          "failures": [dict(x) for x in self.authoring.get("failures") or ()]},
         }
 
 
@@ -76,6 +99,7 @@ def engram(
     scope: str = "self",
     owner_id: str,
     spark_artifact_ref: Optional[str] = None,
+    author: Optional[AuthorFn] = None,
 ) -> EngramResult:
     """Engram one spark into (scope, owner_id). Lint ERRORS abort; lint
     warnings ride the result. Records per section: values → kind="value"
@@ -85,6 +109,17 @@ def engram(
     spark_version, and payload_ref=spark_artifact_ref (the attested spark
     document, when the host stored one). NO edges at engram time —
     relationships come from experience, not from the seed.
+
+    TITLES: an item's `name` is its title, as given. An item without one has
+    its title authored by `author(kind, body, context)` before it forms
+    (`formation_authoring`: kind = the record kind, body = the statement,
+    context = {pass: "engram", record_kind, scope, owner_id, fields:
+    ["title"], title: None, source_ids: [], attributes}); a failure or no
+    `author` forms it pending (`title.author` task, `pending.failure`
+    reason `author_raised` / `invalid_result` / `no_author_supplied`), so
+    such a spark needs a home opened with `task_queue=True` unless every
+    title is authored. A record already formed (a replay) is never authored
+    again. `EngramResult.authoring` is the receipt.
     """
     issues = lint_spark(spark)
     errors = [i for i in issues if i.startswith("ERROR")]
@@ -153,14 +188,10 @@ def engram(
         payload_ref=spark_artifact_ref,
     )]
     plan: List[Tuple[str, int]] = [("marker", 0)]  # section, ordinal (marker rides position 0)
-    # Fallback title stems are SECTION-derived, not kind-derived (flow's
-    # life-loop adversary, c5260): honesty items share kind="trait" with the
-    # traits section, so a kind-derived fallback minted TWO "trait-0" records
-    # from the default spark — night maintenance then flagged identity
-    # records as a duplicate-title group. "limit" matches the trait_class
-    # the honesty section already stamps.
-    fallback_stem = {"values": "value", "purposes": "purpose",
-                     "traits": "trait", "honesty": "limit"}
+    # An item without a `name` has its title AUTHORED before it forms (operator rule: a title is authored, never a
+    # placeholder; the `<section>-<ordinal>` labels this pass minted until 2026-11-10 are gone). `got` per input
+    # position: what the author gave (or the recorded failure), None for a named item and for a replayed record.
+    authored: Dict[int, Any] = {}
     for section, kind, items in sections:
         for ordinal, item in enumerate(items):
             attributes: Dict[str, Any] = {"precedence": ordinal, "spark_version": version}
@@ -168,15 +199,33 @@ def engram(
                 attributes["value_class"] = str(item.get("class") or "")
             if section == "honesty":
                 attributes["trait_class"] = "limit"
-            title = (str(item.get("name") or "").strip()
-                     or f"{fallback_stem.get(section, kind)}-{ordinal}")
-            inputs.append(MemoryRecordInput(
-                kind=kind, title=title, digest=str(item.get("statement") or ""),
-                attributes=attributes, payload_ref=spark_artifact_ref,
-            ))
+            digest = str(item.get("statement") or "")
+            title = str(item.get("name") or "").strip()
+            position = len(inputs)
+            if title:  # the spark's own title, as given
+                record = MemoryRecordInput(kind=kind, title=title, digest=digest, attributes=attributes,
+                                           payload_ref=spark_artifact_ref)
+            else:
+                record = MemoryRecordInput(kind=kind, title=None, digest=digest, attributes=attributes,
+                                           payload_ref=spark_artifact_ref, pending=("title",))
+                stored = resolve_digest_assertion(system.store, record_id_for(kind, key, position))
+                if stored is not None:
+                    # A REPLAY: the record stands and is never authored again. Its input repeats what is stored
+                    # (its title, or still pending), so the formation re-derives no task it does not already have.
+                    stored_title = str((stored.attributes or {}).get("title") or "").strip()
+                    if stored_title:
+                        record = MemoryRecordInput(kind=kind, title=stored_title, digest=digest,
+                                                   attributes=attributes, payload_ref=spark_artifact_ref)
+                else:
+                    record, authored[position] = author_and_shape(
+                        author, "engram", record, scope=scope, owner_id=owner_id, fields=("title",))
+            inputs.append(record)
             plan.append((section, ordinal))
 
     all_ids = system.remember_many(inputs, scope=scope, owner_id=owner_id, idempotency_key=key)
+    receipt = new_receipt()
+    for position, got in sorted(authored.items()):
+        note(receipt, "engram", inputs[position], got, all_ids[position])
 
     # BIRTH STRICTNESS (wave-4b adversary P1-1, live-repro'd): formation
     # now DEGRADES to vectorless on a dead embedder (the mid-life amnesia
@@ -188,8 +237,6 @@ def engram(
     # declaration that vectors were expected.
     store = system.store
     if callable(getattr(store, "embedding_pin", None)) and store.embedding_pin() is not None:
-        from .records import resolve_digest_assertion
-
         probe_id = next((gid for (section, _o), gid in zip(plan, all_ids)
                          if section != "marker"), None)
         if probe_id is not None:
@@ -228,4 +275,5 @@ def engram(
         binding_ids=tuple(binding_ids),
         warnings=warnings,
         created=existing_marker is None,
+        authoring=receipt,
     )

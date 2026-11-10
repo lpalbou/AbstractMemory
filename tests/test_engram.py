@@ -1,19 +1,82 @@
 """The engram pass (keystone experiment, a2a 0003): spark → identity
-records + prompt-active self bindings, idempotent and version-guarded."""
+records + prompt-active self bindings, idempotent and version-guarded.
+
+BIRTH TITLES ARE AUTHORED (operator rule 2026-11-09/10; castor's two
+"trait-0"): an item's `name` is its title as given; an unnamed item gets its
+title from the host's `author(kind, body, context)` BEFORE it forms, else it
+forms pending (`title.author` task + `pending.failure`), never a
+`<stem>-<ordinal>` label. The summary is the spark statement (protected,
+never asked for).
+
+MUTATION LIST (scratch copy of src + this file, each mutant red, source
+restored byte-exact): E1 the author is never called (every unnamed item
+pending no_author_supplied); E2 the failure never reaches the marker
+(pending_failure dropped); E3 the receipt is never filled; E4 the legacy
+`<section stem>-<ordinal>` label comes back; E5 a named item is authored
+too (its spark title replaced); E6 a replay authors again (no stored-row
+check); E7 the summary is asked for too (the statement replaced); E8 a
+replay ignores the stored title (input pending again, a spurious task).
+"""
 
 from __future__ import annotations
 
 import copy
 import warnings as warnings_module
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
 
 from abstractmemory import RecallBudget, Stimulus, engram
+from abstractmemory.records import resolve_digest_assertion
 from abstractmemory.spark import DEFAULT_SPARK_TEMPLATE
 
 SCOPE = "self"
 OWNER = "entity-1"
+MODEL = {"kind": "capability-model", "id": "summaries"}
+READER = {"provider": "lmstudio", "model": "qwen/qwen3.8-27b", "thinking": False}
+STEP = [{"kind": "artifact", "artifact_id": "authoring-call-1"}]
+UNNAMED = ("purposes", "traits", "honesty")  # the default template names only its values
+LEGACY_STEMS = ("value", "purpose", "trait", "limit")
+
+
+class Author:
+    """The host's authoring callable (formation_authoring contract): records each call; authors a title, raises,
+    or returns `result` as told."""
+
+    def __init__(self, *, fail: Exception = None, result: Any = None) -> None:
+        self.calls: List[Dict[str, Any]] = []
+        self.fail, self.result = fail, result
+
+    def __call__(self, kind: str, body: str, context: Dict[str, Any]) -> Any:
+        self.calls.append({"kind": kind, "body": body, "context": dict(context)})
+        if self.fail is not None:
+            raise self.fail
+        if self.result is not None:
+            return self.result
+        out: Dict[str, Any] = {"author": MODEL, "reader": READER, "sources": STEP}
+        if "title" in context["fields"]:
+            out["title"] = f"The {kind} I hold, {len(self.calls)}"
+        if "summary" in context["fields"]:
+            out["summary"] = f"A rewording of this {kind} ({len(self.calls)})."
+        return out
+
+
+def _is_legacy_birth_label(title: Any) -> bool:
+    """docs/api.md's exact pattern: the whole title is `<stem>-<ASCII digits>`."""
+    stem, sep, ordinal = str(title or "").partition("-")
+    return bool(sep) and stem in LEGACY_STEMS and ordinal.isdigit() and ordinal.isascii()
+
+
+def _row(system, gid: str):
+    return resolve_digest_assertion(system.store, gid)
+
+
+def _statements(spark: Dict[str, Any], section: str) -> List[str]:
+    return [str(item["statement"]) for item in spark[section]]
+
+
+def _title_tasks(system) -> List[str]:
+    return sorted(t["target_id"] for t in system.tasks.tasks() if t["kind"] == "title.author")
 
 
 def _spark() -> Dict[str, Any]:
@@ -133,7 +196,7 @@ def test_engram_marker_never_surfaces_on_shelves(system, stack) -> None:
                            view="working_set", journal=False)
     assert r.handles  # the identity core is there...
     assert all(h.kind != "claim" for h in r.handles)
-    assert all("spark-engram" not in h.title for h in r.handles)
+    assert all("spark-engram" not in (h.title or "") for h in r.handles)
 
     # ...and the marker is still first-class at layer 1 (query + guard).
     from abstractmemory.store import TripleQuery
@@ -258,38 +321,156 @@ def test_engram_refuses_a_vectorless_core_under_a_pinned_space() -> None:
             store=InMemoryTripleStore(embedder=DeadEmbedder(),
                                       embedding_pin={"model_id": "dead-model",
                                                      "dimension": 4}),
-            journal=InMemoryJournal())
+            journal=InMemoryJournal(), task_queue=True)
         with pytest.raises(ValueError, match="VECTORLESS under a pinned"):
             engram(pinned, spark=DEFAULT_SPARK_TEMPLATE,
                    scope="self", owner_id="entity:refused")
 
         # Pinless + no embedder: the legal vectorless mode is untouched.
-        plain = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+        plain = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal(), task_queue=True)
         result = engram(plain, spark=DEFAULT_SPARK_TEMPLATE,
                         scope="self", owner_id="entity:plain")
         assert result.created is True
 
 
-def test_default_spark_titles_never_collide_across_sections() -> None:
-    """c5260 (flow's life-loop adversary): the default spark minted the
-    trait AND the limit both titled "trait-0" (honesty shares
-    kind="trait"), turning identity records into a duplicate-title
-    group. Fallback stems are section-derived now: limit-N for honesty."""
-    from abstractmemory import (
-        DEFAULT_SPARK_TEMPLATE,
-        InMemoryJournal,
-        InMemoryTripleStore,
-        MemorySystem,
-        TripleQuery,
-        engram,
-    )
+# --------------------------------------------------------------------------- birth titles: authored, never a label
 
-    system = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
-    engram(system, spark=DEFAULT_SPARK_TEMPLATE, scope="self", owner_id="entity:n")
-    titles = []
-    for a in system.store.query(TripleQuery(scope="self", owner_id="entity:n", limit=0)):
-        attrs = a.attributes if isinstance(a.attributes, dict) else {}
-        if a.predicate == "dcterms:abstract" and not attrs.get("bookkeeping"):
-            titles.append(str(attrs.get("title") or ""))
-    assert len(titles) == len(set(titles)), f"colliding identity titles: {titles}"
-    assert "limit-0" in titles and "trait-0" in titles
+
+def test_engram_author_titles_every_unnamed_item_with_provenance(system) -> None:
+    spark = _spark()
+    author = Author()
+    result = engram(system, spark, owner_id=OWNER, author=author)
+
+    # One call per UNNAMED item, the title only, from its statement, before it formed.
+    assert [c["kind"] for c in author.calls] == ["purpose", "trait", "trait"]
+    assert [c["body"] for c in author.calls] == [s for sec in UNNAMED for s in _statements(spark, sec)]
+    for call in author.calls:
+        ctx = call["context"]
+        assert ctx["pass"] == "engram" and ctx["fields"] == ["title"] and ctx["title"] is None
+        assert ctx["scope"] == SCOPE and ctx["owner_id"] == OWNER and ctx["source_ids"] == []
+        assert ctx["attributes"]["spark_version"] == 1
+    assert author.calls[2]["context"]["attributes"]["trait_class"] == "limit"  # the honesty item
+
+    unnamed = [gid for sec in UNNAMED for gid in result.record_ids[sec]]
+    for n, gid in enumerate(unnamed, start=1):
+        attrs = _row(system, gid).attributes
+        assert attrs["title"] == f"The {attrs['record_kind']} I hold, {n}" and "pending" not in attrs
+        stamp = attrs["title_provenance"]
+        assert stamp["author"] == MODEL and stamp["reader"]["model"] == READER["model"]
+        assert stamp["sources"] == STEP and stamp["cause"] == {"cause": "formation"} and stamp["version"] == 0
+        # The summary is the spark statement, the operator's words: never reworded, its reading the spark's.
+        assert system.record_understanding(gid)["authored_by"] == {"kind": "operator", "id": "spark-v1"}
+    assert [str(_row(system, g).object) for g in unnamed] == [s for sec in UNNAMED for s in _statements(spark, sec)]
+    assert _title_tasks(system) == []
+    assert result.authoring["failures"] == []
+    assert [(a["record_id"], a["record_kind"], a["pass"], a["fields"]) for a in result.authoring["authored"]] == [
+        (gid, _row(system, gid).attributes["record_kind"], "engram", ["title"]) for gid in unnamed]
+    assert result.to_dict()["authoring"] == result.authoring
+
+
+def test_engram_author_raising_forms_pending_with_the_failure(system) -> None:
+    result = engram(system, _spark(), owner_id=OWNER, author=Author(fail=RuntimeError("model unloaded")))
+    unnamed = [gid for sec in UNNAMED for gid in result.record_ids[sec]]
+    for gid in unnamed:
+        attrs = _row(system, gid).attributes
+        assert attrs["title"] is None and "title_provenance" not in attrs
+        marker = attrs["pending"]
+        assert marker["title"] is True and marker["summary"] is False
+        failure = marker["failure"]
+        assert failure["reason"] == "author_raised" and failure["error_class"] == "RuntimeError"
+        assert failure["message"] == "model unloaded" and failure["fields"] == ["title"] and failure["at"]
+    assert _title_tasks(system) == sorted(unnamed)  # the night's repair writes each one
+    assert result.authoring["authored"] == []
+    assert [(f["record_id"], f["reason"], f["fields"]) for f in result.authoring["failures"]] == [
+        (gid, "author_raised", ["title"]) for gid in unnamed]
+
+
+def test_engram_without_author_forms_pending_no_author_supplied(system) -> None:
+    result = engram(system, _spark(), owner_id=OWNER)
+    unnamed = [gid for sec in UNNAMED for gid in result.record_ids[sec]]
+    for gid in unnamed:
+        attrs = _row(system, gid).attributes
+        assert attrs["title"] is None
+        failure = attrs["pending"]["failure"]
+        assert failure["reason"] == "no_author_supplied" and failure["error_class"] is None
+        assert "engram got no author callable" in failure["message"] and failure["fields"] == ["title"]
+    assert _title_tasks(system) == sorted(unnamed)
+    assert [f["reason"] for f in result.authoring["failures"]] == ["no_author_supplied"] * len(unnamed)
+
+
+def test_engram_invalid_author_result_forms_pending(system) -> None:
+    mechanical = {"title": "Asked first", "author": {"kind": "mechanical", "id": "x"}}
+    result = engram(system, _spark(), owner_id=OWNER, author=Author(result=mechanical))
+    [gid] = result.record_ids["traits"]
+    failure = _row(system, gid).attributes["pending"]["failure"]
+    assert failure["reason"] == "invalid_result" and "mechanical" in failure["message"]
+    assert _row(system, gid).attributes["title"] is None
+
+
+def test_engram_explicit_titles_are_kept_as_given(system) -> None:
+    spark = _spark()
+    for n, section in enumerate(UNNAMED):
+        spark[section][0]["name"] = f"given_{section}_{n}"
+    author = Author()
+    result = engram(system, spark, owner_id=OWNER, author=author)
+    assert author.calls == []  # nothing to author: every item is named
+    assert result.authoring == {"authored": [], "failures": []}
+    for section in ("values", *UNNAMED):
+        for item, gid in zip(spark[section], result.record_ids[section]):
+            attrs = _row(system, gid).attributes
+            assert attrs["title"] == item["name"] and "pending" not in attrs and "title_provenance" not in attrs
+            assert system.record_understanding(gid)["authored_by"] == {"kind": "operator", "id": "spark-v1"}
+    assert _title_tasks(system) == []
+
+
+@pytest.mark.parametrize("how", ["authored", "raised", "none"])
+def test_engram_never_writes_a_birth_label(system, how) -> None:
+    """Castor carries two "trait-0" (2026-07-07): no stored identity title is ever `<stem>-<ordinal>` again."""
+    author = {"authored": Author(), "raised": Author(fail=OSError("down")), "none": None}[how]
+    result = engram(system, _spark(), owner_id=OWNER, author=author)
+    titles = [_row(system, gid).attributes["title"] for ids in result.record_ids.values() for gid in ids]
+    assert len(titles) == 6 and not any(_is_legacy_birth_label(t) for t in titles)
+    named = [t for t in titles if t is not None]
+    assert len(named) == len(set(named))
+
+
+def test_engram_replay_never_authors_again(system, stack) -> None:
+    _, journal = stack
+    first = engram(system, _spark(), owner_id=OWNER, author=Author())
+    tasks_before = sorted(t["task_id"] for t in system.tasks.tasks())
+    footprint = _journal_footprint(journal)
+
+    again_author = Author()
+    again = engram(system, _spark(), owner_id=OWNER, author=again_author)
+    assert again.created is False and again.record_ids == first.record_ids
+    assert again_author.calls == [] and again.authoring == {"authored": [], "failures": []}
+    assert sorted(t["task_id"] for t in system.tasks.tasks()) == tasks_before  # no spurious title.author
+    assert _journal_footprint(journal) == footprint
+    gid = first.record_ids["traits"][0]
+    assert _row(system, gid).attributes["title"] == "The trait I hold, 2"
+
+
+def test_engram_replay_of_a_pending_birth_leaves_it_to_its_task(system) -> None:
+    first = engram(system, _spark(), owner_id=OWNER)
+    tasks_before = sorted(t["task_id"] for t in system.tasks.tasks())
+    later = Author()
+    again = engram(system, _spark(), owner_id=OWNER, author=later)
+    assert later.calls == [] and again.authoring == {"authored": [], "failures": []}
+    assert sorted(t["task_id"] for t in system.tasks.tasks()) == tasks_before
+    assert _row(system, first.record_ids["purposes"][0]).attributes["title"] is None
+
+
+def test_engram_on_a_home_without_a_task_queue() -> None:
+    """A pending title needs the task that writes it: a queue-less home refuses an unauthored birth before anything
+    is written, and takes an authored one."""
+    from abstractmemory import InMemoryJournal, InMemoryTripleStore, MemorySystem, TripleQuery
+
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("ignore", RuntimeWarning)
+        bare = MemorySystem(store=InMemoryTripleStore(), journal=InMemoryJournal())
+    with pytest.raises(ValueError, match="needs its authoring task"):
+        engram(bare, _spark(), owner_id=OWNER)
+    assert bare.store.query(TripleQuery(scope=SCOPE, owner_id=OWNER, limit=0)) == []
+
+    result = engram(bare, _spark(), owner_id=OWNER, author=Author())
+    assert result.created is True and len(result.authoring["authored"]) == 3
