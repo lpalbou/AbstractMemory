@@ -5,7 +5,7 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
-## [Unreleased]
+## [0.5.1] - 2026-11-10
 
 ### Added: `community_keys_of`, the membership-only read for recall stamping
 
@@ -21,6 +21,12 @@ computes every topic's facts: 19 ms at 2,000 records and 190 ms at 20,000 on its
   formation, the `placed` events above the last read are fetched once per scope pair; a new version reloads the
   index. A dissolve-only version is seen at the next version, as at placement (backlog 0066).
 - The runtime switches its recall stamps to it: backlog 0069.
+
+Upgrading from 0.5.0: a host that stamps recalled records with their topic should call `community_keys_of` (or
+`community_memberships_of`) with the records' graph ids instead of reading the whole `communities()` payload per
+recall; nothing else changes. Known limits, carried in the backlog: a version that only dissolves communities (no
+new community record) is seen by the membership reads and by placement at the next version that writes one (0066);
+`communities()` read while a version is being written may serve one empty read (0067).
 
 ### Fixed: a standing topic still pending is authored, and its old tasks move up
 

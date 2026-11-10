@@ -39,6 +39,11 @@ Storage never decays and nothing is ever deleted; only retrieval strength change
 - The authoritative export list is [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py); [`docs/api.md`](docs/api.md) documents it.
 - Requires Python 3.10+.
 
+## What's new in 0.5.1
+
+- `community_keys_of` / `community_memberships_of`: the membership-only topic read for every recalled record, tens of microseconds per call from the in-memory community index (the runtime's recall stamps use it).
+- A standing topic still pending its title or summary is authored in place by `communities_pass` with the budget the changed topics leave, and its queued tasks move up to the topics' priority.
+
 ## What's new in 0.5.0
 
 - Every memory's title and summary is authored: memory's passes take a host `author` callable, and a record whose authoring failed forms pending, with its task, until a reader completes it (`retitle`, `rewrite_digest`, `declare_pending`, `rearm_pending`).
