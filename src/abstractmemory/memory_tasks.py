@@ -426,6 +426,36 @@ class MemoryTaskQueue:
 
         return self._txn(_cur, write)
 
+    def prioritize(self, target_ids: Sequence[str], *, kinds: Sequence[str], priority: int, reason: str,
+                   dry_run: bool = False, now: Optional[str] = None,
+                   _cur: Optional[sqlite3.Cursor] = None) -> List[str]:
+        """Move the LIVE tasks of `kinds` on these targets that wait at a later priority (a number above `priority`)
+        up to `priority`: one UPDATE, one `prioritized` log row per task ({from, to, reason}). A task already at
+        `priority` or ahead of it is left as it is (never demoted). `dry_run`: a pure read, the ids it would move.
+        Returns the task ids moved (oldest first)."""
+        targets = sorted({str(t) for t in target_ids if str(t or "").strip()})
+        wanted = sorted({str(k) for k in kinds})
+        if not targets or not wanted:
+            return []
+        at = _iso(_utc(now))
+        where = (f"target_id IN ({', '.join('?' for _ in targets)}) AND kind IN ({', '.join('?' for _ in wanted)}) "
+                 f"AND status IN ({', '.join('?' for _ in sorted(LIVE))}) AND priority > ?")
+        params = (*targets, *wanted, *sorted(LIVE), int(priority))
+        select = f"SELECT task_id, priority FROM {self.t_tasks} WHERE {where} ORDER BY enqueued_at, task_id"
+        if dry_run:
+            return [str(r[0]) for r in self._read(select, params)]
+
+        def write(cur: sqlite3.Cursor) -> List[str]:
+            rows = cur.execute(select, params).fetchall()
+            if rows:
+                cur.execute(f"UPDATE {self.t_tasks} SET priority = ?, updated_at = ? WHERE {where}",
+                            (int(priority), at, *params))
+            for tid, was in rows:
+                self._log(cur, str(tid), "prioritized", at, {"from": int(was), "to": int(priority), "reason": reason})
+            return [str(r[0]) for r in rows]
+
+        return self._txn(_cur, write)
+
     def on_rewrite(self, cur: Optional[sqlite3.Cursor], *, record_id: str, field: str, version: int,
                    result: Mapping[str, Any], task_id: Optional[str], completes: Sequence[str] = ()) -> None:
         """Called by the 0059 verbs inside their transaction (SQLite) or right after (in-memory): ack the task the

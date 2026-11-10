@@ -28,6 +28,11 @@ never counted; budget ignored. All red.
 Fable review M1 (2026-11-10, scratch copy untracked/review-m1-wip/tree): m2 the connectivity refinement removed (a
 disconnected community stays whole: I2); m4 KEY_MATCH_FLOOR = 0 (any overlap continues a key); L1 an unchanged
 community keeps its stored links to a dissolved key. All red.
+Standing topics (castor's second topics night, 2026-11-10, scratch copy in the session scratchpad, mutate.py): the
+standing pending topics never authored in place; `pending` counts only the written topics; legacy tasks never moved
+up; in-place authoring ignores the budget; `prioritize` demotes a task already ahead; the old early return (unchanged
+= skip); legacy tasks moved in a transaction of their own beside a version; the in-place verdict dropped; the
+in-place call never counted in `budget_spent`. All red.
 """
 
 from __future__ import annotations
@@ -764,6 +769,169 @@ def test_a_zero_budget_calls_no_author(home) -> None:
     log: List[str] = []
     r = _pass(home, author=author_fn(log), budget=0)
     assert log == [] and r["budget"] == 0 and r["budget_spent"] == 0 and r["pending"] == 3 and r["authored"] == 0
+
+
+# ----------------------------------------------------------------------------------------------- standing topics (castor's
+# second topics night, 2026-11-10: 10 of 11 topics titled; the 11th stood unchanged with its tasks queued on night 1 at
+# the old priority 5 behind ~267 repair tasks, the pass skipped it with 6 calls of its budget unused, and its receipt
+# said `pending: 0` while the topics route showed it pending)
+
+
+def _pending_now(system) -> List[str]:
+    return sorted(c.key for c in _current(system) if (c.attrs.get("pending") or {}).get("title")
+                  or (c.attrs.get("pending") or {}).get("summary"))
+
+
+def _set_priority(system, priority: int, task_ids: Optional[List[str]] = None) -> None:
+    q = system.tasks
+    where = "" if task_ids is None else f" WHERE task_id IN ({', '.join('?' for _ in task_ids)})"
+    q._txn(None, lambda cur: cur.execute(f"UPDATE {q.t_tasks} SET priority = ?{where}", (priority, *(task_ids or ()))))
+
+
+def test_a_standing_pending_topic_is_authored_in_place_with_what_the_budget_leaves(home) -> None:
+    _three_topics(home)
+    _pass(home, budget=0)
+    before = {c.key: c for c in _current(home)}
+    assert len(_pending_now(home)) == 3
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log), budget=2)
+    assert r["unchanged"] == 3 and r["version_seq"] is None and r["written"] == 0
+    assert len(log) == 2 and r["budget_spent"] == 2 and r["authored"] == 2 and r["authored_in_place"] == 2
+    # the receipt's pending is the truth after the pass: what the topics route serves as pending
+    assert r["pending"] == 1 and r["ids"]["pending"] == _pending_now(home) and r["failed"] == 0
+    assert r["skipped"].startswith("unchanged") and "2 pending topics authored in place, 1 still pending" in r["skipped"]
+    after = {c.key: c for c in _current(home)}
+    assert {c.record_id for c in after.values()} == {c.record_id for c in before.values()}  # in place: no version
+    for key in r["ids"]["authored_in_place"]:
+        c = after[key]
+        assert c.title and not c.attrs.get("pending") and c.attrs["digest_method"] == "authored-v1"
+        assert c.digest.startswith("Memories about subject") and c.attrs["understanding"]["author"] == MODEL
+        assert c.attrs["title_provenance"]["author"] == MODEL and c.attrs["layout"] == before[key].attrs["layout"]
+        assert set(c.attrs["title_basis"]["sample_ids"]) <= set(c.members)
+        tasks = home.tasks.tasks(target_id=c.record_id)
+        assert {t["kind"] for t in tasks} == set(AUTHORING) and {t["status"] for t in tasks} == {"done"}
+        assert all(any(e["event"] == "done" for e in home.tasks.log(t["task_id"])) for t in tasks)
+    assert {a["record_id"] for a in r["authoring"]["authored"]} == {after[k].record_id
+                                                                    for k in r["ids"]["authored_in_place"]}
+    # the next pass authors the last one, and then the home is unchanged: nothing written
+    r = _pass(home, author=author_fn(log), budget=5)
+    assert r["authored_in_place"] == 1 and r["budget_spent"] == 1 and r["pending"] == 0 and _pending_now(home) == []
+    seq, rows = home.journal.current_seq(), len(_all_rows(home))
+    r = _pass(home, author=author_fn(log), budget=5)
+    assert r["budget_spent"] == 0 and r["skipped"] == "unchanged: every community stands as it is"
+    assert home.journal.current_seq() == seq and len(_all_rows(home)) == rows
+
+
+def test_a_changed_topic_and_a_standing_pending_one_share_the_budget(home) -> None:
+    topics = _three_topics(home)
+    _pass(home, budget=0)
+    _topic(home, 1, 6, start=12)  # topic 1 changes: a new version; topics 2 and 3 stand, still pending
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log), budget=16)
+    assert r["written"] == 1 and r["version_seq"] is not None and r["unchanged"] == 2
+    assert r["authored"] == 3 and r["authored_in_place"] == 2 and r["budget_spent"] == 3 == len(log)
+    assert r["pending"] == 0 and _pending_now(home) == [] and r["failed"] == 0
+    assert len({c.title for c in _current(home)}) == 3
+    for c in _current(home):
+        assert not [t for t in home.tasks.tasks(target_id=c.record_id) if t["status"] in LIVE]
+    [c1] = [c for c in _current(home) if topics[1][0] in c.members]
+    assert c1.attrs["basis"]["previous_id"] and c1.key not in r["ids"]["authored_in_place"]
+
+
+def test_a_standing_topic_authors_only_its_pending_field_and_keeps_its_verdict(home) -> None:
+    _three_topics(home)
+    _pass(home, budget=0)
+    c = _current(home)[0]
+    [task] = home.tasks.tasks(status=LIVE, kind=("title.author",), target_id=c.record_id)
+    res = home.retitle(c.record_id, title="A drainer's title", author=MODEL, reader=READER, cause="formation",
+                       sources=[{"kind": "artifact", "artifact_id": "call-drain"}], expected_version=0,
+                       task_id=task["task_id"])
+    assert res["applied"] and res["pending_cleared"] == ["title"]
+    asked: Dict[str, List[str]] = {}
+    inner = author_fn(verdict=C.NO_COMMON_SUBJECT)
+
+    def author(kind: str, body: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        asked[context["attributes"]["community_key"]] = list(context["fields"])
+        return inner(kind, body, context)
+
+    r = _pass(home, author=author, budget=None)
+    assert r["authored_in_place"] == 3 and r["pending"] == 0 and asked[c.key] == ["summary"]
+    assert sorted(len(v) for v in asked.values()) == [1, 2, 2]
+    now = {x.key: x for x in _current(home)}
+    assert now[c.key].title == "A drainer's title" and now[c.key].digest.startswith("Memories about subject")
+    assert all(x.attrs["verdict"] == C.NO_COMMON_SUBJECT for x in now.values())
+
+
+def test_a_failed_in_place_author_leaves_the_topic_pending_with_its_tasks(home) -> None:
+    _three_topics(home)
+    _pass(home, budget=0)
+
+    def author(kind: str, body: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        raise RuntimeError("the model is down")
+
+    r = _pass(home, author=author, budget=1)
+    assert r["budget_spent"] == 1 and r["authored"] == 0 and r["pending"] == 3 and r["failed"] == 1
+    assert r["authoring"]["failures"][0]["reason"] == "author_raised"
+    for c in _current(home):
+        assert {t["kind"] for t in home.tasks.tasks(status=LIVE, target_id=c.record_id)} == set(AUTHORING)
+    # a cancelled pass writes nothing in place either
+    rows = sorted((a.assertion_id, str(a.attributes)) for a in _all_rows(home))
+    r = _pass(home, cancelled=lambda: True, budget=3)
+    assert r["cancelled"] and sorted((a.assertion_id, str(a.attributes)) for a in _all_rows(home)) == rows
+    assert len(_pending_now(home)) == 3
+
+
+def test_legacy_topic_tasks_at_formation_priority_move_up_on_the_next_pass(home) -> None:
+    from abstractmemory.memory_tasks import COMMUNITY_PRIORITY, FORMATION_PRIORITY
+
+    topics = _three_topics(home)
+    for rid in [r for ids in topics.values() for r in ids]:  # night 1's repair tail, queued first
+        assert home.declare_pending(rid, fields=("title", "summary"), cause="repair")["outcome"] == "applied"
+    _pass(home, budget=0)  # night 1's topics: every one pending ...
+    topic_ids = {c.record_id for c in _current(home)}
+    _set_priority(home, FORMATION_PRIORITY)  # ... its tasks queued at the old priority (before topics came first)
+    ahead = home.tasks.tasks(status=LIVE, target_id=sorted(topic_ids)[0])[0]["task_id"]
+    _set_priority(home, 1, [ahead])  # a task already ahead stays where it is (never demoted)
+    sel = home.tasks.select_for_window(10_000.0, window="night", kinds=AUTHORING, hard_cap=6)
+    assert len({t["target_id"] for t in sel["tasks"]} & topic_ids) == 1  # behind the repair tail, but the one ahead
+    r = _pass(home, cancelled=lambda: True, budget=0)  # a stopped pass moves nothing
+    assert r["cancelled"] and r["reprioritized"] == 0
+    assert {t["priority"] for t in home.tasks.tasks(status=LIVE) if t["target_id"] in topic_ids} == {
+        1, FORMATION_PRIORITY}
+    r = _pass(home, budget=0)  # night 2: no budget for the topics, nothing changed, the tasks move up
+    assert r["version_seq"] is None and r["reprioritized"] == 5 and r["pending"] == 3
+    assert r["skipped"].startswith("unchanged") and "3 still pending" in r["skipped"]
+    live = [t for t in home.tasks.tasks(status=LIVE) if t["target_id"] in topic_ids]
+    assert sorted(t["priority"] for t in live) == [1] + [COMMUNITY_PRIORITY] * 5
+    moved = [t for t in live if t["task_id"] != ahead]
+    for t in moved:
+        [ev] = [e for e in home.tasks.log(t["task_id"]) if e["event"] == "prioritized"]
+        assert ev["detail"]["from"] == FORMATION_PRIORITY and ev["detail"]["to"] == COMMUNITY_PRIORITY
+    repair = [t for t in home.tasks.tasks(status=LIVE) if t["target_id"] not in topic_ids]
+    assert len(repair) == 72 and {t["priority"] for t in repair} == {FORMATION_PRIORITY}
+    sel = home.tasks.select_for_window(10_000.0, window="night", kinds=AUTHORING, hard_cap=6)
+    assert {t["target_id"] for t in sel["tasks"]} == topic_ids
+    # moved once: the next pass has nothing to move and writes nothing
+    seq, log_rows = home.journal.current_seq(), sum(len(home.tasks.log(t["task_id"])) for t in live)
+    r = _pass(home, budget=0)
+    assert r["reprioritized"] == 0 and home.journal.current_seq() == seq
+    assert sum(len(home.tasks.log(t["task_id"])) for t in live) == log_rows
+
+
+def test_legacy_topic_tasks_move_up_in_the_version_transaction(kind, tmp_path) -> None:
+    from abstractmemory.memory_tasks import COMMUNITY_PRIORITY, FORMATION_PRIORITY
+
+    guard = Guard()
+    system = _open(kind, tmp_path, guard=guard)
+    _three_topics(system)
+    _pass(system, budget=0)
+    _set_priority(system, FORMATION_PRIORITY)
+    _topic(system, 1, 6, start=12)  # topic 1 changes: a version is written
+    del guard.calls[:]
+    r = _pass(system, budget=0)
+    assert r["written"] == 1 and r["reprioritized"] == 4 and guard.calls == ["communities.communities_pass"]
+    ids = {c.record_id for c in _current(system)}
+    assert {t["priority"] for t in system.tasks.tasks(status=LIVE) if t["target_id"] in ids} == {COMMUNITY_PRIORITY}
 
 
 class _Node:

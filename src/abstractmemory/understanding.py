@@ -780,6 +780,7 @@ def rewrite_digest(
     understood_at: Optional[str] = None,
     _hooks: Sequence[Callable[[Any], None]] = (),
     _after: Sequence[Callable[[Dict[str, Any]], None]] = (),
+    _attributes: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Replace a record's digest (and optionally its title and keywords) IN PLACE, keeping every earlier reading.
 
@@ -859,6 +860,9 @@ def rewrite_digest(
         attrs.get("keywords") or ())
     at = str(understood_at or "").strip() or utc_now_iso()
     tid = str(task_id or "").strip()
+    # `_attributes`: a pass's own bookkeeping written with the reading, in its transaction (communities_pass: a topic
+    # authored in place keeps its verdict and what its author saw).
+    extra = _json_safe(dict(_attributes or {}), "_attributes")
 
     def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:
         out = dict(old)
@@ -871,6 +875,7 @@ def rewrite_digest(
             out["keywords"] = list(new_keywords)
         else:
             out.pop("keywords", None)
+        out.update(extra)
         return out
 
     def version(rec: Any, n: int) -> UnderstandingVersion:
@@ -895,6 +900,7 @@ def retitle(
     understood_at: Optional[str] = None,
     _hooks: Sequence[Callable[[Any], None]] = (),
     _after: Sequence[Callable[[Dict[str, Any]], None]] = (),
+    _attributes: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Change ONLY a record's title, in place, keeping every earlier title as a version (field `title`).
 
@@ -936,7 +942,8 @@ def retitle(
     was_untitled = _title(_attrs(a)) is None
     out = _retitle_apply(system, a, words, author_d, reader_d, sources_t, cause_d,
                          task_id=str(task_id or "").strip(), at=str(understood_at or "").strip() or utc_now_iso(),
-                         expected=int(expected_version), method=RETITLE_METHOD, hooks=_hooks, after=_after)
+                         expected=int(expected_version), method=RETITLE_METHOD, hooks=_hooks, after=_after,
+                         extra=_json_safe(dict(_attributes or {}), "_attributes"))
     if out.get("applied") and was_untitled and _attrs(a).get("record_kind") == "interest":
         rekey = _rekey_untitled_interest_card(system, a, words, author_d, reader_d, sources_t, cause_d)
         if rekey is not None:
@@ -977,12 +984,14 @@ def _rekey_untitled_interest_card(system: Any, a: Any, words: str, author_d: Dic
 def _retitle_apply(system: Any, a: Any, words: str, author_d: Dict[str, Any], reader_d: Dict[str, Any],
                    sources_t: Sequence[Dict[str, Any]], cause_d: Dict[str, Any], *, task_id: str, at: str,
                    expected: int, method: str, hooks: Sequence[Callable[[Any], None]] = (),
-                   after: Sequence[Callable[[Dict[str, Any]], None]] = ()) -> Dict[str, Any]:
+                   after: Sequence[Callable[[Dict[str, Any]], None]] = (),
+                   extra: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     def reserved(old: Dict[str, Any], n: int) -> Dict[str, Any]:
         out = dict(old)
         out.update({"title": words, "title_version": n,
                     "title_provenance": _understanding_attr(n, "title", author_d, reader_d, cause_d,
                                                             tuple(sources_t), (), at)})
+        out.update(extra or {})
         return out
 
     def version(rec: Any, n: int) -> UnderstandingVersion:

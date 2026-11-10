@@ -5,6 +5,26 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
+## [Unreleased]
+
+### Fixed: a standing topic still pending is authored, and its old tasks move up
+
+Castor's second topics night (2026-11-10): 10 of 11 topics got titles; the 11th stood unchanged, its title and
+summary tasks queued on the first night at the old priority 5 behind ~267 repair tasks, so the pass skipped it with 6
+calls of its budget unused, and its receipt said `pending: 0` while the topics route showed it pending.
+
+- `communities_pass` spends what its `budget` leaves after the new and changed topics on the STANDING topics still
+  pending (unchanged tonight), largest first, one call each for the fields still pending, from tonight's briefing.
+  Each is written in place on its current record after the version (`rewrite_digest`, with the title when both are
+  pending, or `retitle`), which completes its live `title.author` / `digest.author` tasks; the record keeps its
+  `title_basis` (with the sample its author saw) and the author's verdict. The receipt's `pending` now counts every
+  topic still without a title or summary after the pass, read back; new keys `authored_in_place`, `reprioritized`
+  and `ids.authored_in_place`; a refused in-place write is a failure line with reason `write_refused`.
+- Every standing topic's live authoring task that waits at a later priority than `COMMUNITY_PRIORITY` (3) is moved up
+  to it, in the version's transaction (its own when no version is written): a topic's legacy priority-5 tasks no
+  longer wait behind the repair tail. New `MemoryTaskQueue.prioritize(target_ids, *, kinds, priority, reason,
+  dry_run=False)`: one UPDATE, never demotes a task already ahead, one `prioritized` log row each.
+
 ## [0.5.0] - 2026-11-10
 
 Every memory now carries an authored title and summary, a home keeps a persistent queue of what still needs

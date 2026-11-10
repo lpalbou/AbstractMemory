@@ -39,9 +39,11 @@ Verbs:
   communities merged whole) -> attach the vector-less records by their engraved neighbours -> match keys -> layout ->
   author the changed communities (`budget` = the most author calls, all of it for the topics: one call per new or
   changed topic writes its title AND its summary, where its queue tasks would take two; the rest form pending, their
-  tasks ahead of every other pending record) -> `cancelled()` ONCE ->
-  ONE commit-guarded transaction (new versions + their bindings + closures + tasks) -> receipt. An unchanged pass
-  writes nothing.
+  tasks ahead of every other pending record; what the budget leaves goes to the STANDING topics still pending, the
+  unchanged ones whose tasks wait in the queue) -> `cancelled()` ONCE -> ONE commit-guarded transaction (new versions
+  + their bindings + closures + tasks + the standing topics' live tasks moved up to `COMMUNITY_PRIORITY`) -> the
+  standing pending topics authored IN PLACE (`rewrite_digest` / `retitle` on their current record, their live tasks
+  completed) -> receipt. An unchanged pass with no pending topic to author and no task to move writes nothing.
 
   Detection is BOUNDED: at most `MAX_DETECTION_ROUNDS` (5) Louvain + refine rounds, each warm-started from the
   previous round's refined partition, in a fixed order. The rounds stop at the first of: a fixed point (the round
@@ -1209,11 +1211,14 @@ def _undo_in_memory_journal(journal: Any, binding_ids: Sequence[str], closure_id
 
 
 def _write_version(system: Any, plans: Sequence[Any], planned: Sequence[Mapping[str, Any]],
-                   closures: Sequence[Any], superseded: Sequence[Tuple[str, str]]) -> None:
+                   closures: Sequence[Any], superseded: Sequence[Tuple[str, str]],
+                   standing: Sequence[str] = ()) -> List[str]:
     """ONE transaction for a whole version: the new records (rows + bindings), the closures of the versions they
-    replace and of the dissolved ones, the authoring tasks the new records owe and the supersession of the replaced
-    versions' live tasks; the commit guard is called once, immediately before the COMMIT (the task queue's
-    transaction on the store's own connection). An in-memory pair rolls this attempt back by hand."""
+    replace and of the dissolved ones, the authoring tasks the new records owe, the supersession of the replaced
+    versions' live tasks and the move of the standing topics' (`standing`: the record ids of the unchanged ones) live
+    authoring tasks up to `COMMUNITY_PRIORITY`; the commit guard is called once, immediately before the COMMIT (the
+    task queue's transaction on the store's own connection). An in-memory pair rolls this attempt back by hand.
+    Returns the task ids moved up."""
     from .commit_guard import deferred_to_caller
     from .in_memory_store import InMemoryTripleStore
     from .journal_memory import InMemoryJournal
@@ -1230,12 +1235,15 @@ def _write_version(system: Any, plans: Sequence[Any], planned: Sequence[Mapping[
     missing = [a for a in assertions if a.assertion_id not in existing]
     bindings = [b for plan in plans for b in plan.bindings]
 
+    moved: List[str] = []
+
     def tasks_on(cur: Any) -> None:
         for p in planned:
             args = dict(p)
             queue.enqueue(args.pop("kind"), args.pop("target_id"), _cur=cur, **args)
         for prior, reason in superseded:
             queue.supersede_target(prior, kinds=("title.author", "digest.author"), reason=reason, _cur=cur)
+        moved[:] = _prioritize(queue, standing, _cur=cur)
 
     if isinstance(store, SQLiteTripleStore):
         if not (queue.shares_store_transaction and isinstance(journal, SQLiteJournal)
@@ -1256,7 +1264,7 @@ def _write_version(system: Any, plans: Sequence[Any], planned: Sequence[Mapping[
         queue._txn(None, write, where="communities.communities_pass")
         if rows:
             store._after_add_commit()
-        return
+        return moved
     if not (isinstance(store, InMemoryTripleStore) and isinstance(journal, InMemoryJournal)):
         raise TypeError("communities_pass writes on a SQLite home (store + journal in one file) or an in-memory pair "
                         f"(got {type(store).__name__} + {type(journal).__name__})")
@@ -1287,6 +1295,64 @@ def _write_version(system: Any, plans: Sequence[Any], planned: Sequence[Mapping[
                 store._discard_formed(added)
             _undo_in_memory_journal(journal, bound, closed)
             raise
+    return moved
+
+
+#: Why a standing topic's authoring task moved up (its task log's `prioritized` row).
+PRIORITIZED_REASON = ("a topic's title and summary run at COMMUNITY_PRIORITY: a task queued at a later priority "
+                      "(before topics came first) is moved up")
+
+
+def _prioritize(queue: Any, record_ids: Sequence[str], *, dry_run: bool = False,
+                _cur: Any = None) -> List[str]:
+    """The standing topics' live `title.author` / `digest.author` tasks that wait at a later priority than
+    `COMMUNITY_PRIORITY` (queued before topics came first, castor's night 1), moved up to it (`dry_run`: which)."""
+    from .memory_tasks import COMMUNITY_PRIORITY, PENDING_KINDS
+
+    return queue.prioritize(record_ids, kinds=sorted(PENDING_KINDS), priority=COMMUNITY_PRIORITY,
+                            reason=PRIORITIZED_REASON, dry_run=dry_run, _cur=_cur)
+
+
+def _pending_of(attrs: Mapping[str, Any]) -> List[str]:
+    """The fields a record's pending marker still names ("title", "summary")."""
+    marker = attrs.get("pending") if isinstance(attrs.get("pending"), Mapping) else {}
+    return [f for f in ("title", "summary") if marker.get(f)]
+
+
+def _author_in_place(system: Any, prev: PreviousCommunity, got: Any, *, members: Sequence[str],
+                     sample: Sequence[str], verdict: Optional[str]) -> Dict[str, Any]:
+    """A standing topic's pending fields written IN PLACE on its current record (its version stands): the summary,
+    with the title when both were pending, through `rewrite_digest`; a title alone through `retitle`. Each is its own
+    commit-guarded transaction and completes the topic's live `title.author` / `digest.author` tasks (the drainer's
+    own verbs: the write that clears a pending field acks every live task of its kind, the one named first). The
+    record keeps `title_basis` with the sample its author saw, and the author's verdict. Returns the verb's result."""
+    from .memory_tasks import live_pending_tasks
+    from .understanding import DEFAULT_AUTHORED_METHOD, _current_version, retitle, rewrite_digest
+
+    attrs = prev.attrs
+    basis = dict(attrs["title_basis"]) if isinstance(attrs.get("title_basis"), Mapping) else {}
+    extra: Dict[str, Any] = {"title_basis": {**basis, "members": sorted(members), "sample_ids": list(sample),
+                                             "prompt_version": PROMPT_VERSION}}
+    if verdict is not None:
+        extra["verdict"] = verdict
+    live = live_pending_tasks(system.tasks, prev.record_id, ("title", "summary"))
+    common: Dict[str, Any] = {"author": got.author, "reader": got.reader or None, "sources": got.sources,
+                              "cause": {"cause": "formation", "pass": PASS_NAME, "in_place": True},
+                              "understood_at": got.at, "_attributes": extra}
+    if got.summary is not None:
+        return rewrite_digest(system, prev.record_id, text=got.summary, title=got.title,
+                              expected_version=_current_version(attrs, "digest"),
+                              digest_method=DEFAULT_AUTHORED_METHOD, task_id=live["summary"], **common)
+    return retitle(system, prev.record_id, title=got.title, expected_version=_current_version(attrs, "title"),
+                   task_id=live["title"], **common)
+
+
+def _unchanged_skip(out: Mapping[str, Any]) -> str:
+    """The receipt's `skipped` when no version was written: what the standing pending topics got."""
+    base = "unchanged: every community stands as it is"
+    if out["authored_in_place"] or out["pending"]:
+        return f"{base} ({out['authored_in_place']} pending topics authored in place, {out['pending']} still pending)"
+    return base
 
 
 # --------------------------------------------------------------------------- the pass
@@ -1299,8 +1365,9 @@ def _receipt() -> Dict[str, Any]:
             "dissolved": 0, "unchanged": 0, "written": 0, "moved_in": 0, "moved_out": 0, "detected": 0,
             "attached": 0, "provisional": 0, "unvectored": [], "unvectored_count": 0, "unplaced": [],
             "unplaced_count": 0, "unplaced_closed": [], "authored": 0, "pending": 0, "failed": 0, "titles_kept": 0,
-            "budget": None, "budget_spent": 0,
-            "ids": {"new": [], "kept": [], "renamed": [], "dissolved": [], "pending": [], "written": []},
+            "budget": None, "budget_spent": 0, "authored_in_place": 0, "reprioritized": 0,
+            "ids": {"new": [], "kept": [], "renamed": [], "dissolved": [], "pending": [], "written": [],
+                    "authored_in_place": []},
             "authoring": new_receipt(), "cancelled": None, "skipped": None, "nodes": 0, "detection_nodes": 0,
             "edges": 0, "knn_edges": 0, "modularity": 0.0, "algorithm": ALGORITHM,
             "params": _params(), "elapsed_ms": 0.0, "timings_ms": {}}
@@ -1357,23 +1424,35 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
     first: one call per new or changed topic (a carried title costs none) writes both its title and its summary, so the
     pass spends min(budget, n) of it, never more; the topics past it form pending (marker failure reason `budget_spent`)
     with their `title.author` / `digest.author` tasks at `COMMUNITY_PRIORITY`, ahead of every other pending record, so
-    the next drain names them first. The version is still written. A host that shares one authoring budget between this
-    pass and its drainer runs the pass first and gives the drainer `budget - budget_spent`.
+    the next drain names them first. The version is still written. What the budget leaves goes to the STANDING topics
+    (unchanged tonight) still pending, largest first, one call each for the fields still pending, from tonight's
+    briefing: written IN PLACE on their current record after the version (`rewrite_digest`, with the title when both
+    are pending; `retitle` for a title alone; each its own guarded transaction), which completes their live
+    `title.author` / `digest.author` tasks (castor's second topics night, 2026-11-10: a standing topic was skipped
+    while its tasks waited behind the repair tail). Every standing topic's live authoring task that waits at a later
+    priority than `COMMUNITY_PRIORITY` (queued before topics came first) is moved up to it in the version's
+    transaction (in its own when no version is written). A host that shares one authoring budget between this pass
+    and its drainer runs the pass first and gives the drainer `budget - budget_spent`.
     `cancelled`: the host's Stop check, called ONCE immediately before the write (True -> nothing is written, the
     receipt says `cancelled`); the commit guard inside the transaction is the truth for a Stop raised after it (its
     exception propagates). A home without a task queue is refused (a pending title always has its task). Returns the
     receipt: {version_seq | None, communities, new, kept, renamed, dissolved, unchanged, written, moved_in, moved_out,
     detected, attached, provisional, unvectored [ids], unvectored_count, unplaced [ids], unplaced_count,
-    unplaced_closed [ids] (the module docstring), authored (the topics whose title and summary this pass wrote),
-    pending (the topics written with a field still pending, their tasks queued), failed (`len(authoring.failures)`),
-    titles_kept, budget (as given, None = unbounded), budget_spent (the author calls made, <= budget), ids {new, kept,
-    renamed, dissolved, pending, written}, authoring {authored: [{record_id, record_kind, pass, fields}], failures}
-    (the host's failure lines; a topic left pending by the budget is no failure line), cancelled, skipped, nodes,
+    unplaced_closed [ids] (the module docstring), authored (the topics whose title and summary this pass wrote,
+    in a new version or in place), authored_in_place (the standing topics written in place), pending (EVERY topic
+    with a field still pending after the pass, written tonight or standing, read back: their tasks queued), failed
+    (`len(authoring.failures)`; a refused in-place write is reason `write_refused`, its error_class the verb's
+    refusal), titles_kept, budget (as given, None = unbounded), budget_spent (the author calls made, <= budget),
+    reprioritized (the standing topics' live tasks moved up to `COMMUNITY_PRIORITY`), ids {new, kept, renamed,
+    dissolved, pending, written, authored_in_place}, authoring {authored: [{record_id, record_kind, pass, fields}],
+    failures} (the host's failure lines; a topic left pending by the budget is no failure line), cancelled, skipped
+    (no version written; "unchanged: ..." names what the standing pending topics got), nodes,
     detection_nodes, edges, knn_edges, modularity, algorithm, params, elapsed_ms, timings_ms (per step in ms, and
     `rounds`: the detection rounds run, at most MAX_DETECTION_ROUNDS)}."""
-    from .formation_authoring import author_and_shape, note
+    from .formation_authoring import author_and_shape, author_formation, note
     from .memory_tasks import plan_formed, require_task_queue
-    from .records import MemoryRecordInput, build_formation_plan, close_record_plan, record_id_for
+    from .records import (MemoryRecordInput, build_formation_plan, close_record_plan, record_id_for,
+                          resolve_digest_assertion)
 
     started = time.perf_counter()
     require_task_queue(system, PASS_NAME)
@@ -1459,14 +1538,25 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
     out["ids"]["kept"] = sorted(matched_keys)
     out["ids"]["dissolved"] = [p.key for p in dissolved]
     timings["match"] = round((time.perf_counter() - t) * 1000.0, 3)
-    if not any(c["changed"] for c in current) and not dissolved:
+    # The topics that STAND (unchanged) with a field still pending (castor's second topics night, 2026-11-10: a topic
+    # whose tasks night 1 queued at the old priority waited behind the repair tail while the pass skipped it as
+    # unchanged, 6 calls of its budget unused): the budget the changed topics leave authors them IN PLACE, and their
+    # live tasks never wait at a later priority than COMMUNITY_PRIORITY.
+    standing = [c for c in current if not c["changed"] and c["prev"] is not None]
+    standing_ids = [c["prev"].record_id for c in standing]
+    waiting = sorted((c for c in standing if _pending_of(c["prev"].attrs)), key=lambda c: (-c["size"], c["key"]))
+    late = _prioritize(system.tasks, standing_ids, dry_run=True)
+    in_place = bool(waiting) and author is not None and (budget is None or int(budget) > 0)
+    if not any(c["changed"] for c in current) and not dissolved and not in_place and not late:
         out["titles_kept"] = sum(1 for c in current if c["prev"] is not None and c["prev"].title is not None)
+        out["pending"] = len(waiting)
+        out["ids"]["pending"] = [c["key"] for c in waiting]
         if not graph.nodes:
             out["skipped"] = "empty: the home holds no formed record"
         elif not current:
             out["skipped"] = "no vectored record: nothing to detect over (embed_missing first)"
         else:
-            out["skipped"] = "unchanged: every community stands as it is"
+            out["skipped"] = _unchanged_skip(out)
         out["elapsed_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
         return out
     # Layout (changed communities only; the unchanged stay where they are drawn) and links.
@@ -1595,6 +1685,47 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         if record.title is not None:
             titles[key] = record.title
         records.append((c, record, rid))
+    # The standing pending topics, largest first, with what the budget left: one call per topic for its fields still
+    # pending, from tonight's briefing (tonight's sibling titles); written in place after the version (below).
+    in_place_plan: List[Tuple[Dict[str, Any], Any, List[str], Optional[str]]] = []
+    for c in waiting if author is not None else ():
+        if budget is not None and calls >= int(budget):
+            break
+        prev, key = c["prev"], c["key"]
+        fields = _pending_of(prev.attrs)
+        sample = briefing_sample(key, sorted(c["ids"]), graph, det.weights)
+        others = [(k2, ttl) for k2, ttl in titles.items() if k2 != key and ttl]
+        others.sort(key=lambda kv: (-c["link_total"].get(kv[0], 0.0), kv[0]))
+        siblings = [ttl for _k2, ttl in others[:SIBLING_TITLES_MAX]]
+        body = _briefing(c["size"], c["kinds"], sample, graph, previous_title=prev.title, siblings=siblings)
+        calls += 1
+        out["budget_spent"] += 1
+        capture = _Capture(author)
+        got = author_formation(capture, kind=COMMUNITY_KIND, body=body, fields=fields, context={
+            "pass": PASS_NAME, "record_kind": COMMUNITY_KIND, "scope": scope0, "owner_id": owner, "fields": fields,
+            "title": prev.title, "source_ids": list(sample), "attributes": dict(prev.attrs)})
+        line = {"record_id": prev.record_id, "record_kind": COMMUNITY_KIND, "pass": PASS_NAME}
+        if capture.bad_verdict is not None:
+            out["authoring"]["failures"].append({**line, "reason": "invalid_result", "error_class": "ValueError",
+                                                 "at": got.at, "fields": fields, "message":
+                                                 f"the author returned verdict {capture.bad_verdict} "
+                                                 f"(known: {NO_COMMON_SUBJECT!r})"})
+            continue
+        clash = [k2 for k2, ttl in titles.items() if got.title is not None and k2 != key
+                 and _norm_title(ttl) == _norm_title(got.title)]
+        if clash:
+            out["authoring"]["failures"].append({**line, "reason": "invalid_result", "error_class": "TitleCollision",
+                                                 "at": got.at, "fields": fields, "message":
+                                                 f"the title {got.title!r} is already another topic's title "
+                                                 f"({clash[0]})"})
+            continue
+        if got.pending and got.failure:
+            out["authoring"]["failures"].append({**line, **dict(got.failure), "fields": list(got.pending)})
+        if got.title is None and got.summary is None:
+            continue
+        if got.title is not None:
+            titles[key] = got.title
+        in_place_plan.append((c, got, sample, capture.verdict))
     timings["author"] = round((time.perf_counter() - t) * 1000.0, 3)
     # Plans, closures, the tasks they owe (pure reads), then cancelled() once, then the one transaction.
     t = time.perf_counter()
@@ -1624,9 +1755,24 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         out["elapsed_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
         return out
     t = time.perf_counter()
-    _write_version(system, plans, planned, closures, superseded)
+    versioned = bool(records or dissolved)
+    if versioned:
+        out["reprioritized"] = len(_write_version(system, plans, planned, closures, superseded, standing_ids))
+        out["version_seq"] = version_seq
+    elif late:
+        out["reprioritized"] = len(_prioritize(system.tasks, standing_ids))
+    for c, got, sample, verdict in in_place_plan:
+        res = _author_in_place(system, c["prev"], got, members=sorted(c["ids"]), sample=sample, verdict=verdict)
+        fields = [f for f, v in (("title", got.title), ("summary", got.summary)) if v is not None]
+        line = {"record_id": c["prev"].record_id, "record_kind": COMMUNITY_KIND, "pass": PASS_NAME, "fields": fields}
+        if res.get("applied"):
+            out["authoring"]["authored"].append(line)
+            out["ids"]["authored_in_place"].append(c["key"])
+        else:  # e.g. `stale`: another writer moved the record meanwhile (the receipt's pending reads it as it is)
+            out["authoring"]["failures"].append({**line, "reason": "write_refused", "error_class": res.get("reason"),
+                                                 "message": str(res.get("detail") or res.get("reason")),
+                                                 "at": got.at})
     timings["write"] = round((time.perf_counter() - t) * 1000.0, 3)
-    out["version_seq"] = version_seq
     out["written"] = len(records)
     out["ids"]["written"] = [rid for _c, _r, rid in records]
     for c, record, _rid in records:
@@ -1640,9 +1786,23 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         if c["prev"] is not None and not c.get("carry"):
             out["renamed"] += 1
             out["ids"]["renamed"].append(c["key"])
+    # The standing pending topics as they are now: pending while a field is (the receipt's truth, read back).
+    done_in_place = set(out["ids"]["authored_in_place"])
+    touched = {c["key"] for c, _g, _s, _v in in_place_plan}
+    for c in waiting:
+        fresh = resolve_digest_assertion(system.store, c["prev"].record_id) if c["key"] in touched else None
+        attrs = dict(fresh.attributes or {}) if fresh is not None else c["prev"].attrs
+        if _pending_of(attrs):
+            out["pending"] += 1
+            out["ids"]["pending"].append(c["key"])
+        elif c["key"] in done_in_place:
+            out["authored"] += 1
+    out["authored_in_place"] = len(done_in_place)
     out["failed"] = len(out["authoring"]["failures"])
     out["titles_kept"] = (sum(1 for c in current if not c["changed"] and c["prev"] is not None
                               and c["prev"].title is not None) + sum(1 for c in current if c.get("carry")))
+    if not versioned:
+        out["skipped"] = _unchanged_skip(out)
     out["elapsed_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
     return out
 
