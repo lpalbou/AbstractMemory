@@ -2,7 +2,7 @@
 substrate pairs.
 
 Covered: I1 every placeable record in exactly one current community (vector-less records attached by their engraved
-neighbours, the rest reported `unplaced`); `written_amid` never drives detection; `detect_kinds` attaches the other
+neighbours, the rest reported `unplaced`; those whose every relation names a closed record also `unplaced_closed`); `written_amid` never drives detection; `detect_kinds` attaches the other
 kinds by nearest centroid; stable keys across a rerun with 5 % growth; an unchanged pass writes nothing; a new
 version is a NEW record id with the same `community_key`, `refines` -> previous, previous closed `supersede`, its
 live tasks superseded, a dissolved community closed `retract`; ONE transaction per version (one guard call; a refused
@@ -17,7 +17,8 @@ against this file; all red, source restored byte-exact):
 M1 drop the vector-less attach step; M2 let written_amid drive detection; M3 mint a fresh key for every group
 (matching off); M4 ignore `cancelled`; M5 one transaction per community; M6 sample ordered by member id only (not
 keyed on the community key); M7 store a title cut from the first member title when the author fails; M8 no
-relaxation (circles overlap); M9 no collision check; M10 budget ignored.
+relaxation (circles overlap); M9 no collision check; M10 budget ignored; M13 `unplaced_closed` = every unplaced
+vector-less record (the closed-only rule dropped); M14 a relation to an open record does not count against it.
 """
 
 from __future__ import annotations
@@ -205,6 +206,28 @@ def test_every_record_is_in_exactly_one_community(home) -> None:
     assert lone not in member and r["unplaced"] == [lone] and r["unplaced_count"] == 1
     assert sorted(r["unvectored"]) == sorted([s, lone]) and r["unvectored_count"] == 2  # I12: never silently 0
     assert r["attached"] == 1 and r["detected"] == 36
+
+
+def test_unplaced_summaries_of_closed_records_are_reported_apart(home) -> None:
+    """The summary of episodes consolidated away has no vector and only closed neighbours: no edge can place it.
+    It stays in `unplaced` and `unvectored` and is named in `unplaced_closed` (the fragmentation share leaves it
+    out). An unplaced record with any relation to an open record is not."""
+    _three_topics(home)
+    old = _topic(home, 1, 3, start=100, tag="-old")
+    [lone] = _form(home, [MemoryRecordInput(kind="episode", title="Lonely novec", digest="novec alone")], "lone")
+    [s] = _form(home, [MemoryRecordInput(kind="summary", title="Old days", digest="novec summary of the old days",
+                                         edges=tuple(("summarizes", r) for r in old))], "s-closed")
+    [u] = _form(home, [MemoryRecordInput(kind="summary", title="Mixed", digest="novec summary, one live source",
+                                         edges=(("summarizes", old[0]), ("summarizes", lone)))], "s-mixed")
+    for rid in old:
+        home.close_record(rid, reason="test: consolidated away")
+    r = _pass(home)
+    assert r["unplaced"] == sorted([s, lone, u]) and r["unplaced_count"] == 3
+    assert r["unplaced_closed"] == [s]
+    assert set(r["unplaced_closed"]) <= set(r["unvectored"]) and r["unvectored_count"] == 3
+    assert s not in _membership(home)
+    again = _pass(home)
+    assert again["skipped"].startswith("unchanged") and again["unplaced_closed"] == [s]
 
 
 def test_written_amid_never_drives_detection(home) -> None:
@@ -554,7 +577,8 @@ def test_the_receipt_has_what_the_runtime_logs(home) -> None:
     _three_topics(home)
     r = _pass(home)
     for key in ("version_seq", "communities", "new", "kept", "renamed", "dissolved", "moved_in", "moved_out",
-                "attached", "unvectored", "unplaced", "authored", "pending", "failed", "cancelled", "skipped",
-                "elapsed_ms", "timings_ms", "authoring", "titles_kept"):
+                "attached", "unvectored", "unplaced", "unplaced_closed", "authored", "pending", "failed",
+                "cancelled", "skipped", "elapsed_ms", "timings_ms", "authoring", "titles_kept"):
         assert key in r
-    assert set(r["timings_ms"]) >= {"read", "knn", "louvain", "refine", "match", "layout", "author", "write"}
+    assert set(r["timings_ms"]) >= {"read", "knn", "louvain", "refine", "rounds", "match", "layout", "author",
+                                    "write"}

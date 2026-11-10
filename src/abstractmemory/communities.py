@@ -38,6 +38,20 @@ Verbs:
   author the changed communities (`budget` = the most author calls; the rest form pending) -> `cancelled()` ONCE ->
   ONE commit-guarded transaction (new versions + their bindings + closures + tasks) -> receipt. An unchanged pass
   writes nothing.
+
+  Detection is BOUNDED: at most `MAX_DETECTION_ROUNDS` (5) Louvain + refine rounds, each warm-started from the
+  previous round's refined partition, in a fixed order. The rounds stop at the first of: a fixed point (the round
+  gives the previous round's partition: kept); a repeated partition (the detection oscillates, e.g. a hub record and
+  its pendant records flipping between two communities: the cycle's smallest partition in canonical order is kept,
+  whichever round entered the cycle, so a rerun seeded from it lands on it again); the cap (the last round's partition is kept).
+  The receipt reports the count as `timings_ms.rounds`.
+
+  Receipt fields about the records no community holds: `unvectored` [ids] (every open formed record without a
+  vector, placed or not); `unplaced` [ids] (the records no community holds tonight: no vector, no placed engraved
+  neighbour, not kept provisionally in their previous community); `unplaced_closed` [ids], a subset of both: the
+  unplaced vector-less records whose every live engraved relation (either direction, at least one) names a CLOSED
+  record (every digest row closed), e.g. the summary of episodes consolidated away. Their neighbours are gone, so no edge places them; the fragmentation share
+  (`sleep_cadence.records_since_maintenance(...)["fragmented"]`) can leave them out.
 - `embed_missing(system, *, scopes, owner_id, record_ids=None, cancelled) -> {embedded, skipped, failed, ...}`: the
   vector-less records embedded with the store's own embedder, one small guarded commit per vector.
 
@@ -105,8 +119,9 @@ SPLIT_MIN_SIZE = 40
 MIN_COMPONENT_SIZE = 3
 MIN_COMMUNITY_SIZE = 5
 #: The warm-started detection is re-seeded from its own refined output until it no longer moves (a fixed point:
-#: rerunning the pass on an unchanged graph moves nothing); castor settles in 3 rounds.
-MAX_DETECTION_ROUNDS = 12
+#: rerunning the pass on an unchanged graph moves nothing; castor settles in 2-4 rounds), HARD-capped at this many
+#: Louvain + refine rounds (no hidden unbounded cost); a repeated partition stops it earlier (`_stabilise`).
+MAX_DETECTION_ROUNDS = 5
 KEY_MATCH_FLOOR = 0.5
 TITLE_KEEP_JACCARD = 0.8
 BRIEFING_HUBS = 3
@@ -251,6 +266,9 @@ class CommunityGraph:
     space: Optional[str] = None
     seq: int = 0
     previous: List[PreviousCommunity] = field(default_factory=list)
+    #: The records whose every open engraved relation (at least one) names a CLOSED record (their neighbours are
+    #: gone: e.g. the summary of consolidated episodes). The receipt's `unplaced_closed` = the unplaced vector-less ones.
+    closed_only: Set[str] = field(default_factory=set)
 
     @property
     def vindex(self) -> Dict[str, int]:
@@ -404,12 +422,30 @@ def read_community_graph(system: Any, *, scopes: Sequence[Tuple[str, str]], owne
                                      title=record_title(attrs), digest=obj, scope=scope, owner_id=owner,
                                      observed_at=observed)
     graph.previous = [previous[k] for k in sorted(previous)]
+    # The closed records: every digest row of the subject closed (a subject with one open digest row is not closed).
+    shut: Set[str] = set()
+    alive: Set[str] = set()
+    for aid, subject, _scope, _owner, _obj, _observed, attrs in digests:
+        if isinstance(attrs.get("record_kind"), str) and attrs.get("record_kind") and not attrs.get("record_edge"):
+            (shut if (aid in closed or subject in closed) else alive).add(subject)
+    shut -= alive
     triples: Set[Tuple[str, str, str]] = set()
+    to_closed: Dict[str, int] = {}
+    to_other: Set[str] = set()
     for aid, s, p, o in edge_rows:
-        if aid in closed or s == o or s not in graph.nodes or o not in graph.nodes:
+        if aid in closed or s == o:
+            continue
+        for end, other in ((s, o), (o, s)):
+            if end in graph.nodes:
+                if other in shut:
+                    to_closed[end] = to_closed.get(end, 0) + 1
+                else:
+                    to_other.add(end)
+        if s not in graph.nodes or o not in graph.nodes:
             continue
         triples.add((s, p, o))
     graph.engraved = sorted(triples)
+    graph.closed_only = {rid for rid in to_closed if rid not in to_other}
     ids, rows = [], []
     for rid in sorted(graph.nodes):
         vec = vector_of.get(graph.nodes[rid].assertion_id)
@@ -689,6 +725,48 @@ def _unit_mean(np: Any, rows: Any) -> Any:
     return mean / norm if norm > 0 else None
 
 
+def _labels_of(n: int, groups: Sequence[Sequence[int]], orphans: Sequence[int]) -> List[int]:
+    """One label per node: the group index, each orphan a label of its own after the groups."""
+    out = [0] * n
+    for gi, g in enumerate(groups):
+        for v in g:
+            out[v] = gi
+    for k, v in enumerate(orphans):
+        out[v] = len(groups) + k
+    return out
+
+
+def _stabilise(adj: Sequence[Mapping[int, float]], init: Optional[Sequence[int]]
+               ) -> Tuple[List[List[int]], List[int], Dict[int, Set[int]], int]:
+    """Louvain + refine re-seeded from its own refined output, at most MAX_DETECTION_ROUNDS rounds (PURE,
+    deterministic: the same adjacency and seed give the same rounds and the same partition). Stops at the first of:
+    a fixed point (the round gives the previous round's partition: kept); a repeated EARLIER partition (an
+    oscillation: the cycle's smallest partition in canonical order is kept, so the result does not depend on the
+    round that entered the cycle and a rerun seeded from it lands on it again); the cap (the last round's partition).
+    Returns (groups, orphans, split_from, rounds)."""
+    n = len(adj)
+    history: List[Tuple[Tuple[int, ...], ...]] = []
+    results: List[Tuple[List[List[int]], List[int], Dict[int, Set[int]]]] = []
+    groups: List[List[int]] = []
+    orphans: List[int] = []
+    split: Dict[int, Set[int]] = {}
+    rounds = 0
+    while rounds < MAX_DETECTION_ROUNDS:
+        rounds += 1
+        groups, orphans, split = _refine(louvain(adj, init=init), adj)
+        state = tuple(sorted(tuple(g) for g in groups)) + (tuple(orphans),)
+        if state in history:
+            at = history.index(state)
+            if at < len(history) - 1:  # an oscillation: the cycle is history[at:]
+                pick = min(range(at, len(history)), key=lambda i: history[i])
+                groups, orphans, split = results[pick]
+            break
+        history.append(state)
+        results.append((groups, orphans, split))
+        init = _labels_of(n, groups, orphans)
+    return groups, orphans, split, rounds
+
+
 def detect_communities(graph: CommunityGraph, *, seed_previous: bool = True,
                        detect_kinds: Optional[Iterable[str]] = None) -> Detection:
     """The partition (PURE): detection over every VECTORED record (`detect_kinds` narrows it: the other kinds are
@@ -748,30 +826,10 @@ def detect_communities(graph: CommunityGraph, *, seed_previous: bool = True,
     groups_i: List[List[int]] = []
     orphans: List[int] = []
     split_i: Dict[int, Set[int]] = {}
-    labels: List[int] = []
     rounds = 0
-    seen: List[Tuple[Tuple[int, ...], ...]] = []
-    while detect_ids and rounds < MAX_DETECTION_ROUNDS:
-        rounds += 1
-        labels = louvain(adj, init=init)
-        groups_i, orphans, split_i = _refine(labels, adj)
-        state = tuple(sorted(tuple(g) for g in groups_i)) + (tuple(orphans),)
-        if state in seen:
-            break
-        seen.append(state)
-        nxt = [0] * len(detect_ids)
-        for gi, g in enumerate(groups_i):
-            for v in g:
-                nxt[v] = gi
-        for k, v in enumerate(orphans):
-            nxt[v] = len(groups_i) + k
-        init = nxt
-    final = [0] * len(detect_ids)
-    for gi, g in enumerate(groups_i):
-        for v in g:
-            final[v] = gi
-    for k, v in enumerate(orphans):
-        final[v] = len(groups_i) + k
+    if detect_ids:
+        groups_i, orphans, split_i, rounds = _stabilise(adj, init)
+    final = _labels_of(len(detect_ids), groups_i, orphans)
     modularity = round(_modularity(adj, final), 6) if detect_ids else 0.0
     t2 = time.perf_counter()
     groups: List[Dict[str, str]] = [{detect_ids[v]: "detected" for v in g} for g in groups_i]
@@ -1217,7 +1275,7 @@ def _receipt() -> Dict[str, Any]:
     return {"pass_name": PASS_NAME, "version_seq": None, "communities": 0, "new": 0, "kept": 0, "renamed": 0,
             "dissolved": 0, "unchanged": 0, "written": 0, "moved_in": 0, "moved_out": 0, "detected": 0,
             "attached": 0, "provisional": 0, "unvectored": [], "unvectored_count": 0, "unplaced": [],
-            "unplaced_count": 0, "authored": 0, "pending": 0, "failed": 0, "titles_kept": 0,
+            "unplaced_count": 0, "unplaced_closed": [], "authored": 0, "pending": 0, "failed": 0, "titles_kept": 0,
             "ids": {"new": [], "kept": [], "renamed": [], "dissolved": [], "pending": [], "written": []},
             "authoring": new_receipt(), "cancelled": None, "skipped": None, "nodes": 0, "detection_nodes": 0,
             "edges": 0, "knn_edges": 0, "modularity": 0.0, "algorithm": ALGORITHM,
@@ -1269,10 +1327,11 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
     receipt says `cancelled`); the commit guard inside the transaction is the truth for a Stop raised after it (its
     exception propagates). A home without a task queue is refused (a pending title always has its task). Returns the
     receipt: {version_seq | None, communities, new, kept, renamed, dissolved, unchanged, written, moved_in, moved_out,
-    detected, attached, provisional, unvectored [ids], unvectored_count, unplaced [ids], unplaced_count, authored,
-    pending, failed, titles_kept, ids {new, kept, renamed, dissolved, pending, written}, authoring {authored,
-    failures} (the host's failure lines), cancelled, skipped, nodes, detection_nodes, edges, knn_edges, modularity,
-    algorithm, params, elapsed_ms, timings_ms}."""
+    detected, attached, provisional, unvectored [ids], unvectored_count, unplaced [ids], unplaced_count,
+    unplaced_closed [ids] (the module docstring), authored, pending, failed, titles_kept, ids {new, kept, renamed,
+    dissolved, pending, written}, authoring {authored, failures} (the host's failure lines), cancelled, skipped, nodes,
+    detection_nodes, edges, knn_edges, modularity, algorithm, params, elapsed_ms, timings_ms (per step in ms, and
+    `rounds`: the detection rounds run, at most MAX_DETECTION_ROUNDS)}."""
     from .formation_authoring import author_and_shape, note
     from .memory_tasks import plan_formed, require_task_queue
     from .records import MemoryRecordInput, build_formation_plan, close_record_plan, record_id_for
@@ -1296,7 +1355,8 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
     version_seq = graph.seq
     out["nodes"] = len(graph.nodes)
     det = detect_communities(graph, seed_previous=seed_previous, detect_kinds=detect_kinds)
-    timings.update({"knn": round(det.knn_ms, 3), "louvain": round(det.louvain_ms, 3), "refine": round(det.refine_ms, 3)})
+    timings.update({"knn": round(det.knn_ms, 3), "louvain": round(det.louvain_ms, 3), "refine": round(det.refine_ms, 3),
+                    "rounds": det.rounds})
     out.update({"detection_nodes": det.detection_nodes, "edges": det.edges, "knn_edges": det.knn_edges,
                 "modularity": det.modularity, "unvectored": list(det.unvectored),
                 "unvectored_count": len(det.unvectored)})
@@ -1314,6 +1374,7 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         else:
             groups[gi][rid] = "provisional"
     out["unplaced"], out["unplaced_count"] = still, len(still)
+    out["unplaced_closed"] = [rid for rid in still if rid in graph.closed_only and rid not in graph.vindex]
     # Members (join order kept), kinds, centroids, changes.
     current: List[Dict[str, Any]] = []
     for gi, (key, prev, jac) in enumerate(matched):

@@ -4,7 +4,8 @@ printed (run with -s to read the numbers).
 - the castor copy (graph-topics/castor-copy, a read-only copy of a lived home, copied into tmp_path; skipped where the
   operator's copy is absent): one cold pass and one warm pass, timings per step, the partition (sizes, modularity,
   diary-dominated communities: reported, not asserted - Fable F5 / delta D1 detects over every vectored record),
-  `unvectored` and `unplaced`; warm pass <= 2 s (the design says ~1 s);
+  `unvectored` and `unplaced` (every unplaced castor record is a vector-less summary of closed episodes:
+  `unplaced_closed` names them all); the detection rounds within the cap; warm pass <= 2 s (the design says ~1 s);
 - the warm start measured (delta D6): the newest 5 % of castor held out, a version formed without them, then the
   whole life detected SEEDED from that version vs FRESH; keys and node memberships kept, printed; seeded keeps
   >= 60 % of the keys and >= 95 % of the memberships, and more than fresh (RED: the warm start disabled);
@@ -79,6 +80,8 @@ def test_castor_cold_and_warm(tmp_path) -> None:
     print("  warm:", _line(warm))
     assert cold["communities"] == len(sizes) and cold["written"] == len(sizes)
     assert cold["unvectored_count"] == len(g.nodes) - len(g.vec_ids) > 0  # I12
+    assert cold["unplaced_count"] > 0 and cold["unplaced_closed"] == cold["unplaced"]
+    assert det.rounds <= C.MAX_DETECTION_ROUNDS and cold["timings_ms"]["rounds"] <= C.MAX_DETECTION_ROUNDS
     assert warm["written"] == 0 and warm["version_seq"] is None
     assert warm["elapsed_ms"] < 2000.0
     members = [m for c in C.community_records(system, scopes=CASTOR_SCOPES, owner_id=CASTOR_OWNER) for m in c.members]
