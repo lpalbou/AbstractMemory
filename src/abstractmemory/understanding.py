@@ -1007,16 +1007,16 @@ def declare_pending(
 
     Same state as formation, any kind: `attributes.pending = {title, summary, since, attempts}` (since = now, merged
     into a marker already there), and per newly declared field formation's task (`title.author` / `digest.author`,
-    capability summaries, `FORMATION_PRIORITY`, `FORMATION_STRENGTH`, basis `<assertion id>@pending-<field>`,
-    basis_version 0; `memory_tasks.plan_declared`), queued in the same transaction (SQLite home). A declared TITLE is
-    stored None, as a pending title is at formation: the title it held is kept as a title version (version 0 with
-    the provenance of the reading that wrote it, then None with this declaration's), and the canonical text, keyword
-    entry and vector are replaced (the title is the canonical text's first line); an interest's standing card moves
-    to `topic:<its graph id>` (`card_rekey`), the key a pending interest elects. A declared SUMMARY keeps the body as
-    the provisional digest it becomes (never restored by `revert_digest`) and supersedes the record's live body
-    task (`digest.rewrite`, a card's `card.author`). The drainer then completes the tasks with `retitle` and
-    `rewrite_digest` exactly as for a record formed pending (a card's summary through the card's own write, its
-    target, evidence and revision untouched; a dream's in place, its signals untouched).
+    capability summaries, `FORMATION_PRIORITY` (a topic's `COMMUNITY_PRIORITY`), `FORMATION_STRENGTH`, basis
+    `<assertion id>@pending-<field>`, basis_version 0; `memory_tasks.plan_declared`), queued in the same transaction
+    (SQLite home). A declared TITLE is stored None, as a pending title is at formation: the title it held is kept as a
+    title version (version 0 with the provenance of the reading that wrote it, then None with this declaration's), and
+    the canonical text, keyword entry and vector are replaced (the title is the canonical text's first line); an
+    interest's standing card moves to `topic:<its graph id>` (`card_rekey`), the key a pending interest elects. A
+    declared SUMMARY keeps the body as the provisional digest it becomes (never restored by `revert_digest`) and
+    supersedes the record's live body task (`digest.rewrite`, a card's `card.author`). The drainer then completes the
+    tasks with `retitle` and `rewrite_digest` exactly as for a record formed pending (a card's summary through the
+    card's own write, its target, evidence and revision untouched; a dream's in place, its signals untouched).
 
     The journal keeps the declaration as a version row (field `pending`, `pending_version` on the row): text = the
     fields declared, author `DECLARER`, cause = {cause, reason?, pending: [fields], tasks: {field: task id},
@@ -1203,12 +1203,12 @@ def rearm_pending(
     cause: Union[str, Mapping[str, Any]] = "repair",
     reason: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Re-arm a pending record whose authoring ran out: a field its marker says is pending but that has NO live
-    (pending / deferred / leased) `title.author` / `digest.author` task, because every task it had failed after
-    `max_attempts` claims, was skipped or superseded, gets a fresh one (operator rule 2026-11-09: "title + summary
-    must ALWAYS exist"; a record pending with only terminal tasks would stay pending forever; a repeated
-    `declare_pending` repairs it through here). Formation's task exactly (`plan_declared` / `enqueue_declared`: same kind,
-    capability `summaries`, `FORMATION_PRIORITY`, `FORMATION_STRENGTH`, basis_version 0, the next free basis
+    """Re-arm a pending record whose authoring ran out: a field its marker says is pending but that has NO live (pending
+    / deferred / leased) `title.author` / `digest.author` task, because every task it had failed after `max_attempts`
+    claims, was skipped or superseded, gets a fresh one (operator rule 2026-11-09: "title + summary must ALWAYS exist";
+    a record pending with only terminal tasks would stay pending forever; a repeated `declare_pending` repairs it
+    through here). Formation's task exactly (`plan_declared` / `enqueue_declared`: same kind, capability `summaries`,
+    `FORMATION_PRIORITY` (a topic's `COMMUNITY_PRIORITY`), `FORMATION_STRENGTH`, basis_version 0, the next free basis
     `<assertion id>@pending-<field>@<k>`; cause {cause, reason?, pending: <field>, rearmed: n}), queued in the same
     transaction as the marker (SQLite home). A field that still has a live task keeps it (listed in `live`).
 

@@ -18,7 +18,9 @@ Attributes of a version (the read, `communities()`, serves them):
 - the title and the digest (= summary) under the standard authored contract (`formation_authoring.author_and_shape`):
   authored at formation from the BRIEFING (the provisional body: a stable kind-mixed member sample, the previous title,
   the sibling titles that must differ), else pending with `title.author` / `digest.author` tasks for the existing
-  drainer; `verdict` = "no_common_subject" when the author said so (an authored terminal state, no task);
+  drainer, at `memory_tasks.COMMUNITY_PRIORITY` (ahead of every other pending record: a drainer with a small budget
+  names the topics before a long repair tail); `verdict` = "no_common_subject" when the author said so (an authored
+  terminal state, no task);
 - `title_basis` {members (the membership the title was authored for), sample_ids (what the author saw),
   prompt_version, version_seq}: a title and summary carry to the next version while Jaccard(members, basis) >= 0.8
   and the prompt version is the same, else they are authored again from the fresh briefing;
@@ -35,7 +37,9 @@ Verbs:
   from the store's in-memory `VectorMatrix`) -> detect (deterministic Louvain warm-started from the previous version,
   over every VECTORED record; `written_amid` never drives detection) -> refine (giant split, connectivity, tiny
   communities merged whole) -> attach the vector-less records by their engraved neighbours -> match keys -> layout ->
-  author the changed communities (`budget` = the most author calls; the rest form pending) -> `cancelled()` ONCE ->
+  author the changed communities (`budget` = the most author calls, all of it for the topics: one call per new or
+  changed topic writes its title AND its summary, where its queue tasks would take two; the rest form pending, their
+  tasks ahead of every other pending record) -> `cancelled()` ONCE ->
   ONE commit-guarded transaction (new versions + their bindings + closures + tasks) -> receipt. An unchanged pass
   writes nothing.
 
@@ -1101,7 +1105,9 @@ def briefing_sample(key: str, member_ids: Sequence[str], graph: CommunityGraph,
                     token_budget: int = BRIEFING_TOKEN_BUDGET) -> List[str]:
     """The stable kind-mixed sample the author reads: BRIEFING_HUBS hubs by internal weight, then a round-robin over
     the member kinds (most numerous first), each kind ordered by sha1('<key>:<member id>') - a bottom-k sample keyed
-    on the STABLE key, so it drifts only as the membership does - until the token budget (whole lines only)."""
+    on the STABLE key, so it drifts only as the membership does - until the token budget (whole lines only: a line
+    that does not fit is left out, the first one too, so the sample stays within the budget; only when no single
+    line fits is the shortest one, in that order, the whole sample - the author always reads at least one member)."""
     from .canonical_text import token_estimate
 
     inside = set(member_ids)
@@ -1127,12 +1133,14 @@ def briefing_sample(key: str, member_ids: Sequence[str], graph: CommunityGraph,
         depth += 1
     out: List[str] = []
     used = 0
+    costs = {m: token_estimate(_member_line(graph.nodes[m])) for m in order}
     for m in order:
-        cost = token_estimate(_member_line(graph.nodes[m]))
-        if out and used + cost > token_budget:
+        if used + costs[m] > token_budget:
             continue
         out.append(m)
-        used += cost
+        used += costs[m]
+    if not out and order:
+        out = [min(order, key=lambda m: costs[m])]
     return out
 
 
@@ -1291,6 +1299,7 @@ def _receipt() -> Dict[str, Any]:
             "dissolved": 0, "unchanged": 0, "written": 0, "moved_in": 0, "moved_out": 0, "detected": 0,
             "attached": 0, "provisional": 0, "unvectored": [], "unvectored_count": 0, "unplaced": [],
             "unplaced_count": 0, "unplaced_closed": [], "authored": 0, "pending": 0, "failed": 0, "titles_kept": 0,
+            "budget": None, "budget_spent": 0,
             "ids": {"new": [], "kept": [], "renamed": [], "dissolved": [], "pending": [], "written": []},
             "authoring": new_receipt(), "cancelled": None, "skipped": None, "nodes": 0, "detection_nodes": 0,
             "edges": 0, "knn_edges": 0, "modularity": 0.0, "algorithm": ALGORITHM,
@@ -1344,14 +1353,22 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
                      cancelled: Optional[Callable[[], bool]], budget: Optional[int] = None,
                      seed_previous: bool = True, detect_kinds: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     """One night's communities (see the module docstring). `budget`: the most author calls this pass makes (None =
-    no bound; the runtime passes None); the communities past it form pending, the version is still written.
+    no bound: every new or changed topic is authored). The budget goes to the topics FIRST and only to them, largest
+    first: one call per new or changed topic (a carried title costs none) writes both its title and its summary, so the
+    pass spends min(budget, n) of it, never more; the topics past it form pending (marker failure reason `budget_spent`)
+    with their `title.author` / `digest.author` tasks at `COMMUNITY_PRIORITY`, ahead of every other pending record, so
+    the next drain names them first. The version is still written. A host that shares one authoring budget between this
+    pass and its drainer runs the pass first and gives the drainer `budget - budget_spent`.
     `cancelled`: the host's Stop check, called ONCE immediately before the write (True -> nothing is written, the
     receipt says `cancelled`); the commit guard inside the transaction is the truth for a Stop raised after it (its
     exception propagates). A home without a task queue is refused (a pending title always has its task). Returns the
     receipt: {version_seq | None, communities, new, kept, renamed, dissolved, unchanged, written, moved_in, moved_out,
     detected, attached, provisional, unvectored [ids], unvectored_count, unplaced [ids], unplaced_count,
-    unplaced_closed [ids] (the module docstring), authored, pending, failed, titles_kept, ids {new, kept, renamed,
-    dissolved, pending, written}, authoring {authored, failures} (the host's failure lines), cancelled, skipped, nodes,
+    unplaced_closed [ids] (the module docstring), authored (the topics whose title and summary this pass wrote),
+    pending (the topics written with a field still pending, their tasks queued), failed (`len(authoring.failures)`),
+    titles_kept, budget (as given, None = unbounded), budget_spent (the author calls made, <= budget), ids {new, kept,
+    renamed, dissolved, pending, written}, authoring {authored: [{record_id, record_kind, pass, fields}], failures}
+    (the host's failure lines; a topic left pending by the budget is no failure line), cancelled, skipped, nodes,
     detection_nodes, edges, knn_edges, modularity, algorithm, params, elapsed_ms, timings_ms (per step in ms, and
     `rounds`: the detection rounds run, at most MAX_DETECTION_ROUNDS)}."""
     from .formation_authoring import author_and_shape, note
@@ -1369,6 +1386,7 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         return out
     if budget is not None and int(budget) < 0:
         raise ValueError(f"budget is the most author calls (>= 0) or None (got {budget!r})")
+    out["budget"] = None if budget is None else int(budget)
     pairs = _pairs(scopes)
     owner = str(owner_id or "").strip()
     t = time.perf_counter()
@@ -1547,6 +1565,7 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
             records.append((c, record, rid))
             continue
         calls += 1
+        out["budget_spent"] += int(author is not None)
         capture = _Capture(author) if author is not None else None
         record, got = author_and_shape(capture, PASS_NAME, base, scope=scope0, owner_id=owner,
                                        fields=("title", "summary"), source_ids=sample)

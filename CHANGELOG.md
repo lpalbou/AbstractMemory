@@ -131,6 +131,11 @@ formed during sleep, and a host can fence every memory write behind its Stop (ba
   version 2 a host serves, with each community's `facts`: span, activity, hub, bridges, paths,
   `changed_since_last_sleep`) and `community_of(system, record_id)`. A community record replays like any formed
   record; its binding envelope draws only `refines`.
+- Topic titles come first: a community's `title.author` / `digest.author` tasks are queued at `COMMUNITY_PRIORITY`
+  (3, ahead of every other pending record's `FORMATION_PRIORITY` 5), so a drainer with a small budget names the
+  topics before a long repair tail. `communities_pass`'s `budget` goes to its topics, largest first, one call per
+  topic for both its title and its summary (`None` authors every topic); the receipt carries `budget` and
+  `budget_spent`. A topic's briefing keeps its member lines within 1500 tokens, the first line too.
 
 ### Added: sleep cadence
 

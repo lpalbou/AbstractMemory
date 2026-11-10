@@ -10,7 +10,10 @@ guard leaves no row, binding, closure or task); `cancelled()` -> nothing written
 without an author (author None -> pending + live tasks; no task queue -> refused); I10 seats inside circles, circles
 apart; I13 budget -> the rest pending, the version still written; the stable briefing sample; sibling-title collision
 -> pending with one feedback line; the `no_common_subject` verdict; the title carried while Jaccard >= 0.8; small
-homes (empty, 1, 2 records, no vector at all).
+homes (empty, 1, 2 records, no vector at all). Topics first (castor's first topics night, 2026-11-10): a topic's
+authoring tasks at COMMUNITY_PRIORITY ahead of a repair tail queued earlier (formed and re-armed), a small budget
+titles the largest topics and leaves the rest pending, one call per topic at most, `budget` / `budget_spent`; the
+briefing's member lines within their budget (the first line too) and the whole briefing measured and printed.
 
 MUTATION LIST (scratch copy untracked/communities/mut, runner untracked/communities/mutate.py, each mutant run
 against this file; all red, source restored byte-exact):
@@ -19,6 +22,9 @@ M1 drop the vector-less attach step; M2 let written_amid drive detection; M3 min
 keyed on the community key); M7 store a title cut from the first member title when the author fails; M8 no
 relaxation (circles overlap); M9 no collision check; M10 budget ignored; M13 `unplaced_closed` = every unplaced
 vector-less record (the closed-only rule dropped); M14 a relation to an open record does not count against it.
+Topics first (2026-11-10, scratch copy in the session scratchpad, mut/mutate.py): COMMUNITY_PRIORITY = 5;
+plan_formed ignores the record kind; enqueue_declared ignores it; the first briefing line always kept; budget_spent
+never counted; budget ignored. All red.
 Fable review M1 (2026-11-10, scratch copy untracked/review-m1-wip/tree): m2 the connectivity refinement removed (a
 disconnected community stays whole: I2); m4 KEY_MATCH_FLOOR = 0 (any overlap continues a key); L1 an unchanged
 community keeps its stored links to a dissolved key. All red.
@@ -671,3 +677,180 @@ def test_the_receipt_has_what_the_runtime_logs(home) -> None:
         assert key in r
     assert set(r["timings_ms"]) >= {"read", "knn", "louvain", "refine", "rounds", "match", "layout", "author",
                                     "write"}
+
+
+# ----------------------------------------------------------------------------------------------- topics first (castor's
+# first topics night, 2026-11-10: 12 topics, 0 titled; the night's 64 author calls went to the repair of 584 records
+# declared pending, and the topics' 24 tasks queued behind them at the same priority and strength)
+
+AUTHORING = ["title.author", "digest.author"]
+
+
+def test_topic_tasks_run_ahead_of_the_repair_tail(home) -> None:
+    from abstractmemory.memory_tasks import COMMUNITY_PRIORITY, FORMATION_PRIORITY
+
+    topics = _three_topics(home)
+    for rid in [r for ids in topics.values() for r in ids]:  # the repair tail, queued FIRST (older enqueued_at)
+        res = home.declare_pending(rid, fields=("title", "summary"), cause="repair", reason="legacy title")
+        assert res["outcome"] == "applied", res
+    repair = [t for t in home.tasks.tasks(status=LIVE) if t["kind"] in AUTHORING]
+    assert len(repair) == 72 and {t["priority"] for t in repair} == {FORMATION_PRIORITY}
+    r = _pass(home, budget=0)  # the night's budget already spent: every topic forms pending
+    assert r["pending"] == r["communities"] == 3 and r["budget_spent"] == 0
+    topic_ids = {c.record_id for c in _current(home)}
+    topic_tasks = [t for t in home.tasks.tasks(status=LIVE) if t["target_id"] in topic_ids]
+    assert len(topic_tasks) == 6 and {t["priority"] for t in topic_tasks} == {COMMUNITY_PRIORITY}
+    assert COMMUNITY_PRIORITY < FORMATION_PRIORITY
+    # a drainer with a small budget (the runtime's drain_authoring: kinds = the authoring kinds, hard_cap = its cap)
+    # names the topics first, then the repair tail
+    sel = home.tasks.select_for_window(10_000.0, window="night", kinds=AUTHORING, hard_cap=6)
+    assert {t["target_id"] for t in sel["tasks"]} == topic_ids and len(sel["tasks"]) == 6
+    sel = home.tasks.select_for_window(10_000.0, window="night", kinds=AUTHORING, hard_cap=8)
+    assert [t["target_id"] in topic_ids for t in sel["tasks"]] == [True] * 6 + [False] * 2
+
+
+def test_a_rearmed_topic_keeps_the_topic_priority(home) -> None:
+    from abstractmemory.memory_tasks import COMMUNITY_PRIORITY
+
+    _three_topics(home)
+    _pass(home, budget=0)
+    c = _current(home)[0]
+    home.tasks.supersede_target(c.record_id, kinds=tuple(AUTHORING), reason="test: every task ran out")
+    assert not home.tasks.tasks(status=LIVE, target_id=c.record_id)
+    res = home.rearm_pending(c.record_id, cause="repair")
+    assert res["outcome"] == "rearmed", res
+    live = home.tasks.tasks(status=LIVE, target_id=c.record_id)
+    assert len(live) == 2 and {t["priority"] for t in live} == {COMMUNITY_PRIORITY}
+
+
+def test_a_small_budget_titles_the_topics_first_and_leaves_the_rest_pending(home) -> None:
+    from abstractmemory.memory_tasks import COMMUNITY_PRIORITY
+
+    for t, n in ((1, 16), (2, 12), (3, 8)):
+        _topic(home, t, n)
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log), budget=2)
+    assert len(log) == 2 and r["budget"] == 2 and r["budget_spent"] == 2
+    assert r["authored"] == 2 and r["pending"] == 1 and r["failed"] == 0 and r["written"] == 3
+    titled = [c for c in _current(home) if c.title]
+    [left] = [c for c in _current(home) if c.title is None]
+    assert len(titled) == 2 and all(c.digest and not c.attrs.get("pending") for c in titled)
+    assert {a["record_id"] for a in r["authoring"]["authored"]} == {c.record_id for c in titled}
+    assert {tuple(a["fields"]) for a in r["authoring"]["authored"]} == {("title", "summary")}
+    # the largest topics first; the one past the budget is pending (no failure line), its tasks ahead of the queue
+    assert len(left.members) == 8 and sorted(len(c.members) for c in titled) == [12, 16]
+    assert left.attrs["pending"]["failure"]["reason"] == "budget_spent" and r["authoring"]["failures"] == []
+    live = home.tasks.tasks(status=LIVE, target_id=left.record_id)
+    assert {t["kind"] for t in live} == set(AUTHORING) and {t["priority"] for t in live} == {COMMUNITY_PRIORITY}
+
+
+def test_the_pass_never_spends_more_than_one_call_per_topic(home) -> None:
+    _three_topics(home)
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log), budget=64)  # a budget past 2 x the topics: the rest is the host's
+    assert len(log) == 3 and r["budget"] == 64 and r["budget_spent"] == 3 and r["authored"] == 3
+    assert r["pending"] == 0
+
+
+def test_no_budget_authors_every_topic(home) -> None:
+    _three_topics(home)
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log), budget=None)
+    assert len(log) == 3 and r["budget"] is None and r["budget_spent"] == 3 and r["authored"] == 3
+
+
+def test_a_zero_budget_calls_no_author(home) -> None:
+    _three_topics(home)
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log), budget=0)
+    assert log == [] and r["budget"] == 0 and r["budget_spent"] == 0 and r["pending"] == 3 and r["authored"] == 0
+
+
+class _Node:
+    def __init__(self, kind: str, title: str, digest: str) -> None:
+        self.kind, self.title, self.digest = kind, title, digest
+
+
+class _Graph:
+    def __init__(self, nodes: Dict[str, _Node]) -> None:
+        self.nodes = nodes
+
+
+def test_a_member_line_over_the_briefing_budget_is_left_out_even_first() -> None:
+    from abstractmemory.canonical_text import token_estimate
+
+    nodes = {"big": _Node("episode", "The long one", "word " * 4000)}
+    nodes.update({f"m{i}": _Node("episode", f"Short {i}", f"A short memory number {i}.") for i in range(8)})
+    # "big" is the strongest hub (it would be the sample's first line)
+    weights = {m: {n: (5.0 if "big" in (m, n) else 1.0) for n in nodes if n != m} for m in nodes}
+    sample = C.briefing_sample("ex:community-aaaaaaaaaaaa", sorted(nodes), _Graph(nodes), weights, token_budget=200)
+    assert "big" not in sample and len(sample) == 8
+    assert sum(token_estimate(C._member_line(nodes[m])) for m in sample) <= 200
+    # no line fits: the shortest one is the whole sample (the author always reads at least one member)
+    only = C.briefing_sample("ex:community-aaaaaaaaaaaa", sorted(nodes), _Graph(nodes), weights, token_budget=3)
+    assert only == ["m0"]
+
+
+FILLER = ("We sat a long while and went over what had happened, who said what, and what it means for the days "
+          "ahead; nothing was decided but the outline is clearer now than it was this morning. ")
+LONG_TITLE = "Long evenings spent going over subject {h} together"
+
+
+def test_a_topic_briefing_is_bounded_near_2k_tokens(kind, tmp_path) -> None:
+    """One call per topic writes its title and summary; what it reads is the briefing. A castor-shaped home (12
+    topics, one with more long member lines than the member budget holds): every briefing <= ~2k tokens, printed."""
+    from abstractmemory.canonical_text import token_estimate
+
+    home = _open(kind, tmp_path)
+    try:
+        recs = [MemoryRecordInput(kind="episode", title=f"An evening about topic-1, part {i}",
+                                  digest=f"We talked about topic-1 again, item {i}. " + FILLER * 2,
+                                  edges=(("continues", f"local:{i - 1}"),) if i else ()) for i in range(30)]
+        _form(home, recs, "big-topic")
+        for t in range(2, 13):
+            _topic(home, t, 8)
+        bodies: List[str] = []
+
+        def author(kind_: str, body: str, context: Dict[str, Any]) -> Dict[str, Any]:
+            bodies.append(body)
+            h = hashlib.sha1(body.encode("utf-8")).hexdigest()[:8]
+            return {"title": LONG_TITLE.format(h=h), "summary": f"Memories about subject {h}.", "author": MODEL,
+                    "reader": READER, "sources": [{"kind": "artifact", "artifact_id": f"call-{h}"}]}
+
+        r = _pass(home, author=author)
+        assert r["communities"] == 12 and r["authored"] == len(bodies) == 12 and r["budget_spent"] == 12
+        sizes = [token_estimate(b) for b in bodies]
+        worst = bodies[sizes.index(max(sizes))]
+        print(f"\n--- {kind}: the largest of {len(bodies)} topic briefings, ~{max(sizes)} tokens (all: {sizes}) ---\n"
+              f"{worst}\n--- end ---")
+        # not vacuous: the 30-member topic's long lines overflow the member budget, so its sample is a part of it
+        [big] = [b for b in bodies if b.startswith("A topic of this memory: 30 memories")]
+        assert "(a sample of 30 of 30)" not in big and "(a sample of " in big
+        assert max(sizes) <= 2048
+    finally:
+        home.journal.close()
+        home.store.close()
+
+
+def test_the_worst_briefing_is_bounded_by_its_parts() -> None:
+    """The structural bound, every optional part present: member lines <= BRIEFING_TOKEN_BUDGET (whole lines), at
+    most SIBLING_TITLES_MAX sibling titles, the previous title, the collision feedback, the fixed frame. Printed."""
+    from abstractmemory.canonical_text import token_estimate
+
+    nodes = {f"m{i:03d}": _Node(("episode", "diary", "summary")[i % 3], f"An evening, part {i}",
+                                f"Item {i}. " + FILLER * (1 + i % 3)) for i in range(200)}
+    weights = {m: {} for m in nodes}
+    graph = _Graph(nodes)
+    sample = C.briefing_sample("ex:community-aaaaaaaaaaaa", sorted(nodes), graph, weights)
+    lines = sum(token_estimate(C._member_line(nodes[m])) for m in sample)
+    assert 0 < len(sample) < 200 and lines <= C.BRIEFING_TOKEN_BUDGET
+    siblings = [LONG_TITLE.format(h=f"{i:08x}") for i in range(C.SIBLING_TITLES_MAX)]
+    kinds = {"episode": 67, "diary": 67, "summary": 66}
+    body = C._briefing(200, kinds, sample, graph, previous_title=LONG_TITLE.format(h="previous"), siblings=siblings,
+                       feedback=f'Another topic is already titled "{siblings[0]}": this title must differ.')
+    total = token_estimate(body)
+    frame = total - lines
+    print(f"\n--- worst case: ~{total} tokens = member lines ~{lines} (<= {C.BRIEFING_TOKEN_BUDGET}) + frame and "
+          f"{len(siblings)} sibling titles ~{frame} ---")
+    assert frame <= 120 + C.SIBLING_TITLES_MAX * (token_estimate(siblings[0]) + 2)
+    assert total <= C.BRIEFING_TOKEN_BUDGET + 900

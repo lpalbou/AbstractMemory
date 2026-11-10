@@ -20,8 +20,10 @@ TASK KINDS (capability = the cognition-profile capability that runs them):
   summary are mandatory metadata of every memory; when one failed at formation the record carries the marker
   `attributes.pending = {title, summary, since, attempts}` and these tasks write what is missing; a STORED record
   whose title or summary is still not authored, e.g. a legacy card or dream, is declared pending the same way by
-  `understanding.declare_pending`). FORMATION priority, ahead of every rewrite; `retitle` / `rewrite_digest`
-  complete them and clear the marker; each claim mirrors the attempt into the marker;
+  `understanding.declare_pending`). FORMATION priority, ahead of every rewrite (a TOPIC's, record kind `community`,
+  at COMMUNITY priority, ahead of every other record's: a topic without a title is useless to its owner, and a
+  window with a small budget names the topics before the long repair tail); `retitle` / `rewrite_digest` complete
+  them and clear the marker; each claim mirrors the attempt into the marker;
 - `digest.rewrite` (summaries): an episode, session summary or observation still in mechanical words;
 - `card.author` (summaries): a LEGACY world-model card still in mechanical words (or carrying a mechanical delta),
   formed before cards formed pending; `world_model_pass` forms every card with its title and summary pending (the
@@ -52,6 +54,7 @@ from .canonical_text import record_title, token_estimate
 from .commit_guard import deferred_to_caller, guard_commit
 
 __all__ = [
+    "COMMUNITY_PRIORITY",
     "FORMATION_PRIORITY",
     "MemoryTaskQueue",
     "PENDING_KINDS",
@@ -60,6 +63,7 @@ __all__ = [
     "TASK_STATUSES",
     "WINDOWS",
     "enqueue_debt",
+    "pending_priority",
     "pending_records",
     "task_id_for",
     "task_packet",
@@ -80,8 +84,11 @@ LIVE = frozenset({"pending", "deferred", "leased"})
 #: The host's window names (DESIGN §6). A task names the windows it may run in; none = any.
 WINDOWS = frozenset({"turn", "visit", "nap", "cycle", "night", "idle"})
 KIND_WINDOWS: Mapping[str, Tuple[str, ...]] = {"dream.narrate": ("night", "nap"), "ripple.consolidate": ("night",)}
-#: Tie-break after activation (DESIGN §5): 5 formation (a pending title or summary: mandatory metadata still being
-#: written), 10 this turn, 20 ripple, 30 summary/card, 40 dream, 90 backfill.
+#: Tie-break after activation (DESIGN §5): 3 a topic's pending title or summary (record kind `community`), 5 formation
+#: (a pending title or summary: mandatory metadata still being written; also a record `declare_pending` repairs), 10
+#: this turn, 20 ripple, 30 summary/card, 40 dream, 90 backfill. Every pending field is at FORMATION_STRENGTH, so
+#: among them this number decides: a night's 12 topics (24 tasks) run before 600 repaired records' tasks.
+COMMUNITY_PRIORITY = 3
 FORMATION_PRIORITY = 5
 PRIORITY: Mapping[str, int] = {"title.author": FORMATION_PRIORITY, "digest.author": FORMATION_PRIORITY,
                                "digest.rewrite": 30, "card.author": 30, "dream.narrate": 40,
@@ -94,6 +101,12 @@ RELEASE_OUTCOMES = frozenset({"retry", "defer", "skip"})
 #: Selection reasons a task is left out of a window (each named in the result).
 LEFT_OUT_REASONS = frozenset({"below_gate", "over_budget", "hard_cap", "window", "blocked", "not_before", "leased",
                               "ripple_window_cap", "scope", "filtered"})
+
+
+def pending_priority(record_kind: Any) -> int:
+    """The priority of a pending field's `title.author` / `digest.author` task on a record of `record_kind`:
+    COMMUNITY_PRIORITY for a topic (kind `community`), FORMATION_PRIORITY for every other record."""
+    return COMMUNITY_PRIORITY if str(record_kind or "") == "community" else FORMATION_PRIORITY
 
 
 def task_id_for(kind: str, target_id: str, basis: str) -> str:
@@ -880,11 +893,12 @@ def pending_task_kinds(attrs: Mapping[str, Any]) -> List[str]:
 
 def plan_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[Dict[str, Any]]:
     """The tasks `remember_many` owes for a formation plan (PURE READ, before anything is written; opted-in homes):
-    a `title.author` / `digest.author` per pending field of a record formed pending (formation priority, strength
-    FORMATION_STRENGTH), and one `digest.rewrite` per formed record whose digest_method is in the repair-consent set
-    (`MECHANICAL_DIGEST_METHODS`; never beside a pending summary, whose `digest.author` task owns the body). A
-    summary depends on the live rewrites of the records it summarizes, batch siblings included. Cost hints read the
-    batch's own rows for its siblings. Returns the `MemoryTaskQueue.enqueue` keyword sets, in order."""
+    a `title.author` / `digest.author` per pending field of a record formed pending (`pending_priority`: formation, a
+    topic's community priority; strength FORMATION_STRENGTH), and one `digest.rewrite` per formed record whose
+    digest_method is in the repair-consent set (`MECHANICAL_DIGEST_METHODS`; never beside a pending summary, whose
+    `digest.author` task owns the body). A summary depends on the live rewrites of the records it summarizes, batch
+    siblings included. Cost hints read the batch's own rows for its siblings. Returns the `MemoryTaskQueue.enqueue`
+    keyword sets, in order."""
     from .redigestion import MECHANICAL_DIGEST_METHODS
 
     queue: Optional[MemoryTaskQueue] = getattr(system, "tasks", None)
@@ -901,7 +915,8 @@ def plan_formed(system: Any, plan: Any, *, scope: str, owner_id: str) -> List[Di
             out.append({"kind": task_kind, "target_id": a.subject, "scope": scope, "owner_id": owner_id,
                         "assertion_id": str(a.assertion_id or ""), "basis": f"{a.assertion_id}@pending-{fld}",
                         "basis_version": 0, "strength": gate.FORMATION_STRENGTH,
-                        "cause": {"cause": "formation", "pending": fld}, "priority": FORMATION_PRIORITY,
+                        "cause": {"cause": "formation", "pending": fld},
+                        "priority": pending_priority(attrs.get("record_kind")),
                         "cost_hint": _cost_hint(system, a, known=siblings)})
         if _pending_marker(attrs).get("summary"):
             continue
@@ -1107,11 +1122,12 @@ def enqueue_declared(queue: "MemoryTaskQueue", a: Any, plan: Mapping[str, Mappin
                      cause: Mapping[str, Any], body_kind: str, _cur: Optional[sqlite3.Cursor] = None,
                      stamp: Optional[Mapping[str, Any]] = None) -> Dict[str, List[str]]:
     """`declare_pending`'s enqueue (and `rearm_pending`'s), on its transaction (SQLite) or right after its write
-    (in-memory): per declared field the task `plan_declared` named, with formation's parameters
-    (`FORMATION_PRIORITY`, `FORMATION_STRENGTH`, capability summaries); its cause is the declaration's ({cause,
-    pending: <field>, declared: true, reason?}; `stamp` replaces {declared: true}, e.g. a re-arm's {rearmed: n}). A
-    declared summary supersedes the record's live body task (`digest.rewrite`, a card's `card.author`): a pending
-    summary's `digest.author` task owns the body, as at formation. Returns {enqueued, adopted, superseded}."""
+    (in-memory): per declared field the task `plan_declared` named, with formation's parameters (`pending_priority`:
+    `FORMATION_PRIORITY`, a topic's `COMMUNITY_PRIORITY`; `FORMATION_STRENGTH`, capability summaries); its cause is the
+    declaration's ({cause, pending: <field>, declared: true, reason?}; `stamp` replaces {declared: true}, e.g. a
+    re-arm's {rearmed: n}). A declared summary supersedes the record's live body task (`digest.rewrite`, a card's
+    `card.author`): a pending summary's `digest.author` task owns the body, as at formation. Returns {enqueued, adopted,
+    superseded}."""
     out: Dict[str, List[str]] = {"enqueued": [], "adopted": [], "superseded": []}
     mark = {"declared": True} if stamp is None else dict(stamp)
     for fld, p in plan.items():
@@ -1122,7 +1138,7 @@ def enqueue_declared(queue: "MemoryTaskQueue", a: Any, plan: Mapping[str, Mappin
             str(p["kind"]), str(a.subject), scope=str(a.scope), owner_id=str(a.owner_id or ""),
             assertion_id=str(a.assertion_id or ""), basis=str(p["basis"]), basis_version=0,
             strength=gate.FORMATION_STRENGTH, cause={**dict(cause), "pending": fld, **mark},
-            priority=FORMATION_PRIORITY, cost_hint=p["cost_hint"], _cur=_cur)
+            priority=pending_priority((a.attributes or {}).get("record_kind")), cost_hint=p["cost_hint"], _cur=_cur)
         out["enqueued" if res["enqueued"] else "adopted"].append(str(res["task_id"]))
     if "summary" in plan:
         out["superseded"] = queue.supersede_target(
@@ -1366,7 +1382,8 @@ def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str =
             continue
         planned.append({"task_id": tid, "kind": task_kind, "target_id": str(a.subject), "strength": strength,
                         "basis": basis, "basis_version": version if task_kind != "dream.narrate" else 0,
-                        "assertion_id": str(a.assertion_id), "scope": a.scope, "owner_id": str(a.owner_id or "")})
+                        "assertion_id": str(a.assertion_id), "scope": a.scope, "owner_id": str(a.owner_id or ""),
+                        "record_kind": attrs.get("record_kind")})
     by_kind: Dict[str, int] = {}
     for p in planned:
         by_kind[p["kind"]] = by_kind.get(p["kind"], 0) + 1
@@ -1375,7 +1392,8 @@ def enqueue_debt(system: Any, *, scopes: Sequence[Tuple[str, str]], cause: str =
             queue.enqueue(p["kind"], p["target_id"], scope=p["scope"], owner_id=p["owner_id"],
                           assertion_id=p["assertion_id"], basis=p["basis"], basis_version=p["basis_version"],
                           strength=p["strength"], cause={"cause": cause},
-                          priority=FORMATION_PRIORITY if p["kind"] in PENDING_KINDS else int(priority))
+                          priority=(pending_priority(p["record_kind"]) if p["kind"] in PENDING_KINDS
+                                    else int(priority)))
     key = "would_enqueue" if dry_run else "enqueued"
     return {"dry_run": bool(dry_run), key: len(planned), "by_kind": by_kind,
             "tasks": [{k: p[k] for k in ("task_id", "kind", "target_id", "strength")} for p in planned]}
