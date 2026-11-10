@@ -36,3 +36,34 @@ dependency-light).
 Seeded community detection is stable across runs; a consolidation pass over a fixture graph produces recorded
 stages and respects its budget (nothing dropped silently, root ADR-0026); reflection candidates carry their rule
 and provenance; mutation tests per rule.
+
+## Progress (2026-11-10): the communities slice shipped in abstractmemory 0.5.0
+
+Built and released in 0.5.0 (release commit `5c6136b`, local `main`, not yet published), from COMMUNITIES-DESIGN
+(framework root `untracked/finish-plan-2026-11-09/graph-topics/COMMUNITIES-DESIGN.md`, with the Fable deltas of
+`FABLE-REVIEW-communities-design.md`):
+- `3082695` the `community` record kind (one record per version, a stable `attributes.community_key`),
+  `communities_pass` (deterministic warm-started Louvain over the vectored records, vector-less records attached by
+  their engraved relations, layout, authored titles, one guarded transaction) and `embed_missing`; `aac9476` and
+  `01ff4e2` a community is never embedded or recalled (`canonical_text.never_embedded`, an AST closed-set test over
+  every embed site); `c07f5e9` at most 5 stabilisation rounds, `unplaced_closed` in the receipt; `d550551`
+  placement at formation inside `form_with_tasks` and the reads `communities()` (payload version 2 with `facts`) /
+  `community_of()` (`community_index.py`); `7ccc605`, `d1c1d9a` the sleep cadence's `fragmented` share leaves out
+  records no edge can place.
+- The dependency decision this item asked for: no `networkx`; pure Python plus numpy (the `[fast]` extra; without
+  numpy the pass is skipped with its reason).
+- Evidence: Fable review of M1 `untracked/finish-plan-2026-11-09/graph-topics/REVIEW-memory-m1.md` (APPROVE WITH
+  SHOULD-FIXES, all five fixed in `01ff4e2`; probes under `abstractmemory/untracked/review-m1/`), Fable pre-tag
+  review `REVIEW-memory-0.5.0.md` (GO; probes under `abstractmemory/untracked/review-050/`); tests
+  `tests/test_communities*.py`, `tests/test_community_placement.py`; release suite
+  `abstractmemory/untracked/release-0.5.0/pytest-full.log` (2291 passed, 3 skipped, 2 xfailed).
+
+Filed from that work: `proposed/0064` (`merged_into` in the facts), `proposed/0065` (`embed_missing`'s
+`vector_generation` bump, skipped with its reason), `proposed/0066` (placement index misses a dissolve-only version,
+0.5.1), `proposed/0067` (`communities()` is not one snapshot, 0.5.1), `proposed/0068` (api.md nit). Review
+observations not filed: the 10k layout step is the slowest (1.9 s), the γ 1.5 split fragments a merged block (never
+armed on castor), the neighbour vote's owner check has no red test (mutant m2 survived), and an off-file journal
+costs one `selected_count` query per digest row in `communities()` (the runtime opens one file).
+
+Still open in this item: topic normalisation (one spelling per topic), the consolidation stages for document
+knowledge, deterministic reflection candidates and their insight records, the review list. The item stays planned.

@@ -15,10 +15,12 @@ The ripple was first prototyped inside AbstractNote. The operator ruled (2026-10
 AbstractMemory so every consumer, AbstractEntity first, has memories that revise what leaned on them.
 
 ## Current code reality
-- 2026-11-08: the first slice landed as [0061](0061_ripple_v1_over_the_task_queue.md) (the logistic gate and its
+- 2026-11-08: the first slice landed as [0061](../../completed/knowledge_graph_convergence/0061_ripple_v1_over_the_task_queue.md) (the logistic gate and its
   constants in `activation_gate.py`; propagation, the unchanged settle, budget and `left_out`, gate decisions on
   record, sleep consolidation in `ripple.py`, over the 0060 task queue). What remains here: mass, refractory across
   passes, edge learning, closures caused by a ripple, the calibration on the entity homes' reader.
+- 2026-11-10: 0061 completed (abstractmemory 0.5.0, `5c6136b`); nothing seeds a ripple yet (root 1172 / 1171 paused),
+  memory's side of that seam is `proposed/ripple_wave/0063_ripple_v1_consumer_seam.md`.
 - Before 0061: none of the process existed. The primitives are planned in
   `proposed/ripple_wave/0001_change_records_and_ripple_primitives.md` (change records with magnitude, closure
   causes, `narrow_assertion`, ripple-aware `maintenance_due`, the bound read).

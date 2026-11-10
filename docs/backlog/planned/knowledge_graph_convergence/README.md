@@ -7,7 +7,9 @@ AbstractMemory *is* the semantic temporal memory graph and owns all of its proce
 AbstractNote built for itself over a parallel graph are to be generalised here, so every consumer
 (AbstractNote, AbstractEntity, assistants, agents) uses one graph. In progress: 0056 (the provenance contract and
 the revision log, `abstractmemory.graph`, 0.4.0) landed its first slice on `feat/memory-graph-provenance`
-(2026-10-27; see the item's Report). The other items have not started.
+(2026-10-27; see the item's Report). 0059-0061 COMPLETED 2026-11-10 in abstractmemory 0.5.0 (`5c6136b`); their planned
+files are one-line pointers to `completed/knowledge_graph_convergence/`. 0053 has its communities slice shipped (see its
+Progress note). The other items have not started.
 
 ## Purpose
 
@@ -42,11 +44,14 @@ notes for itself) can drop their own copies.
 - `0058_home_store_performance_indexes_vectors.md` (ADR 0003): owner predicate, column projection, binary vectors,
   matrix cache, bounded maintenance; measured before/after.
 - `0059_record_understanding_rewrites_in_place_with_versions.md` (ADR 0003 decision 6a, the understanding pass): a
-  record's digest, a card's text and a dream's narration rewritten in place, every earlier reading kept as a version;
-  engine half implemented.
+  record's digest, a card's text and a dream's narration rewritten in place, every earlier reading kept as a version.
+  COMPLETED 2026-11-10 (abstractmemory 0.5.0): [completed record](../../completed/knowledge_graph_convergence/0059_record_understanding_rewrites_in_place_with_versions.md).
 - `0060_memory_task_queue.md`: the persistent queue of memory tasks, activation-driven window selection (operator
-  decision 3), debt and backfill; engine half implemented.
-- `0061_ripple_v1_over_the_task_queue.md` (ADR 0001): ripple v1, the first slice of 0054; engine half implemented.
+  decision 3), debt and backfill. COMPLETED 2026-11-10 (0.5.0):
+  [completed record](../../completed/knowledge_graph_convergence/0060_memory_task_queue.md).
+- `0061_ripple_v1_over_the_task_queue.md` (ADR 0001): ripple v1, the first slice of 0054. COMPLETED 2026-11-10
+  (0.5.0; its consumers deferred, `proposed/ripple_wave/0063`):
+  [completed record](../../completed/knowledge_graph_convergence/0061_ripple_v1_over_the_task_queue.md).
 
 ## Reading order
 
