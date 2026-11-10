@@ -769,3 +769,27 @@ def test_the_real_pass_serves_through_the_read_and_places_at_formation(lived):
     assert all(c["provisional_ids"] == [] for c in after.values())
     assert after[by_topic[2]["key"]]["facts"]["changed_since_last_sleep"]["added"] == 1
     assert after[by_topic[2]["key"]]["id"] != by_topic[2]["id"]
+
+
+def test_the_fragmented_share_leaves_out_exactly_the_pass_unplaced_closed(lived):
+    from abstractmemory import records_since_maintenance
+    from abstractmemory.sleep_cadence import _closed_only
+
+    gone = lived.topics[1][:2]
+
+    def summary(key, targets):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return lived.remember_many([MemoryRecordInput(kind="summary", title=f"Summary {key}",
+                                                          digest=f"novector {key}",
+                                                          edges=tuple(("summarizes", t) for t in targets))],
+                                       scope=SCOPE, owner_id=OWNER, idempotency_key=key)[0]
+
+    orphan = summary("orphan", gone)
+    anchored = summary("anchored", [gone[0], lived.topics[2][0]])
+    for rid in gone:
+        lived.close_record(rid, reason="consolidated")
+    receipt = _sleep(lived)
+    assert receipt["unplaced_closed"] == [orphan]
+    assert _closed_only(lived, [(SCOPE, OWNER)], [orphan, anchored]) == {orphan}
+    assert records_since_maintenance(lived, scopes=[(SCOPE, OWNER)])["fragmented"]["unvectored"] == 1
