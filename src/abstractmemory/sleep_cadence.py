@@ -439,8 +439,9 @@ def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[st
       home, `count` 0).
     - `fragmented`: {count, share, provisional, unvectored, pending}, how much of the home a sleep would make whole
       (`_fragmented`): records placed in a community provisionally since the last completed night, live records
-      without a vector, live records with a title or summary still being written; `share` = count / live formed
-      records (0.0 for an empty home). The host sleeps early when it passes its threshold.
+      without a vector, live records with a title or summary still being written; `count` = the live records that
+      are any of these, each counted once, and `share` = count / live formed records (0.0 for an empty home; never
+      above 1.0). The host sleeps early when it passes its threshold.
 
     Cheap: the completion is one primary-key read; on the SQLite home the count is one indexed COUNT per pair over
     the (scope, owner_id, observed_at) range after the boundary, so it reads only the records formed since.
@@ -468,13 +469,16 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
     {count, share, provisional, unvectored, pending}. `provisional` = the records placed in a community at formation
     since the last completed night (`placed` events above its journal seq: the next sleep confirms or moves them);
     `unvectored` = the live formed records without a vector; `pending` = the live formed records whose title or
-    summary is still being written; `count` = their sum, `share` = count / the live formed records (0.0 for an empty
-    home). Live = no closure names the record. A vector-less record whose every engraved relation names a CLOSED
+    summary is still being written. `count` = the live formed records that are any of the three, each counted ONCE
+    (a record both vector-less and pending, or placed and pending, is one fragmented record; a placement whose
+    record is closed since counts in `provisional` only), so `share` = count / the live formed records is never
+    above 1.0 (0.0 for an empty home). Live = no closure names the record. A vector-less record whose every engraved relation names a CLOSED
     record (the sleep pass's `unplaced_closed`: e.g. the summary of episodes consolidated away; no edge can ever
     place it) is not fragmentation: it counts in neither `unvectored` nor `pending` (`_closed_only`). None on a store
     that cannot say which rows carry a vector (LanceDB). SQLite home: one COUNT over the pairs' (scope, owner_id)
     range (the closures read once, as a subquery), the vector-less rows of that range, the engraved edges of those
-    rows by index, and one COUNT of `placed` events over the (scope, seq) range above the night."""
+    rows by index, the `placed` events over the (scope, seq) range above the night, and which of their records are
+    live (by subject index)."""
     from .in_memory_store import InMemoryTripleStore
     from .journal_sqlite import SQLiteJournal
     from .sqlite_store import SQLiteTripleStore
@@ -483,6 +487,9 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
     store, journal = system.store, system.journal
     live = pending = 0
     vectorless: Dict[str, bool] = {}  # live vector-less record (graph id) -> its title or summary is pending
+    pending_ids: Set[str] = set()     # live records (graph ids) whose title or summary is pending
+    placed = _placed_records(journal, pairs, night_seq)  # graph ids of the placements since the night
+    placed_live: Set[str] = set()     # those whose record is live
     if isinstance(store, SQLiteTripleStore):
         where, params = _pair_where(pairs)
         flags = ("embedding IS NULL AS nv, COALESCE(json_extract(attributes_json, '$.pending.title'), 0) "
@@ -496,24 +503,36 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
                     f"SELECT COUNT(*), COALESCE(SUM(pe), 0) FROM (SELECT {flags} "
                     f"FROM {store._table} WHERE {where} AND {_FORMED_SQL} AND {fold})", params).fetchone()
                 rows = cur.execute(
-                    f"SELECT subject, {flags} FROM {store._table} WHERE {where} AND {_FORMED_SQL} AND {fold} "
-                    "AND embedding IS NULL", params).fetchall()
+                    f"SELECT subject, nv, pe FROM (SELECT subject, {flags} FROM {store._table} WHERE {where} "
+                    f"AND {_FORMED_SQL} AND {fold}) WHERE nv OR pe", params).fetchall()
+                for chunk in _chunks(sorted(set(placed))):
+                    marks = ", ".join("?" for _ in chunk)
+                    placed_live |= {str(r[0]) for r in cur.execute(
+                        f"SELECT DISTINCT subject FROM {store._table} WHERE subject IN ({marks}) AND {where} "
+                        f"AND {_FORMED_SQL} AND {fold}", [*chunk, *params]).fetchall()}
             live, pending = int(n or 0), int(pe or 0)
-            vectorless = {str(subject): bool(p) for subject, _nv, p in rows}
+            vectorless = {str(subject): bool(p) for subject, nv, p in rows if nv}
+            pending_ids = {str(subject) for subject, _nv, p in rows if p}
         else:  # the closures live in another file: read them once, fold here
             closed = {str(c.assertion_id) for c in journal.closures(limit=0)}
             with store._lock:
                 rows = store._conn.cursor().execute(
                     f"SELECT assertion_id, subject, {flags} FROM {store._table} WHERE {where} AND {_FORMED_SQL}",
                     params).fetchall()
+            wanted_placed = set(placed)
             for aid, subject, nv, pe in rows:
                 if str(aid) not in closed and str(subject) not in closed:
                     live, pending = live + 1, pending + int(bool(pe))
                     if nv:
                         vectorless[str(subject)] = bool(pe)
+                    if pe:
+                        pending_ids.add(str(subject))
+                    if str(subject) in wanted_placed:
+                        placed_live.add(str(subject))
     elif isinstance(store, InMemoryTripleStore):
         closed = {str(c.assertion_id) for c in journal.closures(limit=0)}
         wanted = None if pairs is None else set(pairs)
+        wanted_placed = set(placed)
         with store._lock:
             rows = [(r["assertion"], r.get("assertion_id"), r.get(store._vector_column)) for r in store._rows]
         for a, aid, vector in rows:
@@ -526,13 +545,19 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
             live, pending = live + 1, pending + int(is_pending)
             if not vector:
                 vectorless[str(a.subject)] = is_pending
+            if is_pending:
+                pending_ids.add(str(a.subject))
+            if str(a.subject) in wanted_placed:
+                placed_live.add(str(a.subject))
     else:
         return None  # a store that cannot say which rows carry a vector (LanceDB): unknown, never a made-up 0
     gone = _closed_only(system, pairs, sorted(vectorless))
     unvectored = len(vectorless) - len(gone)
     pending -= sum(1 for rid in gone if vectorless[rid])
-    provisional = _placed_count(journal, pairs, night_seq)
-    count = provisional + unvectored + pending
+    provisional = len(placed)
+    # Each live record counts once, whichever of the three it is (a sum would count a record both vector-less and
+    # pending twice and let the share pass 1.0).
+    count = len(((set(vectorless) | pending_ids) - gone) | placed_live)
     return {"count": count, "share": round(count / live, 6) if live else 0.0, "provisional": provisional,
             "unvectored": unvectored, "pending": pending}
 
@@ -644,18 +669,19 @@ def _pair_where(pairs: Optional[List[Tuple[str, str]]]) -> Tuple[str, List[Any]]
             [v for pair in pairs for v in pair])
 
 
-def _placed_count(journal: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: int) -> int:
-    """The `placed` events above `night_seq` in these pairs (SQLite: one COUNT over the (scope, seq) index range)."""
+def _placed_records(journal: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: int) -> List[str]:
+    """The record (graph id) of each `placed` event above `night_seq` in these pairs, one entry per event (SQLite: one
+    read over the (scope, seq) index range)."""
     from .journal_sqlite import SQLiteJournal
 
     if isinstance(journal, SQLiteJournal):
         where, params = _pair_where(pairs)
         with journal._lock:
-            row = journal._conn.cursor().execute(
-                f"SELECT COUNT(*) FROM {journal._t_events} WHERE {where} AND seq > ? AND kind = 'placed'",
-                [*params, int(night_seq)]).fetchone()
-        return int(row[0] or 0)
+            rows = journal._conn.cursor().execute(
+                f"SELECT record_id FROM {journal._t_events} WHERE {where} AND seq > ? AND kind = 'placed'",
+                [*params, int(night_seq)]).fetchall()
+        return [str(r[0]) for r in rows]
     if pairs is None:
         pairs = sorted({(e.scope, e.owner_id) for e in getattr(journal, "_events", ()) if e.kind == "placed"})
-    return sum(len(journal.events(scope=sc, owner_id=ow, kinds=["placed"], since_seq=int(night_seq) + 1, limit=0))
-               for sc, ow in pairs)
+    return [str(e.record_id) for sc, ow in pairs
+            for e in journal.events(scope=sc, owner_id=ow, kinds=["placed"], since_seq=int(night_seq) + 1, limit=0)]

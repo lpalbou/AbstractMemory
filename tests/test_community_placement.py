@@ -26,6 +26,10 @@ F1 `fragmented.provisional` counts placements from before the last night; F2 clo
 FA1 `facts.paths` counts pairs across two communities; FA2 `facts.activity` ignores its 7-day window;
 FA3 every version reads as changed since the last sleep; FA4 no bridge member is found; F3 a record whose every
 neighbour is closed counts as fragmented.
+Under untracked/release-0.5.0/mut/: F4 `fragmented.count` is the sum of the three kinds (a record both vector-less
+and pending counts twice); F5 a placement whose record is closed counts in `count`; F6 a pending record that has a
+vector counts nowhere in `count`; F7 the records whose every neighbour is closed count in `count` again; F8 the
+store-and-journal-in-two-SQLite-files branch counts no placement in `count`.
 """
 
 from __future__ import annotations
@@ -615,7 +619,8 @@ def test_fragmented_counts_provisional_unvectored_and_pending_over_live_records(
                                               pending=("title",))],
                            scope=SCOPE, owner_id=OWNER, idempotency_key="pe")   # pending, and placed
     home.close_record(v["alpha"][0], reason="wrong")                 # closed: no longer live
-    assert _fragmented(home) == {"count": 4, "share": round(4 / 8, 6), "provisional": 2, "unvectored": 1,
+    # three fragmented records (pl, nv, pe): pe is placed AND pending, counted once
+    assert _fragmented(home) == {"count": 3, "share": round(3 / 8, 6), "provisional": 2, "unvectored": 1,
                                  "pending": 1}
 
 
@@ -647,9 +652,123 @@ def test_fragmented_leaves_out_records_whose_every_neighbour_is_closed(home):
     summary("anchored", [gone[0], kept])
     for rid in gone:
         home.close_record(rid, reason="consolidated")
-    # live: kept + the two summaries; only the anchored summary is fragmented (no vector, title pending)
-    assert _fragmented(home) == {"count": 2, "share": round(2 / 3, 6), "provisional": 0, "unvectored": 1,
+    # live: kept + the two summaries; only the anchored summary is fragmented (no vector AND title pending: once)
+    assert _fragmented(home) == {"count": 1, "share": round(1 / 3, 6), "provisional": 0, "unvectored": 1,
                                  "pending": 1}
+
+
+def _open_two_sqlite_files(tmp_path, guard: Guard) -> MemorySystem:
+    """The fourth substrate pair `_fragmented` reads apart: a SQLite store and a SQLite journal in another file
+    (the closures are read from the journal and folded in Python)."""
+    emb = TopicEmbedder()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        store = SQLiteTripleStore(tmp_path / "store.sqlite3", embedder=emb)
+        journal = SQLiteJournal(tmp_path / "journal.sqlite3")
+        system = MemorySystem(store=store, journal=journal, embedder=emb, task_queue=True, commit_guard=guard)
+    system.kind = "sqlite+sqlite-journal"
+    return system
+
+
+@pytest.fixture(params=["memory", "sqlite", "memory+sqlite-journal", "sqlite+sqlite-journal"])
+def any_home(request, tmp_path):
+    guard = Guard()
+    system = (_open_two_sqlite_files(tmp_path, guard) if request.param == "sqlite+sqlite-journal"
+              else _open(request.param, tmp_path, guard))
+    system.guard = guard
+    yield system
+    system.journal.close()
+    system.store.close()
+
+
+def _remember_pending(system, key: str, digest: str, *, edges=()) -> str:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return system.remember_many([MemoryRecordInput(kind="episode", title=None, digest=digest, edges=tuple(edges),
+                                                       pending=("title",))],
+                                    scope=SCOPE, owner_id=OWNER, idempotency_key=key)[0]
+
+
+def test_fragmented_counts_a_record_that_is_unvectored_and_pending_once(any_home):
+    """No version: the record is vector-less AND its title is pending: one fragmented record of one."""
+    _remember_pending(any_home, "both", "novector, title still being written")
+    assert _fragmented(any_home) == {"count": 1, "share": 1.0, "provisional": 0, "unvectored": 1, "pending": 1}
+
+
+def test_fragmented_counts_a_pending_record_with_a_vector(any_home):
+    """No version (nothing placed): a record with a vector whose title is pending is fragmented through `pending`
+    alone."""
+    _remember(any_home, "done", "Notes on beta.")
+    _remember_pending(any_home, "titled-later", "Notes on alpha.")
+    assert _fragmented(any_home) == {"count": 1, "share": 0.5, "provisional": 0, "unvectored": 0, "pending": 1}
+
+
+def test_fragmented_counts_a_record_that_is_placed_unvectored_and_pending_once(any_home):
+    """Placed through its neighbour, vector-less and pending: all three kinds, one record."""
+    v = _two_topics(any_home)
+    rid = _remember_pending(any_home, "all3", "novector beside alpha", edges=[("continues", v["alpha"][0])])
+    assert [e.record_id for e in _placed(any_home)] == [rid]
+    assert _fragmented(any_home) == {"count": 1, "share": round(1 / 7, 6), "provisional": 1, "unvectored": 1,
+                                     "pending": 1}
+
+
+def test_fragmented_a_closed_placement_counts_in_provisional_only(any_home):
+    """A record placed since the night and closed since: its placement still counts in `provisional`, but it is no
+    longer a live record of the home, so it is not in `count` (the share stays a share)."""
+    _two_topics(any_home)
+    rid = _remember(any_home, "pl", "Fresh thoughts about alpha.")
+    any_home.close_record(rid, reason="wrong")
+    assert _fragmented(any_home) == {"count": 0, "share": 0.0, "provisional": 1, "unvectored": 0, "pending": 0}
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_fragmented_count_is_the_distinct_live_fragmented_records(any_home, seed):
+    """Property over random homes: every combination of vector / no vector, title pending or not, an edge to a
+    community member or none, closed or live, and closed members. `count` is the number of DISTINCT live records
+    that are provisional, unvectored or pending (an independent oracle from what the test built), each per-kind
+    count is its own set's size, and `share` never passes 1.0. Some homes have no communities version, some a
+    completed night between their records (only the placements after it are provisional)."""
+    import random
+
+    rng = random.Random(seed)
+    versioned = seed % 3 != 0  # one home in three has no communities version: nothing is placed
+    v = _two_topics(any_home) if versioned else {"alpha": [], "beta": []}
+    members = v["alpha"] + v["beta"]
+    built: Dict[str, Dict[str, Any]] = {}
+    n = rng.randint(1, 9)
+    night_after = rng.randint(0, n) if rng.random() < 0.5 else None  # a completed night after that many records
+    night_seq = 0
+    for i in range(n):
+        if i == night_after:
+            night_seq = any_home.journal.current_seq()
+            any_home.tasks.record_maintenance(SCOPES, kind="night", completed_at="2999-01-01T00:00:00.000000+00:00",
+                                              seq=night_seq)
+        vec, pend = rng.random() < 0.5, rng.random() < 0.5
+        targets = rng.sample(members, min(len(members), rng.randint(0, 2))) if rng.random() < 0.7 else []
+        digest = f"Fresh thoughts about {rng.choice(['alpha', 'beta'])} {i}." if vec else f"novector note {i}"
+        if pend:
+            rid = _remember_pending(any_home, f"r{i}", digest, edges=[("continues", t) for t in targets])
+        else:
+            rid = _remember(any_home, f"r{i}", digest, edges=[("continues", t) for t in targets])
+        built[rid] = {"vec": vec, "pending": pend, "targets": targets}
+    closed = set(rng.sample(sorted(built) + members, min(len(built) + len(members), rng.randint(0, 4))))
+    for rid in sorted(closed):
+        any_home.close_record(rid, reason="random")
+    placed_events = [e for e in _placed(any_home) if e.seq > night_seq]
+    placed = {e.record_id for e in placed_events}
+    live = [m for m in members if m not in closed] + [r for r in built if r not in closed]
+
+    def gone(rid: str) -> bool:  # vector-less, at least one engraved relation, every one naming a closed record
+        b = built.get(rid)
+        return bool(b) and not b["vec"] and bool(b["targets"]) and all(t in closed for t in b["targets"])
+
+    unvectored = {r for r in live if r in built and not built[r]["vec"] and not gone(r)}
+    pending = {r for r in live if r in built and built[r]["pending"] and not gone(r)}
+    fragmented = unvectored | pending | (placed & set(live))
+    got = _fragmented(any_home)
+    assert got == {"count": len(fragmented), "share": round(len(fragmented) / len(live), 6) if live else 0.0,
+                   "provisional": len(placed_events), "unvectored": len(unvectored), "pending": len(pending)}
+    assert 0.0 <= got["share"] <= 1.0 and got["count"] <= len(live)
 
 
 # --------------------------------------------------------------------------- against the real sleep pass
