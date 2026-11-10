@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .canonical_text import canonical_text, is_record_edge
+from .canonical_text import canonical_text, never_embedded
 from .embedding_pin import build_pin, embedder_model_id
 from .journal import utc_now_iso
 from .records import MemoryRecordInput
@@ -82,7 +82,8 @@ def reembed_store(
     # space; scopes do not partition an embedding space).
     rows = store.query(TripleQuery(limit=0))
     expected = len(rows)
-    embeddable: List[Any] = [a for a in rows if not is_record_edge(a) and a.assertion_id]
+    # Edges and the NON_EMBEDDED_KINDS digests (a community) stay vector-less in the new space too.
+    embeddable: List[Any] = [a for a in rows if not never_embedded(a) and a.assertion_id]
     skipped_edges = expected - len(embeddable)
 
     # RE-EMBED before any write (all-or-nothing: an embedder failure here

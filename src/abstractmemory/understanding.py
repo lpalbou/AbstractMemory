@@ -517,8 +517,12 @@ def _apply(
     text = canonical_text(planned)
     # A card's key is not in its canonical text, nor is a pending marker: the vector stands (a declaration that takes
     # the title back to pending changes the canonical text, whose first line the title is).
-    if not settles_only and (field not in ("narration", "target", "pending")
-                             or (field == "pending" and _title(planned_attrs) != _title(attrs0))):
+    # A NON_EMBEDDED_KINDS record (a community) is never embedded: its authored words leave it vector-less.
+    from .canonical_text import never_embedded
+
+    if not settles_only and not never_embedded(planned) and (
+            field not in ("narration", "target", "pending")
+            or (field == "pending" and _title(planned_attrs) != _title(attrs0))):
         old_vector = store.stored_vector(aid)
         refusal, vector, write_vector = _embed(store, text, old_vector is not None)
         if refusal is not None:

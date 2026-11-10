@@ -45,7 +45,7 @@ from .vector_scoring import rank_by_cosine
 # clean record digests); the aliases keep this module's established names and
 # the golden parity tests meaningful.
 from .canonical_text import canonical_text as _canonical_text  # noqa: E402
-from .canonical_text import is_record_edge as _is_record_edge  # noqa: E402
+from .canonical_text import never_embedded as _never_embedded  # noqa: E402
 
 # The table name is interpolated into SQL identifiers, which cannot be bound
 # as parameters — so it is validated at the door, exactly as SQLiteJournal
@@ -508,7 +508,8 @@ class SQLiteTripleStore:
         # degradable).
         vectors: Optional[dict[int, List[float]]] = None
         if self._embedder is not None:
-            embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _is_record_edge(a)]
+            # Edges and the NON_EMBEDDED_KINDS digests (a community: engine state, never a vector) carry no vector.
+            embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _never_embedded(a)]
             if embeddable:
                 embedded = embed_texts_degradable(
                     self._embedder, [t for _, t in embeddable], self.embedding_pin())

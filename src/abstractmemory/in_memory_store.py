@@ -30,7 +30,7 @@ from .vector_scoring import cosine as _cosine, rank_by_cosine
 # v2: clean record digests); the alias keeps this module's established name
 # and the golden parity tests meaningful.
 from .canonical_text import canonical_text as _canonical_text  # noqa: E402
-from .canonical_text import is_record_edge as _is_record_edge  # noqa: E402
+from .canonical_text import never_embedded as _never_embedded  # noqa: E402
 
 
 def _result_copy(a: TripleAssertion, assertion_id: Any, *, attributes: dict[str, Any] | None = None) -> TripleAssertion:
@@ -295,7 +295,8 @@ class InMemoryTripleStore:
             # Edge assertions are graph structure, never embedded (realistic
             # fix): embedding "ex:a supports ex:b" wastes embed calls and let
             # edges consume vector fetch slots before rejection.
-            embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _is_record_edge(a)]
+            # (and the NON_EMBEDDED_KINDS digests: a community is engine state, never a vector; SQLite parity)
+            embeddable = [(i, _canonical_text(a)) for i, a in enumerate(pending) if not _never_embedded(a)]
             # Dead embedder degrades to VECTORLESS, labeled (SQLite parity —
             # wave-4b ask 3); wrong-space still aborts hard below.
             embedded = (embed_texts_degradable(
