@@ -52,6 +52,14 @@ the display block, and the run id of its first ledger source. A diary
 entry's revision envelopes (its title versions, `retitle`; a public entry's
 summary versions, `rewrite_digest`) are sealed like its display block:
 payload `text`/`title`/`keywords` emptied, `redacted`.
+
+COMMUNITIES (additive under the frozen-v1 rules): a community's version record
+replays like any formed record (kind "community", title or pending, the
+reading's provenance, versions, replaced_by); its display block adds
+`community_key`, `version_seq` and `size`, and its binding envelope draws only
+its revision chain (`refines`), never an edge per member. A record placed in
+its provisional community at formation carries one `placed` event (family
+"event", an audit kind; the community in its payload's provenance).
 """
 
 from __future__ import annotations
@@ -221,6 +229,17 @@ def _display_block(assertion: Any, requested_id: str,
     # through a second door would re-create the title-parsing era.
     if attrs.get("record_kind") == "dream" and isinstance(attrs.get("signals"), list):
         block["signals"] = attrs["signals"]
+    if attrs.get("record_kind") == "community":
+        # A community's version record (communities): its stable key, its version and its size ride the block, so
+        # a consumer tells a new version from the stream; members, centroid and layout never do (they are the
+        # `communities` read, community_index.py). Absent when unknown, like every block key.
+        basis = attrs.get("basis") if isinstance(attrs.get("basis"), dict) else {}
+        if isinstance(attrs.get("community_key"), str) and attrs["community_key"].strip():
+            block["community_key"] = attrs["community_key"].strip()
+        if isinstance(basis.get("version_seq"), int):
+            block["version_seq"] = basis["version_seq"]
+        if isinstance(attrs.get("size"), int):
+            block["size"] = attrs["size"]
     if attrs.get("record_kind"):
         # The current reading's provenance (backlog 0059, additive): the badge
         # an app shows ("Summary by <mind> (<model>), <date>" or "Extract
@@ -365,6 +384,10 @@ def _enrich(family: str, record: Any, store: Any,
                 if isinstance(e.attributes, dict) and e.attributes.get("record_edge")
             ]
             edges = sorted(raw, key=lambda x: (x["relation"], x["target_graph_id"])) if raw else None
+        # A community record draws its revision chain only, never an edge per member (the "jet").
+        from .community_index import display_relations
+
+        edges = display_relations(block.get("kind"), edges)
         if edges:
             block["edges"] = edges
     return block

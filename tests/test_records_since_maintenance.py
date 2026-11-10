@@ -101,8 +101,9 @@ def _sleep(system, **kw: Any):
 
 
 def test_a_home_that_never_slept_counts_since_birth(home) -> None:
-    assert records_since_maintenance(home, scopes=SCOPES) == {"count": 0, "last_maintenance_at": None, "since": None,
-                                                               "boundary_source": "birth"}
+    assert records_since_maintenance(home, scopes=SCOPES) == {
+        "count": 0, "last_maintenance_at": None, "since": None, "boundary_source": "birth",
+        "fragmented": {"count": 0, "share": 0.0, "provisional": 0, "unvectored": 0, "pending": 0}}
     first = _form(home, "first")
     _form(home, "second", edges=(("supports", first),))                  # an edge row is not a record
     out = records_since_maintenance(home, scopes=SCOPES)
@@ -223,7 +224,9 @@ def test_a_later_host_boundary_wins_over_memorys_completion(home) -> None:
     host = _now()                       # e.g. the gateway's maintenance_done, later than memory's completion
     _many(home, "after", 3)
     out = records_since_maintenance(home, scopes=SCOPES, after=host)
-    assert out == {"count": 3, "last_maintenance_at": memory_at, "since": host, "boundary_source": "after"}
+    assert set(out) == {"count", "last_maintenance_at", "since", "boundary_source", "fragmented"}
+    assert {k: out[k] for k in ("count", "last_maintenance_at", "since", "boundary_source")} == {
+        "count": 3, "last_maintenance_at": memory_at, "since": host, "boundary_source": "after"}
     # Without it, memory's own completion is the boundary.
     plain = records_since_maintenance(home, scopes=SCOPES)
     assert (plain["count"], plain["since"], plain["boundary_source"]) == (5, memory_at, "memory")
@@ -246,7 +249,8 @@ def test_a_home_memory_never_saw_sleep_counts_from_the_hosts_boundary(home) -> N
     host = _now()
     _many(home, "new", 2)
     out = records_since_maintenance(home, scopes=SCOPES, after=host)
-    assert out == {"count": 2, "last_maintenance_at": None, "since": host, "boundary_source": "after"}
+    assert {k: out[k] for k in ("count", "last_maintenance_at", "since", "boundary_source")} == {
+        "count": 2, "last_maintenance_at": None, "since": host, "boundary_source": "after"}
     assert records_since_maintenance(home, scopes=SCOPES, after=None)["boundary_source"] == "birth"
     assert records_since_maintenance(home, scopes=SCOPES, after=None)["count"] == 5
 

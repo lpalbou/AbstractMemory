@@ -222,6 +222,30 @@ class InMemoryJournal:
                 out.append(copy.deepcopy(stored))
             return out
 
+    def _append_events_tracked(self, events: Sequence[MemoryEvent]) -> Tuple[List[MemoryEvent], List[str]]:
+        """`append_events` plus the ids of the events THIS call stored (a replay no-op stores nothing). Formation
+        (`memory_tasks.form_with_tasks`: a record's `placed` event) undoes only those when its batch fails
+        (`_discard_formed_events`)."""
+        with self._lock:
+            before = {str(e.event_id or "").strip() for e in events or ()} & set(self._events_by_id)
+            stored = self.append_events(events)
+        return stored, [e.event_id for e in stored if e.event_id not in before]
+
+    def _discard_formed_events(self, event_ids: Sequence[str]) -> None:
+        """Undo the events a formation batch stored when its other writes failed (this journal has no
+        transaction): the `_discard_formed_bindings` rule. The batch held this journal's lock from its first write
+        to here, so they are the newest records and the seq axis is rewound with them (gap-free); a seq some other
+        record took meanwhile is never reused. Formation stores only audit events (`placed`), which move no
+        counter."""
+        gone = {str(e) for e in event_ids}
+        with self._lock:
+            seqs = [int(e.seq) for e in self._events if e.event_id in gone]
+            self._events = [e for e in self._events if e.event_id not in gone]
+            for eid in gone:
+                self._events_by_id.pop(eid, None)
+            if seqs and max(seqs) == self._seq and len(seqs) == self._seq - min(seqs) + 1:
+                self._seq = min(seqs) - 1
+
     def events(
         self,
         *,

@@ -33,8 +33,9 @@ def utc_now_iso() -> str:
 ATTENTION_KINDS = frozenset({"selected", "co_selected", "pinned", "silenced"})
 # refocus modifies decay but contributes no weight itself.
 DECAY_MARKER_KINDS = frozenset({"refocus"})
-# Audit-only kinds: recorded, structurally inert for scoring.
-AUDIT_KINDS = frozenset({"listed", "shown", "expanded", "cited"})
+# Audit-only kinds: recorded, structurally inert for scoring. `placed` (communities): a formed record's provisional
+# community, written by formation (`community_index.place_record`); provenance carries the community.
+AUDIT_KINDS = frozenset({"listed", "shown", "expanded", "cited", "placed"})
 ALL_EVENT_KINDS = ATTENTION_KINDS | DECAY_MARKER_KINDS | AUDIT_KINDS
 
 # Default weights per kind (config can override pin strength only).

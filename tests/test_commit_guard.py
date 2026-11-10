@@ -831,9 +831,9 @@ DOUBLES = {
     },
     ("journal_memory.py", "InMemoryJournal"): {
         "commit point": {"_write"},
-        "guarded": {"append_events", "append_binding", "_append_binding_tracked", "append_closure", "append_trace",
-                    "append_snapshot", "append_valence", "append_version"},
-        "undo of a refused formation": {"_discard_formed_bindings"},
+        "guarded": {"append_events", "_append_events_tracked", "append_binding", "_append_binding_tracked",
+                    "append_closure", "append_trace", "append_snapshot", "append_valence", "append_version"},
+        "undo of a refused formation": {"_discard_formed_bindings", "_discard_formed_events"},
         "read or lifecycle": {"__init__", "events", "bindings", "closures", "traces", "snapshots", "valence_events",
                               "versions", "revision_records", "replay_records", "selected_count",
                               "pair_selected_count", "seq_at", "current_seq", "close"},
@@ -859,4 +859,4 @@ def test_every_method_of_the_doubles_is_classified(where) -> None:
         assert "guard_commit" in [_call_name(n) for n in _own_nodes(methods[name])], f"{cls_name}.{name}"
     for name in classes.get("guarded", ()):
         calls = {_call_name(n) for n in _own_nodes(methods[name])}
-        assert calls & (_ROUTES | {"append_binding"}), f"{cls_name}.{name} writes outside its guarded section"
+        assert calls & (_ROUTES | {"append_binding", "append_events"}), f"{cls_name}.{name} writes outside its guarded section"

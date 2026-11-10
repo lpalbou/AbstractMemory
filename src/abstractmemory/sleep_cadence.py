@@ -420,7 +420,7 @@ def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[st
                               after: Optional[str] = None) -> Dict[str, Any]:
     """How much the home lived since its last COMPLETED sleep (PURE READ; the host's idle -> sleep threshold,
     operator 2026-11-09: sleep after 24 h or 500 events). Returns {count, last_maintenance_at, since,
-    boundary_source}:
+    boundary_source, fragmented}:
 
     - `last_maintenance_at`: when the newest completed night over these (scope, owner) pairs ended (`sleep_pass`
       records it when a whole night, `include_dream=True`, ran to its end: not cancelled, not report_only, not
@@ -437,6 +437,10 @@ def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[st
       own formations precede its completion and never count.
     - `since`: the boundary actually used, or for "birth" the oldest formed record's time (`None` for an empty
       home, `count` 0).
+    - `fragmented`: {count, share, provisional, unvectored, pending}, how much of the home a sleep would make whole
+      (`_fragmented`): records placed in a community provisionally since the last completed night, live records
+      without a vector, live records with a title or summary still being written; `share` = count / live formed
+      records (0.0 for an empty home). The host sleeps early when it passes its threshold.
 
     Cheap: the completion is one primary-key read; on the SQLite home the count is one indexed COUNT per pair over
     the (scope, owner_id, observed_at) range after the boundary, so it reads only the records formed since.
@@ -455,4 +459,90 @@ def records_since_maintenance(system: Any, *, scopes: Optional[Sequence[Tuple[st
         boundary, source = None, "birth"
     count, oldest = _count_formed(system, pairs, boundary)
     return {"count": count, "last_maintenance_at": at, "since": boundary if boundary is not None else oldest,
-            "boundary_source": source}
+            "boundary_source": source,
+            "fragmented": _fragmented(system, pairs, int(row["seq"]) if row is not None else 0)}
+
+
+def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: int) -> Optional[Dict[str, Any]]:
+    """How much of the home a sleep would make whole (`records_since_maintenance(...)["fragmented"]`):
+    {count, share, provisional, unvectored, pending}. `provisional` = the records placed in a community at formation
+    since the last completed night (`placed` events above its journal seq: the next sleep confirms or moves them);
+    `unvectored` = the live formed records without a vector; `pending` = the live formed records whose title or
+    summary is still being written; `count` = their sum, `share` = count / the live formed records (0.0 for an empty
+    home). Live = no closure names the record. None on a store that cannot say which rows carry a vector (LanceDB).
+    SQLite home: one COUNT over the pairs' (scope, owner_id) range (the
+    closures read once, as a subquery) and one COUNT of `placed` events over the (scope, seq) range above the night."""
+    from .in_memory_store import InMemoryTripleStore
+    from .journal_sqlite import SQLiteJournal
+    from .sqlite_store import SQLiteTripleStore
+    from .understanding import _same_file
+
+    store, journal = system.store, system.journal
+    live = unvectored = pending = 0
+    if isinstance(store, SQLiteTripleStore):
+        where, params = _pair_where(pairs)
+        flags = ("embedding IS NULL AS nv, COALESCE(json_extract(attributes_json, '$.pending.title'), 0) "
+                 "OR COALESCE(json_extract(attributes_json, '$.pending.summary'), 0) AS pe")
+        if isinstance(journal, SQLiteJournal) and _same_file(store._path, journal._path):
+            fold = (f"assertion_id NOT IN (SELECT assertion_id FROM {journal._t_closures}) "
+                    f"AND subject NOT IN (SELECT assertion_id FROM {journal._t_closures})")
+            with store._lock:
+                n, nv, pe = store._conn.cursor().execute(
+                    f"SELECT COUNT(*), COALESCE(SUM(nv), 0), COALESCE(SUM(pe), 0) FROM (SELECT {flags} "
+                    f"FROM {store._table} WHERE {where} AND {_FORMED_SQL} AND {fold})", params).fetchone()
+            live, unvectored, pending = int(n or 0), int(nv or 0), int(pe or 0)
+        else:  # the closures live in another file: read them once, fold here
+            closed = {str(c.assertion_id) for c in journal.closures(limit=0)}
+            with store._lock:
+                rows = store._conn.cursor().execute(
+                    f"SELECT assertion_id, subject, {flags} FROM {store._table} WHERE {where} AND {_FORMED_SQL}",
+                    params).fetchall()
+            for aid, subject, nv, pe in rows:
+                if str(aid) not in closed and str(subject) not in closed:
+                    live, unvectored, pending = live + 1, unvectored + int(bool(nv)), pending + int(bool(pe))
+    elif isinstance(store, InMemoryTripleStore):
+        closed = {str(c.assertion_id) for c in journal.closures(limit=0)}
+        wanted = None if pairs is None else set(pairs)
+        with store._lock:
+            rows = [(r["assertion"], r.get("assertion_id"), r.get(store._vector_column)) for r in store._rows]
+        for a, aid, vector in rows:
+            if wanted is not None and (a.scope, a.owner_id or "") not in wanted:
+                continue
+            if not _formed(a) or str(aid) in closed or str(a.subject) in closed:
+                continue
+            marker = a.attributes.get("pending") if isinstance(a.attributes.get("pending"), dict) else {}
+            live += 1
+            unvectored += int(not vector)
+            pending += int(bool(marker.get("title") or marker.get("summary")))
+    else:
+        return None  # a store that cannot say which rows carry a vector (LanceDB): unknown, never a made-up 0
+    provisional = _placed_count(journal, pairs, night_seq)
+    count = provisional + unvectored + pending
+    return {"count": count, "share": round(count / live, 6) if live else 0.0, "provisional": provisional,
+            "unvectored": unvectored, "pending": pending}
+
+
+def _pair_where(pairs: Optional[List[Tuple[str, str]]]) -> Tuple[str, List[Any]]:
+    if pairs is None:
+        return "1 = 1", []
+    if not pairs:
+        return "1 = 0", []
+    return ("(" + " OR ".join("(scope = ? AND owner_id = ?)" for _ in pairs) + ")",
+            [v for pair in pairs for v in pair])
+
+
+def _placed_count(journal: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: int) -> int:
+    """The `placed` events above `night_seq` in these pairs (SQLite: one COUNT over the (scope, seq) index range)."""
+    from .journal_sqlite import SQLiteJournal
+
+    if isinstance(journal, SQLiteJournal):
+        where, params = _pair_where(pairs)
+        with journal._lock:
+            row = journal._conn.cursor().execute(
+                f"SELECT COUNT(*) FROM {journal._t_events} WHERE {where} AND seq > ? AND kind = 'placed'",
+                [*params, int(night_seq)]).fetchone()
+        return int(row[0] or 0)
+    if pairs is None:
+        pairs = sorted({(e.scope, e.owner_id) for e in getattr(journal, "_events", ()) if e.kind == "placed"})
+    return sum(len(journal.events(scope=sc, owner_id=ow, kinds=["placed"], since_seq=int(night_seq) + 1, limit=0))
+               for sc, ow in pairs)

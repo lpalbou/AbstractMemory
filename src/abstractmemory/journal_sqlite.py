@@ -231,39 +231,55 @@ class SQLiteJournal:
             return []
         items = _sanitize_batch(items)  # strict-JSON payload boundary (shared with InMemory)
         with self._txn() as cur:
-            out: List[MemoryEvent] = []
-            for e in items:
-                supplied = str(e.event_id or "").strip()
-                if supplied:
-                    row = self._find_by_id(cur, self._t_events, "event_id", supplied)
-                    if row is not None:
-                        # Replay no-op (0001/011): original row, original seq;
-                        # skipping the insert also skips the selected-count
-                        # increment (replays never double-count the trail).
-                        out.append(row_to_event(row))
-                        continue
-                # Seqs allocated per INSERTED record only: gap-free axis.
-                enriched = _enrich_event(e, self._allocate_seqs(cur, 1))
-                self._insert(cur, self._t_events, {
-                    "seq": enriched.seq, "event_id": enriched.event_id, "kind": enriched.kind,
-                    "scope": enriched.scope, "owner_id": enriched.owner_id, "record_id": enriched.record_id,
-                    "pair_ids_json": _json_dump(list(enriched.pair_ids)) if enriched.pair_ids is not None else None,
-                    "weight": float(enriched.weight), "ttl_activity": enriched.ttl_activity,
-                    "matched": 1 if enriched.matched else 0,
-                    "query_fingerprint": enriched.query_fingerprint, "trace_id": enriched.trace_id,
-                    "observed_at": enriched.observed_at, "actor": enriched.actor, "reason": enriched.reason,
-                    "provenance_json": _json_dump(enriched.provenance),
-                })
-                # Denormalized selected-use counter (0018): only genuine
-                # 'selected' events advance it — in the SAME transaction, so
-                # counter and events can never disagree after a crash.
-                if enriched.kind == "selected":
-                    cur.execute(
-                        f"INSERT INTO {self._t_counts} (record_id, n) VALUES (?, 1) "
-                        "ON CONFLICT(record_id) DO UPDATE SET n = n + 1",
-                        (enriched.record_id,),
-                    )
-                out.append(enriched)
+            return self._insert_events_on(cur, items)
+
+    def _append_events_on(self, cur: sqlite3.Cursor, events: Sequence[MemoryEvent]) -> List[MemoryEvent]:
+        """append_events' body on a CALLER-OWNED transaction of THIS file (formation on an opted-in home writes a
+        record's `placed` event on the triple store's connection, so the record and its event commit or roll back
+        together: `memory_tasks.form_with_tasks`). Same validation, idempotency and seq allocation as
+        append_events; the caller's COMMIT is the commit point."""
+        items = list(events or ())
+        for e in items:
+            _require_instance(e, MemoryEvent, "append_events")
+        if not items:
+            return []
+        return self._insert_events_on(cur, _sanitize_batch(items))
+
+    def _insert_events_on(self, cur: sqlite3.Cursor, items: Sequence[MemoryEvent]) -> List[MemoryEvent]:
+        """The inserts of a validated, sanitized event batch on an open write transaction."""
+        out: List[MemoryEvent] = []
+        for e in items:
+            supplied = str(e.event_id or "").strip()
+            if supplied:
+                row = self._find_by_id(cur, self._t_events, "event_id", supplied)
+                if row is not None:
+                    # Replay no-op (0001/011): original row, original seq;
+                    # skipping the insert also skips the selected-count
+                    # increment (replays never double-count the trail).
+                    out.append(row_to_event(row))
+                    continue
+            # Seqs allocated per INSERTED record only: gap-free axis.
+            enriched = _enrich_event(e, self._allocate_seqs(cur, 1))
+            self._insert(cur, self._t_events, {
+                "seq": enriched.seq, "event_id": enriched.event_id, "kind": enriched.kind,
+                "scope": enriched.scope, "owner_id": enriched.owner_id, "record_id": enriched.record_id,
+                "pair_ids_json": _json_dump(list(enriched.pair_ids)) if enriched.pair_ids is not None else None,
+                "weight": float(enriched.weight), "ttl_activity": enriched.ttl_activity,
+                "matched": 1 if enriched.matched else 0,
+                "query_fingerprint": enriched.query_fingerprint, "trace_id": enriched.trace_id,
+                "observed_at": enriched.observed_at, "actor": enriched.actor, "reason": enriched.reason,
+                "provenance_json": _json_dump(enriched.provenance),
+            })
+            # Denormalized selected-use counter (0018): only genuine
+            # 'selected' events advance it — in the SAME transaction, so
+            # counter and events can never disagree after a crash.
+            if enriched.kind == "selected":
+                cur.execute(
+                    f"INSERT INTO {self._t_counts} (record_id, n) VALUES (?, 1) "
+                    "ON CONFLICT(record_id) DO UPDATE SET n = n + 1",
+                    (enriched.record_id,),
+                )
+            out.append(enriched)
         return out
 
     def events(

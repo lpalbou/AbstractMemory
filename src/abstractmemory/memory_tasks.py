@@ -959,11 +959,18 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
       and commits last, around the store's rows and the bindings; a failure rolls this attempt's tasks back and
       removes the rows and bindings THIS attempt stored (decided inside the lock), never a concurrent writer's.
 
-    Idempotent like `apply_formation_plan` (existing rows skipped, bindings and tasks replay as no-ops). Returns
-    the record ids in input order."""
+    Each non-community record it inserts is placed in its provisional community in the same transaction
+    (`community_index.place_record`: one `placed` journal event, the store's community index caught up once per
+    formation; nothing when no communities version exists yet). A journal in another file gets the events after
+    the commit, with the bindings.
+
+    Idempotent like `apply_formation_plan` (existing rows skipped, bindings, tasks and placements replay as
+    no-ops). Returns the record ids in input order."""
+    from .community_index import FormationPlacement
     from .journal_sqlite import SQLiteJournal
     from .sqlite_store import SQLiteTripleStore
     from .store import TripleQuery
+    from .vector_matrix import decode_vector
 
     queue: MemoryTaskQueue = system.tasks
     store, journal = system.store, system.journal
@@ -975,26 +982,35 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
 
         shared = isinstance(journal, SQLiteJournal) and _same_file(store._path, journal._path)
         rows = store._prepare_add(missing)[1] if missing else []
+        placement = FormationPlacement.for_plan(system, plan, missing,
+                                                {i: decode_vector(r[13]) for i, r in enumerate(rows)})
         with store._lock:
             cur = store._conn.cursor()
             cur.execute("BEGIN IMMEDIATE")
             try:
+                # Before this formation's own rows: the index is current with every committed version.
+                placement.catch_up(cur=cur, journal_cur=cur if shared else None)
                 if rows:
                     store._insert_rows_on(cur, rows)
                 if shared:
                     for binding in plan.bindings:
                         journal._append_binding_on(cur, binding)
                 _enqueue_planned(queue, planned, cur)
+                if shared:
+                    placement.place(cur=cur)
                 guard_commit(store, "tasks.form_with_tasks")
                 cur.execute("COMMIT")
             except BaseException:
                 cur.execute("ROLLBACK")
+                placement.aborted()
                 raise
         if rows:
             store._after_add_commit()
         if not shared:
             for binding in plan.bindings:
                 journal.append_binding(binding)
+            placement.place(cur=None)
+        placement.committed()
         return list(plan.record_ids)
     from .in_memory_store import InMemoryTripleStore
     from .journal_memory import InMemoryJournal
@@ -1011,6 +1027,7 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
     # attempt inserted (Codex review 3 finding 3: the rollback removed every id read missing before the lock, the
     # winning writer's included). A failure undoes exactly this attempt's own rows, bindings and tasks.
     prepared = store._prepare_add(missing) if missing else None
+    placement = FormationPlacement.for_plan(system, plan, missing, dict(prepared or {}))
     with queue._lock, journal._lock:
         qcur = queue._conn.cursor()
         qcur.execute("BEGIN IMMEDIATE")
@@ -1020,6 +1037,7 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
         try:
             _enqueue_planned(queue, planned, qcur)
             with deferred_to_caller(store):
+                placement.catch_up()  # before this attempt's rows: current with every stored version
                 if missing:
                     added = store._insert_prepared(missing, prepared)[1]
                 if isinstance(journal, SQLiteJournal):
@@ -1029,11 +1047,13 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
                     jcur = c
                     for binding in plan.bindings:
                         journal._append_binding_on(jcur, binding)
+                    placement.place(cur=jcur, inserted=added)
                 else:
                     for binding in plan.bindings:
                         stored, new = journal._append_binding_tracked(binding)
                         if new:
                             bound.append(str(stored.binding_id))
+                    placement.place(cur=None, inserted=added)
             # The formation's one commit point, immediately before its COMMITs, after every row, binding and task
             # (Stop fence F8: a guard before the first row let a Stop raised mid-formation land). Refused -> the
             # journal and queue roll back, this attempt's in-memory rows and bindings are removed below.
@@ -1046,11 +1066,15 @@ def form_with_tasks(system: Any, plan: Any, *, scope: str, owner_id: str) -> Lis
             if jcur is not None:
                 jcur.execute("ROLLBACK")
             qcur.execute("ROLLBACK")
+            if placement.stored and not isinstance(journal, SQLiteJournal):
+                journal._discard_formed_events(placement.stored)  # newest first: the seq axis rewinds
             if added:
                 store._discard_formed(added)
             if bound:
                 journal._discard_formed_bindings(bound)
+            placement.aborted()
             raise
+    placement.committed()
     return list(plan.record_ids)
 
 
