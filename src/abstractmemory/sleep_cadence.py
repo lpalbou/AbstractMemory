@@ -469,16 +469,20 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
     since the last completed night (`placed` events above its journal seq: the next sleep confirms or moves them);
     `unvectored` = the live formed records without a vector; `pending` = the live formed records whose title or
     summary is still being written; `count` = their sum, `share` = count / the live formed records (0.0 for an empty
-    home). Live = no closure names the record. None on a store that cannot say which rows carry a vector (LanceDB).
-    SQLite home: one COUNT over the pairs' (scope, owner_id) range (the
-    closures read once, as a subquery) and one COUNT of `placed` events over the (scope, seq) range above the night."""
+    home). Live = no closure names the record. A vector-less record whose every engraved relation names a CLOSED
+    record (the sleep pass's `unplaced_closed`: e.g. the summary of episodes consolidated away; no edge can ever
+    place it) is not fragmentation: it counts in neither `unvectored` nor `pending` (`_closed_only`). None on a store
+    that cannot say which rows carry a vector (LanceDB). SQLite home: one COUNT over the pairs' (scope, owner_id)
+    range (the closures read once, as a subquery), the vector-less rows of that range, the engraved edges of those
+    rows by index, and one COUNT of `placed` events over the (scope, seq) range above the night."""
     from .in_memory_store import InMemoryTripleStore
     from .journal_sqlite import SQLiteJournal
     from .sqlite_store import SQLiteTripleStore
     from .understanding import _same_file
 
     store, journal = system.store, system.journal
-    live = unvectored = pending = 0
+    live = pending = 0
+    vectorless: Dict[str, bool] = {}  # live vector-less record (graph id) -> its title or summary is pending
     if isinstance(store, SQLiteTripleStore):
         where, params = _pair_where(pairs)
         flags = ("embedding IS NULL AS nv, COALESCE(json_extract(attributes_json, '$.pending.title'), 0) "
@@ -487,10 +491,15 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
             fold = (f"assertion_id NOT IN (SELECT assertion_id FROM {journal._t_closures}) "
                     f"AND subject NOT IN (SELECT assertion_id FROM {journal._t_closures})")
             with store._lock:
-                n, nv, pe = store._conn.cursor().execute(
-                    f"SELECT COUNT(*), COALESCE(SUM(nv), 0), COALESCE(SUM(pe), 0) FROM (SELECT {flags} "
+                cur = store._conn.cursor()
+                n, pe = cur.execute(
+                    f"SELECT COUNT(*), COALESCE(SUM(pe), 0) FROM (SELECT {flags} "
                     f"FROM {store._table} WHERE {where} AND {_FORMED_SQL} AND {fold})", params).fetchone()
-            live, unvectored, pending = int(n or 0), int(nv or 0), int(pe or 0)
+                rows = cur.execute(
+                    f"SELECT subject, {flags} FROM {store._table} WHERE {where} AND {_FORMED_SQL} AND {fold} "
+                    "AND embedding IS NULL", params).fetchall()
+            live, pending = int(n or 0), int(pe or 0)
+            vectorless = {str(subject): bool(p) for subject, _nv, p in rows}
         else:  # the closures live in another file: read them once, fold here
             closed = {str(c.assertion_id) for c in journal.closures(limit=0)}
             with store._lock:
@@ -499,7 +508,9 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
                     params).fetchall()
             for aid, subject, nv, pe in rows:
                 if str(aid) not in closed and str(subject) not in closed:
-                    live, unvectored, pending = live + 1, unvectored + int(bool(nv)), pending + int(bool(pe))
+                    live, pending = live + 1, pending + int(bool(pe))
+                    if nv:
+                        vectorless[str(subject)] = bool(pe)
     elif isinstance(store, InMemoryTripleStore):
         closed = {str(c.assertion_id) for c in journal.closures(limit=0)}
         wanted = None if pairs is None else set(pairs)
@@ -511,15 +522,117 @@ def _fragmented(system: Any, pairs: Optional[List[Tuple[str, str]]], night_seq: 
             if not _formed(a) or str(aid) in closed or str(a.subject) in closed:
                 continue
             marker = a.attributes.get("pending") if isinstance(a.attributes.get("pending"), dict) else {}
-            live += 1
-            unvectored += int(not vector)
-            pending += int(bool(marker.get("title") or marker.get("summary")))
+            is_pending = bool(marker.get("title") or marker.get("summary"))
+            live, pending = live + 1, pending + int(is_pending)
+            if not vector:
+                vectorless[str(a.subject)] = is_pending
     else:
         return None  # a store that cannot say which rows carry a vector (LanceDB): unknown, never a made-up 0
+    gone = _closed_only(system, pairs, sorted(vectorless))
+    unvectored = len(vectorless) - len(gone)
+    pending -= sum(1 for rid in gone if vectorless[rid])
     provisional = _placed_count(journal, pairs, night_seq)
     count = provisional + unvectored + pending
     return {"count": count, "share": round(count / live, 6) if live else 0.0, "provisional": provisional,
             "unvectored": unvectored, "pending": pending}
+
+
+def _closed_only(system: Any, pairs: Optional[List[Tuple[str, str]]], subjects: Sequence[str]) -> Set[str]:
+    """The records among `subjects` whose every live engraved relation (at least one; the sleep pass's relation set,
+    `communities.RELATION_WEIGHTS`, either direction, in these pairs) names a CLOSED record (every digest row of it
+    closed): the predicate of the pass's `unplaced_closed` (`communities.read_community_graph`). Index reads only:
+    the edges of these subjects, then the digest rows and closures of their neighbours."""
+    from .communities import RELATION_WEIGHTS
+    from .in_memory_store import InMemoryTripleStore
+
+    if not subjects:
+        return set()
+    store, journal = system.store, system.journal
+    wanted = set(subjects)
+    rels = sorted(RELATION_WEIGHTS)
+    edges: List[Tuple[str, str, str]] = []  # (subject, object, edge assertion id)
+    digests: Dict[str, List[str]] = {}      # neighbour graph id -> its formed digest assertion ids
+    if isinstance(store, InMemoryTripleStore):
+        allowed = None if pairs is None else set(pairs)
+        with store._lock:
+            rows = [(r["assertion"], str(r.get("assertion_id") or "")) for r in store._rows]
+        scoped = [(a, aid) for a, aid in rows if allowed is None or (a.scope, a.owner_id or "") in allowed]
+        edges = [(str(a.subject), str(a.object), aid) for a, aid in scoped if str(a.predicate or "") in rels
+                 and (str(a.subject) in wanted or str(a.object) in wanted)]
+        others = {o if s in wanted else s for s, o, _aid in edges}
+        for a, aid in scoped:
+            if str(a.subject) in others and _formed_or_bookkeeping(a):
+                digests.setdefault(str(a.subject), []).append(aid)
+    else:
+        where, params = _pair_where(pairs)
+        marks = ", ".join("?" for _ in rels)
+        with store._lock:
+            cur = store._conn.cursor()
+            for chunk in _chunks(sorted(wanted)):
+                ids = ", ".join("?" for _ in chunk)
+                edges += [(str(r[0]), str(r[1]), str(r[2])) for r in cur.execute(
+                    f"SELECT subject, object, assertion_id FROM {store._table} WHERE predicate IN ({marks}) "
+                    f"AND (subject IN ({ids}) OR object IN ({ids})) AND {where}",
+                    [*rels, *chunk, *chunk, *params]).fetchall()]
+            others = sorted({o if s in wanted else s for s, o, _aid in edges})
+            for chunk in _chunks(others):
+                ids = ", ".join("?" for _ in chunk)
+                for subject, aid, attrs in cur.execute(
+                        f"SELECT subject, assertion_id, attributes_json FROM {store._table} WHERE predicate = "
+                        f"'dcterms:abstract' AND subject IN ({ids}) AND {where}", [*chunk, *params]).fetchall():
+                    kind = _json_field(attrs, "record_kind")
+                    if kind and not _json_field(attrs, "record_edge"):
+                        digests.setdefault(str(subject), []).append(str(aid))
+    names = {aid for _s, _o, aid in edges} | {aid for aids in digests.values() for aid in aids} | set(digests)
+    closed = _closed_among(journal, names)
+    shut = {g for g, aids in digests.items() if g in closed or all(aid in closed for aid in aids)}
+    to_closed: Set[str] = set()
+    to_other: Set[str] = set()
+    for s, o, aid in edges:
+        if aid in closed or s == o:
+            continue
+        for end, other in ((s, o), (o, s)):
+            if end in wanted:
+                (to_closed if other in shut else to_other).add(end)
+    return to_closed - to_other
+
+
+def _formed_or_bookkeeping(a: Any) -> bool:
+    attrs = a.attributes if isinstance(a.attributes, dict) else {}
+    return (str(a.predicate or "") == "dcterms:abstract" and bool(attrs.get("record_kind"))
+            and not attrs.get("record_edge"))
+
+
+def _json_field(raw: Any, name: str) -> Any:
+    import json
+
+    try:
+        value = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return None
+    return value.get(name) if isinstance(value, dict) else None
+
+
+def _chunks(items: Sequence[str], size: int = 400) -> List[Sequence[str]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _closed_among(journal: Any, names: Set[str]) -> Set[str]:
+    """The names (assertion ids or graph ids) some closure names. A SQLite journal: indexed lookups by assertion id."""
+    from .journal_sqlite import SQLiteJournal
+
+    if not names:
+        return set()
+    if isinstance(journal, SQLiteJournal):
+        out: Set[str] = set()
+        with journal._lock:
+            cur = journal._conn.cursor()
+            for chunk in _chunks(sorted(names)):
+                out |= {str(r[0]) for r in cur.execute(
+                    f"SELECT assertion_id FROM {journal._t_closures} WHERE assertion_id IN "
+                    f"({', '.join('?' for _ in chunk)})", list(chunk)).fetchall()}
+        return out
+    return {str(c.assertion_id) for c in journal.closures(limit=0)} & names
 
 
 def _pair_where(pairs: Optional[List[Tuple[str, str]]]) -> Tuple[str, List[Any]]:

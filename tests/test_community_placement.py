@@ -24,7 +24,8 @@ P10 a stale centroid still places by cosine;
 P11 a record without a vector is never placed through its neighbours;
 F1 `fragmented.provisional` counts placements from before the last night; F2 closed records count as live;
 FA1 `facts.paths` counts pairs across two communities; FA2 `facts.activity` ignores its 7-day window;
-FA3 every version reads as changed since the last sleep; FA4 no bridge member is found.
+FA3 every version reads as changed since the last sleep; FA4 no bridge member is found; F3 a record whose every
+neighbour is closed counts as fragmented.
 """
 
 from __future__ import annotations
@@ -626,6 +627,29 @@ def test_fragmented_provisional_counts_only_placements_since_the_last_night(home
     _remember(home, "after", "Fresh thoughts about beta.")
     got = _fragmented(home)
     assert (got["provisional"], got["count"], got["share"]) == (1, 1, round(1 / 8, 6))
+
+
+def test_fragmented_leaves_out_records_whose_every_neighbour_is_closed(home):
+    """The sleep pass's `unplaced_closed`: a vector-less summary of records consolidated away can never be placed by
+    an edge, so it is not fragmentation; one with a live neighbour still is."""
+    gone = [_remember(home, f"old{i}", f"Notes on alpha {i}.") for i in range(2)]
+    kept = _remember(home, "kept", "Notes on beta.")
+
+    def summary(key, targets):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return home.remember_many([MemoryRecordInput(kind="summary", title=None, digest=f"novector {key}",
+                                                         edges=tuple(("summarizes", t) for t in targets),
+                                                         pending=("title",))],
+                                      scope=SCOPE, owner_id=OWNER, idempotency_key=key)[0]
+
+    summary("orphan", gone)
+    summary("anchored", [gone[0], kept])
+    for rid in gone:
+        home.close_record(rid, reason="consolidated")
+    # live: kept + the two summaries; only the anchored summary is fragmented (no vector, title pending)
+    assert _fragmented(home) == {"count": 2, "share": round(2 / 3, 6), "provisional": 0, "unvectored": 1,
+                                 "pending": 1}
 
 
 # --------------------------------------------------------------------------- against the real sleep pass
