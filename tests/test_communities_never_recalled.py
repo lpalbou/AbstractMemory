@@ -5,14 +5,24 @@ keyword index. Both substrate pairs.
 Why it matters: the briefing (member titles and summaries) is a near-perfect attractor for any query on its topic; an
 embedded, recallable community would carry a whole topic packet into prompts uninvited.
 
+THE CLOSED SET (Fable review M1 #1): every embed call site in `src/abstractmemory` (a call to an embedder's
+`embed_texts`, or to a function that embeds what it is handed: `embedding_pin.embed_texts_degradable`,
+`understanding._embed`) sits in a function that asks `canonical_text.never_embedded`, unless it embeds the reader's
+query (`[<x>.query_text]` / `[<x>.cue_text]`). A new site without it fails `test_every_embed_site_asks_never_embedded`
+by name; the scanner's own red cases are `test_the_closed_set_check_goes_red_on_an_unguarded_site`.
+
 MUTATION LIST (scratch copy untracked/communities/mut; all red, source restored): N1 the SQLite and in-memory stores
 embed every non-edge (no kind rule); N2 an authored summary re-embeds a community; N3 reembed embeds every non-edge;
-N4 a community record is not bookkeeping (it reaches recall shelves and the keyword index).
+N4 a community record is not bookkeeping (it reaches recall shelves and the keyword index). Fable review M1 (scratch
+copy untracked/review-m1-wip/tree): D4a graph._sqlite_rows back on `is_record_edge`, D4b
+lancedb_backend.prepare_rows back on `is_record_edge` (the closed set and the revision test both red).
 """
 
 from __future__ import annotations
 
+import ast
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -135,3 +145,139 @@ def test_a_vector_query_never_returns_a_community(kind, tmp_path) -> None:
             warnings.simplefilter("ignore", RuntimeWarning)
             rows = system.store.query(TripleQuery(query_text=c.title, scope=SCOPE, owner_id=OWNER, limit=50))
         assert rows and not [a for a in rows if (a.attributes or {}).get("record_kind") == "community"]
+
+
+# ----------------------------------------------------------------------------------------------- the closed set
+
+SRC = Path(C.__file__).resolve().parent
+#: Functions that embed the texts they are handed: a call to one is an embed site (None: any module; else the module
+#: the helper is local to). Their own bodies are not sites (their callers are).
+WRAPPERS = {"embed_texts_degradable": None, "_embed": "understanding.py"}
+QUERY_ATTRS = frozenset({"query_text", "cue_text"})
+
+
+def _called(call: ast.Call) -> str:
+    f = call.func
+    return f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+
+
+def _is_wrapper(name: str, module: str) -> bool:
+    return name in WRAPPERS and WRAPPERS[name] in (None, module)
+
+
+def _names_never_embedded(fn: ast.AST) -> bool:
+    return any((isinstance(n, ast.Name) and n.id.endswith("never_embedded"))
+               or (isinstance(n, ast.Attribute) and n.attr.endswith("never_embedded")) for n in ast.walk(fn))
+
+
+def _is_query(call: ast.Call) -> bool:
+    return bool(call.args) and all(
+        isinstance(a, ast.List) and len(a.elts) == 1 and isinstance(a.elts[0], ast.Attribute)
+        and a.elts[0].attr in QUERY_ATTRS for a in call.args)
+
+
+def embed_sites(source: str, module: str):
+    """[(function, line, verdict)] for every embed call of one module: 'query' (the reader's query or cue text),
+    'own' (inside an embedder's `embed_texts` or a wrapper's own body), 'guarded' (a function on the stack names
+    never_embedded), 'unguarded' (the leak this file exists to catch)."""
+    out = []
+
+    def visit(node, stack):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, stack + [child])
+                continue
+            if isinstance(child, ast.Call):
+                name = _called(child)
+                if (name == "embed_texts" and isinstance(child.func, ast.Attribute)) or _is_wrapper(name, module):
+                    fn = stack[-1].name if stack else "<module>"
+                    if stack and (fn == "embed_texts" or _is_wrapper(fn, module)):
+                        verdict = "own"
+                    elif _is_query(child):
+                        verdict = "query"
+                    elif any(_names_never_embedded(f) for f in stack):
+                        verdict = "guarded"
+                    else:
+                        verdict = "unguarded"
+                    out.append((fn, child.lineno, verdict))
+            visit(child, stack)
+
+    visit(ast.parse(source), [])
+    return out
+
+
+def _all_sites():
+    out = []
+    for path in sorted(SRC.rglob("*.py")):
+        module = path.relative_to(SRC).as_posix()
+        out.extend((module, fn, line, verdict) for fn, line, verdict in embed_sites(path.read_text("utf-8"), module))
+    return out
+
+
+def test_every_embed_site_asks_never_embedded() -> None:
+    sites = _all_sites()
+    unguarded = [f"{m}:{line} in {fn}()" for m, fn, line, verdict in sites if verdict == "unguarded"]
+    assert unguarded == [], ("these embed sites never ask canonical_text.never_embedded (a community they write "
+                             f"would embed): {unguarded}")
+    guarded = {(m, fn) for m, fn, _line, verdict in sites if verdict == "guarded"}
+    assert guarded >= {  # the scan is not vacuous: every known write path is found, and found guarded
+        ("sqlite_store.py", "_prepare_add"), ("in_memory_store.py", "_prepare_add"), ("graph/graph.py", "_sqlite_rows"),
+        ("lancedb_store.py", "add"), ("graph/lancedb_backend.py", "prepare_rows"), ("reembed.py", "reembed_store"),
+        ("communities.py", "embed_missing"), ("understanding.py", "_apply")}, sorted(guarded)
+    assert sum(1 for *_x, verdict in sites if verdict == "query") >= 4
+
+
+def test_the_closed_set_check_goes_red_on_an_unguarded_site() -> None:
+    bad = "class S:\n    def add(self, rows):\n        return self._embedder.embed_texts([r.text for r in rows])\n"
+    wrapped = "def rows(store, xs):\n    return embed_texts_degradable(store._embedder, xs, None)\n"
+    good = ("def rows(store, xs):\n    keep = [x for x in xs if not _never_embedded(x)]\n"
+            "    return embed_texts_degradable(store._embedder, keep, None)\n")
+    query = "def query(self, q):\n    return self._embedder.embed_texts([q.query_text])[0]\n"
+    helper = ("def _embed(store, text):\n    return store._embedder.embed_texts([text])\n"
+              "def go(s):\n    _embed(s, 't')\n")
+    assert embed_sites(bad, "x.py") == [("add", 3, "unguarded")]
+    assert embed_sites(wrapped, "x.py") == [("rows", 2, "unguarded")]
+    assert embed_sites(good, "x.py") == [("rows", 3, "guarded")]
+    assert embed_sites(query, "x.py") == [("query", 2, "query")]
+    assert embed_sites(helper, "understanding.py") == [("_embed", 2, "own"), ("go", 4, "unguarded")]
+
+
+class _Recording:
+    model = "fake-recording-64"
+
+    def __init__(self) -> None:
+        from graph_support import FakeEmbedder
+
+        self.inner, self.texts = FakeEmbedder(), []
+
+    def embed_texts(self, texts):
+        self.texts.extend(texts)
+        return self.inner.embed_texts(texts)
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "memory", "lancedb"])
+def test_a_community_asserted_through_a_revision_is_never_embedded(backend, tmp_path) -> None:
+    """MemoryGraph.apply_revision validates no record kind and is reachable from the runtime facade and the gateway's
+    memory route: a `community` digest it asserts gets no vector on any connector; the ordinary claim beside it does
+    (the check is not vacuous)."""
+    from graph_support import claim, open_home, rev
+
+    if backend == "lancedb":
+        pytest.importorskip("lancedb")
+    emb = _Recording()
+    home = open_home(tmp_path, backend, embedder=emb)
+    try:
+        attrs = {"record_kind": "community", "community_key": "ex:community-0123456789ab", "bookkeeping": True,
+                 "members": [{"id": "ex:a", "via": "detected", "since_seq": 1}]}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            home.graph.apply_revision(rev("r-community", claim(
+                "a-community", s="ex:community-0123456789ab", p="dcterms:abstract",
+                o="A topic of this memory: briefing words", attributes=attrs), claim("a-claim")))
+        assert any("ex:dana" in t for t in emb.texts), emb.texts
+        assert not [t for t in emb.texts if "briefing words" in t], emb.texts
+        if hasattr(home.store, "stored_vector"):
+            assert home.store.stored_vector("a-community") is None
+            assert home.store.stored_vector("a-claim") is not None
+    finally:
+        home.close()

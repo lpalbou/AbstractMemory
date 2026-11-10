@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from ..canonical_text import canonical_text as _canonical_text
-from ..canonical_text import is_record_edge as _is_record_edge
+from ..canonical_text import never_embedded as _never_embedded
 from ..commit_guard import guard_commit
 from ..journal import ClosureRecord
 from ..journal_common import normalize_iso_ts as _instant
@@ -394,7 +394,7 @@ class LanceDBBackend(GraphBackend):
         vectors: Dict[int, List[float]] = {}
         embedder = self.store._embedder
         if embedder is not None:
-            embeddable = [i for i, a in enumerate(assertions) if not _is_record_edge(a)]
+            embeddable = [i for i, a in enumerate(assertions) if not _never_embedded(a)]  # edges + communities
             if embeddable:
                 vectors = dict(zip(embeddable, embedder.embed_texts([texts[i] for i in embeddable])))
         rows = []

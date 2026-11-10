@@ -70,10 +70,13 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .canonical_text import record_title
+
 __all__ = [
     "ALGORITHM",
     "COMMUNITY_KIND",
     "CommunityGraph",
+    "CommunityPlanError",
     "Detection",
     "MEMBER_VIAS",
     "PROMPT_VERSION",
@@ -112,6 +115,11 @@ KNN_K = 6
 KNN_MIN_COSINE = 0.45
 KNN_WEIGHT = 0.5
 KNN_BLOCK_ROWS = 1000
+#: The most cosines one kNN block holds (block rows x n): the block's one float64 copy (rounded, masked and negated
+#: in place), argpartition's working copy and its int64 indices stay ~26 bytes x this (~26 MB), whatever the home's
+#: size (Fable review M1 #5: three full-size copies of a 1000-row block cost +433 MB at 10k records). Homes up to 1000
+#: vectored records keep the one 1000-row block they always had.
+KNN_BLOCK_CELLS = 1_000_000
 RESOLUTION = 1.0
 SPLIT_RESOLUTION = 1.5
 SPLIT_SHARE = 0.25
@@ -137,6 +145,11 @@ RELAX_MAX_ITERATIONS = 2000
 GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 NO_COMMON_SUBJECT = "no_common_subject"
 PASS_NAME = "communities_pass"
+
+
+class CommunityPlanError(RuntimeError):
+    """The formation plan of a version names another record id than the one the pass derived for it
+    (`record_id_for("community", ...)`): records.build_formation_plan and the pass disagree, nothing is written."""
 
 
 def _np() -> Any:
@@ -269,14 +282,15 @@ class CommunityGraph:
     #: The records whose every open engraved relation (at least one) names a CLOSED record (their neighbours are
     #: gone: e.g. the summary of consolidated episodes). The receipt's `unplaced_closed` = the unplaced vector-less ones.
     closed_only: Set[str] = field(default_factory=set)
+    _vindex: Any = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def vindex(self) -> Dict[str, int]:
         """record id -> its row in `vectors` (rebuilt whenever `vec_ids` is replaced)."""
-        held = getattr(self, "_vindex", None)
+        held = self._vindex
         if held is None or held[0] is not self.vec_ids or held[1] != len(self.vec_ids):
             held = (self.vec_ids, len(self.vec_ids), {rid: i for i, rid in enumerate(self.vec_ids)})
-            object.__setattr__(self, "_vindex", held)
+            self._vindex = held
         return held[2]
 
 
@@ -326,8 +340,6 @@ def _previous_of(aid: str, subject: str, scope: str, attrs: Dict[str, Any], dige
     centroid = None
     if space is not None and attrs.get("centroid_pin") == space:
         centroid = _decode_centroid(attrs.get("centroid"), attrs.get("centroid_dim"))
-    from .canonical_text import record_title
-
     return PreviousCommunity(key=key, record_id=subject, assertion_id=aid, members=members, centroid=centroid,
                              attrs=attrs, title=record_title(attrs), digest=digest, scope=scope)
 
@@ -416,8 +428,6 @@ def read_community_graph(system: Any, *, scopes: Sequence[Tuple[str, str]], owne
             continue
         if attrs.get("bookkeeping") or subject in graph.nodes:
             continue
-        from .canonical_text import record_title
-
         graph.nodes[subject] = _Node(id=subject, assertion_id=aid, kind=kind.strip().lower(),
                                      title=record_title(attrs), digest=obj, scope=scope, owner_id=owner,
                                      observed_at=observed)
@@ -577,23 +587,28 @@ def _engraved_weights(graph: CommunityGraph) -> List[Tuple[str, str, str, float]
 
 
 def _knn_pairs(vectors: Any, k: int, min_cos: float) -> Dict[Tuple[int, int], float]:
-    """Cosine kNN over unit rows (blocked: KNN_BLOCK_ROWS rows at a time): {(i, j) i<j: cosine}, an edge when either
-    end has the other in its k best at cosine >= min_cos. Cosines rounded to 1e-6 (determinism across BLAS orders)."""
+    """Cosine kNN over unit rows: {(i, j) i<j: cosine}, an edge when either end has the other in its k best at
+    cosine >= min_cos. Cosines rounded to 1e-6 (determinism across BLAS orders). Blocked so the transient memory is
+    bounded whatever n is: min(KNN_BLOCK_ROWS, KNN_BLOCK_CELLS // n) rows at a time, the float32 product cast ONCE to
+    float64, then rounded, masked and negated IN PLACE (argpartition reads the negated copy: no `-block` copy)."""
     np = _np()
     n = int(vectors.shape[0]) if vectors is not None and vectors.size else 0
     k = min(int(k), n - 1)
     out: Dict[Tuple[int, int], float] = {}
     if k <= 0:
         return out
-    for start in range(0, n, KNN_BLOCK_ROWS):
-        block = np.round((vectors[start:start + KNN_BLOCK_ROWS] @ vectors.T).astype(np.float64), 6)
+    step = max(1, min(KNN_BLOCK_ROWS, KNN_BLOCK_CELLS // n))
+    for start in range(0, n, step):
+        block = (vectors[start:start + step] @ vectors.T).astype(np.float64)
+        np.round(block, 6, out=block)
         rows = np.arange(block.shape[0])
         block[rows, rows + start] = -np.inf
-        top = np.argpartition(-block, k - 1, axis=1)[:, :k]
+        np.negative(block, out=block)  # the k smallest = the k best cosines
+        top = np.argpartition(block, k - 1, axis=1)[:, :k]
         for local in range(block.shape[0]):
             i = start + local
             for j in sorted(int(x) for x in top[local]):
-                cos = float(block[local, j])
+                cos = -float(block[local, j])
                 if cos >= min_cos:
                     key = (i, j) if i < j else (j, i)
                     if cos > out.get(key, -1.0):
@@ -1318,6 +1333,13 @@ def _needs_reform(system: Any, prev: PreviousCommunity) -> bool:
     return basis.get("prompt_version") != PROMPT_VERSION
 
 
+def _links_gone(prev: PreviousCommunity, keys_now: Set[str]) -> bool:
+    """The previous version's stored `links` name a community key that no current community carries tonight (a
+    dissolved neighbour): the version forms again, so no stored link outlives the community it names."""
+    return any(isinstance(link, Mapping) and str(link.get("to") or "") not in keys_now
+               for link in prev.attrs.get("links") or ())
+
+
 def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id: str, author: Any,
                      cancelled: Optional[Callable[[], bool]], budget: Optional[int] = None,
                      seed_previous: bool = True, detect_kinds: Optional[Iterable[str]] = None) -> Dict[str, Any]:
@@ -1365,6 +1387,7 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
     groups = [dict(g) for g in det.groups]
     # Provisional: a record nothing places now stays in the community it was in, while that community continues.
     key_group = {key: gi for gi, (key, _p, _j) in enumerate(matched)}
+    keys_now = set(key_group)
     still: List[str] = []
     prev_key_of = {m: p.key for p in graph.previous for m in p.members}
     for rid in det.unplaced:
@@ -1388,6 +1411,8 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         changed = prev is None or {(m["id"], m["via"]) for m in members} != {
             (mid, m["via"]) for mid, m in prev_members.items()}
         if not changed and _needs_reform(system, prev):
+            changed = True
+        if not changed and _links_gone(prev, keys_now):
             changed = True
         vec_rows = [graph.vindex[m] for m in sorted(ids_set) if m in graph.vindex]
         centroid = _unit_mean(np, graph.vectors[vec_rows]) if vec_rows else None
@@ -1559,7 +1584,9 @@ def communities_pass(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id
         key = c["key"]
         plan = build_formation_plan([record], scope=scope0, owner_id=owner,
                                     idempotency_key=f"community|{owner}|{key}|v{version_seq}")
-        assert plan.record_ids[0] == rid
+        if tuple(plan.record_ids[:1]) != (rid,):
+            raise CommunityPlanError(f"community {key}: the formation plan names {list(plan.record_ids)[:1]}, the pass "
+                                     f"derived {rid!r} (version {version_seq})")
         plans.append(plan)
         planned.extend(plan_formed(system, plan, scope=scope0, owner_id=owner))
         prev = c["prev"]
@@ -1626,7 +1653,7 @@ def embed_missing(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id: s
     `no_embedder`). A pinless store is pinned at its first vector, loudly, as formation pins it. A vector of the wrong
     dimension is `failed` (`dimension_mismatch`), never written. Community records are never embedded (D4). The commit guard's refusal propagates (the host's Stop).
     Returns {pass_name, embedded [ids], skipped [ids], failed [{id, reason}], reasons {id: reason}, cancelled}."""
-    from .canonical_text import NON_EMBEDDED_KINDS, canonical_text
+    from .canonical_text import canonical_text, never_embedded
     from .embedding_pin import build_pin, check_add_dimension, embedder_model_id, warn_first_write_pin
     from .in_memory_store import InMemoryTripleStore
     from .memory_tasks import require_task_queue
@@ -1669,7 +1696,7 @@ def embed_missing(system: Any, *, scopes: Sequence[Tuple[str, str]], owner_id: s
                 out["failed"].append({"id": raw, "reason": "out_of_scope"})
             elif str(a.assertion_id) in closed:
                 skip(raw, "closed")
-            elif str(attrs.get("record_kind")) in NON_EMBEDDED_KINDS or attrs.get("record_edge"):
+            elif never_embedded(a):
                 skip(raw, "never_embedded")
             elif store.stored_vector(str(a.assertion_id)) is not None:
                 skip(raw, "vectored")

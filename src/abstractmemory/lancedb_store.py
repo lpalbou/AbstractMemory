@@ -63,7 +63,7 @@ def _build_where_clause(q: TripleQuery) -> str:
 # v2: clean record digests); the alias keeps this module's established name
 # and the golden parity tests meaningful.
 from .canonical_text import canonical_text as _canonical_text  # noqa: E402
-from .canonical_text import is_record_edge as _is_record_edge  # noqa: E402
+from .canonical_text import never_embedded as _never_embedded  # noqa: E402
 
 
 def _loads_json(raw: object) -> dict:
@@ -170,8 +170,9 @@ class LanceDBTripleStore:
         if self._embedder is not None:
             # Edge assertions are never embedded (graph structure, not
             # memories): rows without the vector column stay invisible to
-            # ANN search instead of consuming vector fetch slots.
-            embeddable = [i for i, a in enumerate(pending) if not _is_record_edge(a)]
+            # ANN search instead of consuming vector fetch slots. Nor are
+            # the NON_EMBEDDED_KINDS digests (a community: engine state).
+            embeddable = [i for i, a in enumerate(pending) if not _never_embedded(a)]
             if embeddable:
                 embedded = self._embedder.embed_texts([texts[i] for i in embeddable])
                 vectors = {i: v for i, v in zip(embeddable, embedded)}

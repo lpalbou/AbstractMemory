@@ -19,6 +19,9 @@ M1 drop the vector-less attach step; M2 let written_amid drive detection; M3 min
 keyed on the community key); M7 store a title cut from the first member title when the author fails; M8 no
 relaxation (circles overlap); M9 no collision check; M10 budget ignored; M13 `unplaced_closed` = every unplaced
 vector-less record (the closed-only rule dropped); M14 a relation to an open record does not count against it.
+Fable review M1 (2026-11-10, scratch copy untracked/review-m1-wip/tree): m2 the connectivity refinement removed (a
+disconnected community stays whole: I2); m4 KEY_MATCH_FLOOR = 0 (any overlap continues a key); L1 an unchanged
+community keeps its stored links to a dissolved key. All red.
 """
 
 from __future__ import annotations
@@ -320,6 +323,92 @@ def test_a_dissolved_community_is_retracted(home) -> None:
     assert r["dissolved"] == 1 and r["ids"]["dissolved"] == [key3]
     assert key3 not in {c.key for c in _current(home)}
     assert {c.kind for c in home.journal.closures(limit=0) if c.assertion_id == old3.assertion_id} == {"retract"}
+
+
+def test_a_disconnected_community_is_split_into_its_components(home) -> None:
+    """I2 (Fable review M1 #2): last night's version held two topics as ONE community (the bridge that joined them is
+    gone). The warm start seeds both halves with one label and no local move leaves it (every neighbour of every node
+    is inside), so only the connectivity refinement splits it: one community per connected component."""
+    t1, t2 = _topic(home, 1, 10), _topic(home, 2, 10)
+    g = C.read_community_graph(home, scopes=SCOPES, owner_id=OWNER)
+    both = t1 + t2
+    g.previous = [C.PreviousCommunity(key="ex:community-bridged",
+                                      members={m: {"id": m, "via": "detected", "since_seq": 0} for m in both},
+                                      centroid=C._unit_mean(np, g.vectors[[g.vindex[m] for m in both]]))]
+    det = C.detect_communities(g)
+    assert sorted(sorted(grp) for grp in det.groups) == sorted([sorted(t1), sorted(t2)])
+    assert all(set(grp.values()) == {"detected"} for grp in det.groups) and det.unplaced == []
+
+
+def test_refine_splits_a_community_into_its_connected_components() -> None:
+    """I2 on the refinement alone: two 6-cliques labelled as one community come back as two groups."""
+    adj = [{} for _ in range(12)]
+    for base in (0, 6):
+        for i in range(base, base + 6):
+            for j in range(base, base + 6):
+                if i != j:
+                    adj[i][j] = 1.0
+    groups, orphans, _split = C._refine([0] * 12, adj)
+    assert groups == [list(range(6)), list(range(6, 12))] and orphans == []
+
+
+def test_the_jaccard_floor_is_where_a_key_stops_continuing() -> None:
+    """KEY_MATCH_FLOOR (Fable review M1 #3): a group overlapping the previous version at Jaccard 0.5 continues its
+    key; at 1/3 it gets a fresh key and the previous one is left unmatched (dissolved)."""
+    old = C.PreviousCommunity(key="ex:community-old",
+                              members={f"m{i}": {"id": f"m{i}", "via": "detected", "since_seq": 0} for i in range(6)})
+    at_floor = {**{f"m{i}": "detected" for i in range(4)}, "n0": "detected", "n1": "detected"}  # 4 / 8
+    below = {**{f"m{i}": "detected" for i in range(3)}, "n0": "detected", "n1": "detected", "n2": "detected"}  # 3 / 9
+    [(key, prev, j)] = C.match_keys([at_floor], [old])
+    assert key == old.key and prev is old and j == 0.5 == C.KEY_MATCH_FLOOR
+    [(key, prev, j)] = C.match_keys([below], [old])
+    assert prev is None and j == 0.0 and key.startswith(C.KEY_PREFIX) and key != old.key
+
+
+def test_a_group_under_the_jaccard_floor_gets_a_fresh_key_and_the_old_one_dissolves(home) -> None:
+    """The floor on the pass: 9 of topic 3's 12 records forgotten and 12 new ones formed; tonight's topic-3 group
+    (3 old + 12 new) overlaps the old version at Jaccard 3/24 < 0.5: a fresh key, the old version retracted, the
+    other two keys kept."""
+    topics = _three_topics(home)
+    _pass(home)
+    before = _membership(home)
+    key3 = before[topics[3][0]]
+    for rid in topics[3][3:]:
+        home.close_record(rid, reason="test: most of topic 3 forgotten")
+    fresh3 = _topic(home, 3, 12, start=12)
+    r = _pass(home)
+    after = _membership(home)
+    [new3] = {after[m] for m in fresh3 + topics[3][:3]}
+    assert 3 / (15 + 12 - 3) < C.KEY_MATCH_FLOOR
+    assert new3 != key3 and r["ids"]["new"] == [new3]
+    assert r["dissolved"] == 1 and r["ids"]["dissolved"] == [key3]
+    assert after[topics[1][0]] == before[topics[1][0]] and after[topics[2][0]] == before[topics[2][0]]
+    [old3] = [a for a in _community_rows(home) if (a.attributes or {}).get("community_key") == key3]
+    assert {c.kind for c in home.journal.closures(limit=0) if c.assertion_id == old3.assertion_id} == {"retract"}
+
+
+def test_a_dissolved_neighbour_leaves_no_stored_link(home) -> None:
+    """An unchanged community linked to one that dissolves forms again (its title carried, no author call), so no
+    stored `links` entry outlives the key it names; the pass after writes nothing."""
+    topics = _three_topics(home)
+    [note] = _form(home, [MemoryRecordInput(kind="observation", title="A note",
+                                            digest="Still on topic-1, and a nod aside.",
+                                            edges=(("mentions", topics[3][0]),))], "note")
+    _pass(home)
+    member = _membership(home)
+    key1, key3 = member[topics[1][0]], member[topics[3][0]]
+    assert member[note] == key1
+    [c1] = [c for c in _current(home) if c.key == key1]
+    assert [link["to"] for link in c1.attrs["links"]] == [key3]
+    for rid in topics[3]:
+        home.close_record(rid, reason="test: forget topic 3")
+    log: List[str] = []
+    r = _pass(home, author=author_fn(log))
+    assert r["ids"]["dissolved"] == [key3]
+    [c1b] = [c for c in _current(home) if c.key == key1]
+    assert c1b.record_id != c1.record_id and c1b.attrs["links"] == []
+    assert set(c1b.members) == set(c1.members) and c1b.title == c1.title and log == []  # carried, no author call
+    assert _pass(home)["written"] == 0
 
 
 # ----------------------------------------------------------------------------------------------- one transaction

@@ -45,7 +45,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ..canonical_text import canonical_text as _canonical_text
-from ..canonical_text import is_record_edge as _is_record_edge
+from ..canonical_text import never_embedded as _never_embedded
 from ..commit_guard import deferred_to_caller, guard_commit
 from ..embedding_pin import (
     build_pin,
@@ -569,17 +569,20 @@ def _row_revision(r: sqlite3.Row) -> Revision:
 def _sqlite_rows(store: SQLiteTripleStore,
                  assertions: List[TripleAssertion]) -> Tuple[List[tuple], Optional[Dict[str, Any]], bool]:
     """Row tuples for `_STORE_COLUMNS`, embedded BEFORE the transaction exactly as `SQLiteTripleStore.add` does
-    (edges never embedded; a dead embedder degrades to vectorless rows with its #FALLBACK; a wrong-dimension vector
-    aborts; vectors stored as float32 BLOBs via `vector_matrix.encode_vector`, so the store's matrix cache picks the
-    graph's rows up at its next sync by rowid, exactly as it does `add`'s). Returns the rows, the pin the transaction must write (a pinless store pins at its first embedded
-    write; a dimensionless pin gains its dimension) or None, and whether that is a first-write pin (warned, loudly,
-    once the transaction commits)."""
+    (edges and NON_EMBEDDED_KINDS digests never embedded; a dead embedder degrades to vectorless rows with its
+    #FALLBACK; a wrong-dimension vector aborts; vectors stored as float32 BLOBs via `vector_matrix.encode_vector`, so
+    the store's matrix cache picks the graph's rows up at its next sync by rowid, exactly as it does `add`'s). Returns
+    the rows, the pin the transaction must write (a pinless store pins at its first embedded write; a dimensionless
+    pin gains its dimension) or None, and whether that is a first-write pin (warned, loudly, once the transaction
+    commits)."""
     vectors: Optional[Dict[int, List[float]]] = None
     pin_update: Optional[Dict[str, Any]] = None
     first_write = False
     embedder = store._embedder
     if embedder is not None and assertions:
-        embeddable = [(i, _canonical_text(a)) for i, a in enumerate(assertions) if not _is_record_edge(a)]
+        # Edges and the NON_EMBEDDED_KINDS digests (a community asserted through a revision: engine state, never a
+        # vector; Fable review M1 #1) carry no vector, as SQLiteTripleStore._prepare_add.
+        embeddable = [(i, _canonical_text(a)) for i, a in enumerate(assertions) if not _never_embedded(a)]
         embedded = (embed_texts_degradable(embedder, [t for _, t in embeddable], store.embedding_pin())
                     if embeddable else None)
         if embeddable and embedded is not None:

@@ -96,7 +96,9 @@ NON_EMBEDDED_KINDS = frozenset({"community"})
 
 
 def never_embedded(a: TripleAssertion) -> bool:
-    """True for the assertions no embedding path embeds: record edges and the digests of `NON_EMBEDDED_KINDS`."""
+    """True for the assertions no embedding path embeds: record edges and the digests of `NON_EMBEDDED_KINDS`.
+    Every embed site asks it (the closed set: tests/test_communities_never_recalled.py fails on a site that
+    does not)."""
     if is_record_edge(a):
         return True
     attrs = a.attributes if isinstance(a.attributes, dict) else {}
