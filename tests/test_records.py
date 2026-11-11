@@ -300,3 +300,20 @@ def test_record_input_is_json_safe_via_asdict() -> None:
     assert payload["kind"] == "answer"
     assert payload["edges"] == [["supports", "ex:claim-x"]]
     assert payload["attributes"] == {"extra": 1}
+
+
+def test_diary_resolution_verdict_attributes_validation() -> None:
+    """The book's verdict keys (root backlog 1206) are optional strings, non-empty when present."""
+    def _diary(**attributes):
+        return MemoryRecordInput(kind="diary", title="Answered", digest="Answered the question.",
+                                 attributes={"entry_id": "e-1", **attributes},
+                                 provenance={"source": "diary-projection"})
+
+    ok = _diary(resolves="e-0", resolves_status="resolved_open_question",
+                resolved_record_id="ex:question-0", resolved_title="Why?")
+    assert ok.attributes["resolved_record_id"] == "ex:question-0"
+    assert _diary().attributes.get("resolves_status") is None
+    for attr in ("resolves_status", "resolved_record_id", "resolved_title"):
+        for bad in ("", "   ", 7):
+            with pytest.raises(ValueError, match=attr):
+                _diary(**{attr: bad})

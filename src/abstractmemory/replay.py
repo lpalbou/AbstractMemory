@@ -179,6 +179,23 @@ def _display_block(assertion: Any, requested_id: str,
         entry_id = str(attrs.get("entry_id") or "").strip()
         if entry_id:
             block["entry_id"] = entry_id
+        # Resolution keys (root backlog 1206, operator 2026-11-11: a question
+        # answered in a visit showed no badge): an entry that resolves a
+        # question or problem carries WHICH record it resolved and the book's
+        # verdict — `resolves` (the claim, graph id or entry_id), `resolves_status`
+        # (e.g. "resolved_open_question") and `resolved_record_id` (the target's
+        # graph id). Keys, never words, so every entry carries them like
+        # entry_id. `resolved_title` IS words (the target's title as formed):
+        # it rides only a non-private entry (the same `private` rule as
+        # diary.diary_summary_refusal: a private entry is act-only, content-free).
+        for key in ("resolves", "resolves_status", "resolved_record_id"):
+            value = attrs.get(key)
+            if isinstance(value, str) and value.strip():
+                block[key] = value.strip()
+        private = attrs.get("private")
+        resolved_title = attrs.get("resolved_title")
+        if (private is None or private is False) and isinstance(resolved_title, str) and resolved_title.strip():
+            block["resolved_title"] = resolved_title
         # Who wrote the entry, when and why (operator 2026-11-08) is act-frame
         # like diary_type: the scope owner, at the entry's formation; never
         # its words. Same derivation as every other block.

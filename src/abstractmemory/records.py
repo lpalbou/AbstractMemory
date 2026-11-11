@@ -413,6 +413,19 @@ class MemoryRecordInput:
                         f"present (got {ref!r}) — it references the {target_kind} record id "
                         "or entry_id it resolves"
                     )
+            # The book's verdict on a `resolves` claim (root backlog 1206): the
+            # runtime writes `resolves_status` (e.g. "resolved_open_question"),
+            # `resolved_record_id` (the resolved question's graph id, checked
+            # like `resolves`) and `resolved_title` (its title as formed). All
+            # optional; present means a non-empty string, so the replay stream
+            # carries them as keys and never an empty badge.
+            for attr in ("resolves_status", "resolved_record_id", "resolved_title"):
+                value = attributes.get(attr)
+                if value is not None and not (isinstance(value, str) and value.strip()):
+                    raise ValueError(
+                        f"kind='diary' attributes.{attr} must be a non-empty string when present "
+                        f"(got {value!r}) — omit the key when the book gave no verdict"
+                    )
             if str(dict(self.provenance or {}).get("source") or "") == "diary-projection" and entry_id is None:
                 raise ValueError(
                     "diary projections (provenance.source='diary-projection') must carry "

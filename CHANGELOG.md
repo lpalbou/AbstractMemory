@@ -5,6 +5,24 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (pre-1.0).
 
+## [0.5.2] - Unreleased
+
+### Changed: the replay diary block carries the resolution keys
+
+An entry that resolves a question or problem now shows it in the replay stream (root backlog 1206: a question
+answered in a visit showed no badge in the Entity app).
+
+- The diary display block of `export_replay` (`{"redacted": "diary", ...}`) carries `resolves` (the claim: a graph id
+  or an entry id), `resolves_status` (the book's verdict, for example `resolved_open_question`) and
+  `resolved_record_id` (the resolved record's graph id) when the record carries them, as keys beside `diary_type`
+  and `entry_id`; `resolved_title` (the resolved record's title as formed) rides only an entry that is not private.
+  A question entry itself carries nothing new.
+- `MemoryRecordInput` (`kind="diary"`) accepts `attributes.resolves_status`, `resolved_record_id` and
+  `resolved_title` as optional strings, non-empty when present, validated like `resolves`.
+
+Upgrading from 0.5.1: nothing changes for a record without these attributes. A host that writes them onto the
+resolving record (the runtime's DIARY_WRITE verdict) omits a key it has no value for; an empty string is refused.
+
 ## [0.5.1] - 2026-11-10
 
 ### Added: `community_keys_of`, the membership-only read for recall stamping
