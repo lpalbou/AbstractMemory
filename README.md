@@ -15,7 +15,7 @@ Storage never decays and nothing is ever deleted; only retrieval strength change
 
 ## What's new in 0.5.2
 
-- Diary replay carries confirmed resolution metadata, including target identifiers, with private titles omitted. Existing projections are not backfilled.
+- Diary replay carries recorded resolution metadata, including target identifiers, with private titles omitted. Existing projections are not backfilled.
 
 ## What's new in 0.5.1
 
