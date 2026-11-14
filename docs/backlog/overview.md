@@ -7,9 +7,10 @@ Items are written as standalone implementation briefs for future coding agents.
 They should be treated as planning memory, not as authority over the codebase:
 inspect the current code first, then update the item if reality has changed.
 
-## Current Status (counts recounted on disk 2026-11-10 after the 0.5.1 tag, unchanged since the 0.5.0 closure; first reconciled 2026-07-20 — the shipped tree audited item by item)
+## Current Status (counts recounted on disk 2026-11-11; first reconciled 2026-07-20 — the shipped tree audited item by item)
 
-- Planned: 10 — `planned/0069` (runtime recall stamps use `community_keys_of`, added 2026-11-10; its memory half
+- Planned: 11 — `planned/0071` (the replay diary block carries the resolution keys, root 1206; completed in place
+  2026-11-11 at `b3d90c2`, moves to `completed/` with the 0.5.2 tag), `planned/0069` (runtime recall stamps use `community_keys_of`, added 2026-11-10; its memory half
   shipped in 0.5.1, the runtime switch remains) and
   `planned/knowledge_graph_convergence/` 0050-0058 (0050-0055 added
   2026-10-27, ADR 0002; 0056-0058, ADR 0003; 0056 in progress, first slice
@@ -28,6 +29,9 @@ inspect the current code first, then update the item if reality has changed.
 - Recurrent: 0
 
 GENUINELY OPEN (the honest desk, 2026-07-20; convergence track added 2026-10-27; 0.5.0 follow-ups added 2026-11-10):
+- Next patch (0.5.2): `planned/0071` is built and tested at `b3d90c2` (replay diary block: `resolves`, `resolves_status`,
+  `resolved_record_id`, `resolved_title` on a non-private entry); the runtime still has to write the verdict keys onto the
+  resolving record (its half, see the item's seam note).
 - 0.5.0 follow-ups (filed 2026-11-10 from the release's documented residuals and the Fable pre-tag review; 0.5.1
   shipped without the four aimed at it, so their target is now the next memory patch):
   `proposed/0062` write barrier residual windows (`_write_pin`, `mark_journal_applied`, LanceDB; SQLite half next

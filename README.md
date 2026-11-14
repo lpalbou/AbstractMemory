@@ -13,6 +13,10 @@ Storage never decays and nothing is ever deleted; only retrieval strength change
 - The authoritative export list is [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py); [`docs/api.md`](docs/api.md) documents it.
 - Requires Python 3.10+.
 
+## What's new in 0.5.2
+
+- Diary replay carries recorded resolution metadata, including target identifiers, with private titles omitted. Existing projections are not backfilled.
+
 ## What's new in 0.5.1
 
 - `community_keys_of` / `community_memberships_of`: the membership-only topic read for every recalled record, tens of microseconds per call from the in-memory community index (the runtime's recall stamps use it).
@@ -158,3 +162,7 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.
 - **No heavy dependencies**: SQLite persistence and vector scoring use the standard library; LanceDB and embedders are optional.
+
+## For AI agents
+
+Register and use [the AbstractMemory skill](skills/abstractmemory/SKILL.md) for scoped reads, provenance-aware writes and replay.

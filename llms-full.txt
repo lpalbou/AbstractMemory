@@ -1,24 +1,6 @@
 # AbstractMemory (llms-full)
 
-> Durable, append-only agent memory for Python: temporal, provenance-aware triple assertions with deterministic queries and optional vector retrieval (layer 1), plus a MemorySystem facade that composes them with an append-only journal into a usage-weighted memory graph — reconstruction, attention, identity, valence, diary, consolidation, and a replay stream (layer 2). Part of the AbstractFramework ecosystem.
-
-This file aggregates the core documentation corpus in one place for LLMs and tools.
-For a concise index, see [llms.txt](llms.txt). The canonical documentation lives in the
-linked files; regenerate this aggregate when they change. Relative links below are
-normalized to resolve from the repository root.
-
-## Document Index
-
-- [README.md](README.md): project overview, install, quick examples for both layers
-- [docs/getting-started.md](docs/getting-started.md): setup, first triples, first MemorySystem session
-- [docs/architecture.md](docs/architecture.md): the two-layer model, journal-as-time-axis, the reconstruction union, invariants
-- [docs/memory-system.md](docs/memory-system.md): the cognitive model — emergent working memory, valence, identity, dreams
-- [docs/api.md](docs/api.md): full API reference, grouped by surface
-- [docs/stores.md](docs/stores.md): backend behavior and persistence details
-- [docs/operator.md](docs/operator.md): read-only inspection of an entity's memory home
-- [docs/faq.md](docs/faq.md): common questions and current limits
-- [docs/troubleshooting.md](docs/troubleshooting.md): symptom-oriented fixes for setup, retrieval, embedding spaces, durability, maintenance
-- [docs/development.md](docs/development.md): local setup and test workflow
+See [llms.txt](llms.txt) for the documentation index.
 
 ---
 
@@ -38,6 +20,10 @@ Storage never decays and nothing is ever deleted; only retrieval strength change
 - Pre-1.0: the API is versioned and tested, and details may still evolve. The current version is in [`pyproject.toml`](pyproject.toml).
 - The authoritative export list is [`src/abstractmemory/__init__.py`](src/abstractmemory/__init__.py); [`docs/api.md`](docs/api.md) documents it.
 - Requires Python 3.10+.
+
+## What's new in 0.5.2
+
+- Diary replay carries recorded resolution metadata, including target identifiers, with private titles omitted. Existing projections are not backfilled.
 
 ## What's new in 0.5.1
 
@@ -184,6 +170,10 @@ system.commit_selection(result.trace_id, [h.record_id for h in result.handles[:2
 - **One seq axis**: the journal assigns a monotonic `seq` to every record; any past state is reproducible by anchoring reads at `as_of`.
 - **Works-or-loud**: degraded paths are labeled `#FALLBACK` in result warnings; invalid inputs raise actionable errors instead of silently meaning something else.
 - **No heavy dependencies**: SQLite persistence and vector scoring use the standard library; LanceDB and embedders are optional.
+
+## For AI agents
+
+Register and use [the AbstractMemory skill](skills/abstractmemory/SKILL.md) for scoped reads, provenance-aware writes and replay.
 
 ---
 
@@ -960,7 +950,7 @@ Id namespaces: every id-taking call (`commit_selection`, `reinforce`, `attenuate
 
 Record kinds: `memory`, `episode`, `lesson`, `instruction`, `decision`, `claim`, `summary` (requires at least one edge naming what it summarizes), `question`, `answer`, `plan`, the identity kinds `value` (requires `attributes.value_class` ∈ {core, revisable}), `purpose`, `trait`, `diary`, `interest`, and the sleep artifact `dream`. Kind ranks order identity first (value < purpose < trait) and derived artifacts as summary peers.
 
-Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-projection`, `owner-direct`}; `diary_type` ∈ {note, idea, commitment, reflection, question, problem} (absent defaults to `note`; unknown values raise); projections must carry `attributes.entry_id`; resolution references ride `attributes.answers` (questions) and `attributes.resolves` (problems). A PUBLIC projection's summary is authored like any record's (operator rule 2026-11-09: title + summary always exist, authored, never his first line standing in): its body is the book's entry (the runtime's hash-chained ledger, `attributes.entry_id`), so its digest is only the summary. It forms with an authored summary (`attributes.understanding` = `{field: "digest", author, reader, sources, ...}`: never a mechanical author; a model author with its reader and ledger step) or with `pending=("summary",)` and its `digest.author` task, which `rewrite_digest` completes; a legacy projection (his first line standing in) is repaired the same way through `declare_pending` (`fields=("summary",)` or both); the body and every chain stay untouched, its summary versions are sealed in replay like its title versions. Refused (`ValueError` at formation, `protected_kind` in `rewrite_digest` and `declare_pending`): a private entry (`attributes.private` anything but absent/False), an owner-direct entry (no book: its digest is his words) and a chained one (`prev_entry_hash` / `entry_hash`: `diary_entry_hash` covers title + digest + observed_at); `diary.diary_summary_refusal(attributes, provenance)` is the rule.
+Diary formation rules: `kind="diary"` requires `provenance.source` ∈ {`diary-projection`, `owner-direct`}; `diary_type` ∈ {note, idea, commitment, reflection, question, problem} (absent defaults to `note`; unknown values raise); projections must carry `attributes.entry_id`; resolution references ride `attributes.answers` (questions) and `attributes.resolves` (problems); the book's verdict on a `resolves` claim rides `attributes.resolves_status`, `attributes.resolved_record_id` and `attributes.resolved_title` (optional, non-empty strings when present; the replay diary block carries them). A PUBLIC projection's summary is authored like any record's (operator rule 2026-11-09: title + summary always exist, authored, never his first line standing in): its body is the book's entry (the runtime's hash-chained ledger, `attributes.entry_id`), so its digest is only the summary. It forms with an authored summary (`attributes.understanding` = `{field: "digest", author, reader, sources, ...}`: never a mechanical author; a model author with its reader and ledger step) or with `pending=("summary",)` and its `digest.author` task, which `rewrite_digest` completes; a legacy projection (his first line standing in) is repaired the same way through `declare_pending` (`fields=("summary",)` or both); the body and every chain stay untouched, its summary versions are sealed in replay like its title versions. Refused (`ValueError` at formation, `protected_kind` in `rewrite_digest` and `declare_pending`): a private entry (`attributes.private` anything but absent/False), an owner-direct entry (no book: its digest is his words) and a chained one (`prev_entry_hash` / `entry_hash`: `diary_entry_hash` covers title + digest + observed_at); `diary.diary_summary_refusal(attributes, provenance)` is the rule.
 
 ### Bindings and closures
 
@@ -1128,7 +1118,7 @@ Yields verbatim journal records as envelopes in strict seq order: `{stream, stre
 
 - Families: `event`, `binding`, `closure`, `trace`, `snapshot`, `valence` (the default). `family="host"` is reserved for host-authored markers (accepted by the filter, never emitted by this package). The opt-in family `revision` (`OPT_IN_FAMILIES`) is emitted only when you name it: one envelope per understanding version (payload = the `UnderstandingVersion`, `run_id` lifted from its first ledger source), so a rewrite adds nothing to the default stream.
 - Correlation keys (`trace_id`, `turn_id`, `run_id`) are always present, null when absent.
-- Enrichment resolves `{record_id, kind, title, token_estimate}` from the store (both members for `co_selected` pairs) and `graph_id` for formed records — absent when unresolvable, never fabricated. Diary display blocks arrive `{"redacted": "diary", "graph_id": ...}`: topology visible, content sealed; they carry who wrote the entry, when and why (`authored_by`, `understood_at`, `cause`), never its words.
+- Enrichment resolves `{record_id, kind, title, token_estimate}` from the store (both members for `co_selected` pairs) and `graph_id` for formed records — absent when unresolvable, never fabricated. Diary display blocks arrive `{"redacted": "diary", "graph_id": ...}`: topology visible, content sealed; they carry who wrote the entry, when and why (`authored_by`, `understood_at`, `cause`), never the resolving entry’s own words. Their act-frame keys: `diary_type`, `entry_id` (the book's entry), `pending`; an entry that resolves a question or problem also carries `resolves` (the claim: a graph id or an entry id), `resolves_status` (the book's verdict, for example `resolved_open_question`) and `resolved_record_id` (the resolved record's graph id), so a consumer marks the question resolved from the stream alone; `resolved_title` (the resolved record's title as formed) rides only an entry that is not private (`attributes.private`). This is the public target's title, not the resolving entry's prose; hosts must omit it when the target itself is private.
 - Formed non-diary records also carry the current reading's provenance (`understanding_fields`): `digest_method`, `digest_version` (0 = never rewritten), `version_count` (1 = never rewritten), `authored_by` (`{kind, id}`), `reader` (`{provider, model, thinking}`, when a model wrote it), `understood_at`, `cause`; cards add `target`, `target_type`, `card_revision`, `source_count`; dreams add `narrated`, `narration_version`; a superseded record adds `replaced_by`. `binding` and `revision` envelopes also carry the current `digest` text.
 - A community record (kind `community`) replays like any formed record (title or `pending`, provenance, versions, `replaced_by`); its display block adds `community_key`, `version_seq` and `size`, and its `binding` envelope draws only its revision chain (`refines`), never an edge per member. A record's provisional placement arrives as a `placed` event (family `event`, the community in `payload.provenance`).
 - Under family filters or redaction, seq gaps are expected and carry no meaning. The stream is an observability surface — not a payload export, not a second source of truth, not a checkpoint format.
@@ -1939,42 +1929,56 @@ Near-duplicate detection fingerprints `title + digest` tokens and flags pairs at
 
 ---
 
-## docs/development.md
+## skills/abstractmemory/SKILL.md
 
-# Development
+---
+name: abstractmemory
+description: Use AbstractMemory's Python APIs for scoped, provenance-aware memory, deterministic replay and read-only inspection.
+---
 
-## Local setup
+# Use AbstractMemory
 
-Editable install:
+Use Python 3.10+ and `python -m pip install AbstractMemory`. Import `abstractmemory`;
+`[fast]` adds numpy for SQLite vector scoring and `[lancedb]` adds that optional backend.
+AbstractMemory does not run an LLM or supply an embedding model. Configure an embedder
+before semantic queries; `query_text` without one raises rather than doing keyword search.
 
-```bash
-python -m pip install -e .
+Choose the surface before writing:
+
+- Plain scoped triples: `InMemoryTripleStore`, `SQLiteTripleStore` or `LanceDBTripleStore`,
+  with `TripleAssertion` and `TripleQuery`.
+- A memory system: `MemorySystem` with a store and journal. Formation is separate from
+  selected use; reconstruction is a pure read, `commit_selection` records what was used.
+- A mind's graph: `abstractmemory.graph.MemoryGraph`. Apply atomic, idempotent `Revision`s
+  with grounded `SourceRef`/`Provenance`; missing provenance raises `ProvenanceRequired`.
+  Never edit the backing database directly.
+
+For a new integration, first reproduce this isolated triples example:
+
+```python
+from abstractmemory import InMemoryTripleStore, TripleAssertion, TripleQuery
+store = InMemoryTripleStore()
+store.add([TripleAssertion(subject="Ada", predicate="uses", object="Python",
+                          scope="session", owner_id="demo")])
+hits = store.query(TripleQuery(subject="ada", scope="session", owner_id="demo"))
+assert len(hits) == 1
 ```
 
-Dev extras (tests):
+Then choose a persistent store, explicit scope/owner pairs and a real provenance source.
+Use stable idempotency keys for retried formations/revisions. Inspect the resulting record
+and journal before committing selected use. Anchor historical reads at `as_of`/`at_seq`;
+the journal's sequence is the replay axis. Do not invent run or artifact provenance.
 
-```bash
-python -m pip install -e ".[dev]"
-```
+Updates append assertions or closures; they do not delete history. Title/summary rewrites
+retain earlier versions. A formation retry does not update an existing assertion's attributes.
+Read-only inspection, reconstruction, replay and entity cards deposit nothing.
 
-Optional LanceDB tests/backends:
+Diary prose belongs in the book. Replay projections describe the act; private projections
+must stay content-free. A `resolves` claim alone is not a confirmed resolution: inspect
+`resolves_status`; target graph id/title may be absent. Existing projections are not
+backfilled by upgrading. Pending authored fields need a host author and a home opened with
+`MemorySystem(task_queue=True)`; do not fill them with invented text. Preserve labelled
+`#FALLBACK` warnings and handle invalid input errors explicitly.
 
-```bash
-python -m pip install -e ".[lancedb]"
-```
-
-## Run tests
-
-```bash
-python -m pytest -q
-```
-
-Notes:
-
-- Most layer-2 suites run against both substrate stacks (in-memory and SQLite) via a parametrized fixture in [`tests/conftest.py`](tests/conftest.py), which also bootstraps `sys.path` for monorepo layouts.
-- LanceDB-dependent tests are skipped when `lancedb` is not installed (see [`tests/test_lancedb_triple_store.py`](tests/test_lancedb_triple_store.py)).
-- Integration tests marked `lmstudio` need a local OpenAI-compatible server with an embedding model and are skipped automatically when unreachable (see markers in [`pyproject.toml`](pyproject.toml)).
-
-## Design backlog
-
-Design notes and planned work live under [`backlog/`](docs/backlog/overview.md) (maintainer-facing). The user-facing documentation set is indexed in [`README.md`](docs/README.md).
+Full contracts: `docs/api.md`, `docs/memory-system.md`, `docs/stores.md` and
+`docs/operator.md`. Use the operator guide for an existing entity home; start with reads.

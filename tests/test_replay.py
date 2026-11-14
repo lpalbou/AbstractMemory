@@ -298,3 +298,62 @@ def test_binding_display_carries_formation_edges(system) -> None:
     # Redaction semantics: no content fields ever (title/digest/kind/tokens).
     assert not {"title", "kind", "token_estimate", "record_id"} & set(sealed)
     assert "Storm feelings" not in str(sealed) and "privately" not in str(sealed)
+
+def _diary(system, key: str, title: str, **attributes) -> str:
+    [rid] = system.remember_many(
+        [MemoryRecordInput(kind="diary", title=title, digest=f"Wrote: {title}.",
+                           attributes={"entry_id": f"entry-{key}", **attributes},
+                           provenance={"source": "diary-projection"})],
+        scope=SCOPE, owner_id=OWNER, idempotency_key=f"rp-{key}")
+    return rid
+
+
+def _diary_block(system, record_id: str) -> Dict[str, Any]:
+    blocks = [i["display"] for i in system.export_replay(families=["binding"])
+              if i["payload"]["record_id"] == record_id and i.get("display")]
+    assert blocks
+    return blocks[-1]
+
+
+RESOLUTION_KEYS = ("resolves", "resolves_status", "resolved_record_id", "resolved_title")
+
+
+def test_diary_block_carries_the_resolution_keys(system) -> None:
+    """Root backlog 1206: an entry that resolves a question carries WHICH record
+    it resolved and the book's verdict in the stream, so an app can mark the
+    question resolved from the stream alone. Keys ride every entry; the
+    target's title (words) rides only a non-private one."""
+    question = _diary(system, "q1", "Why does the garden hum?", diary_type="question")
+    answer = _diary(system, "a1", "The hum was the bees", diary_type="note",
+                    resolves="entry-q1", resolves_status="resolved_open_question",
+                    resolved_record_id=question, resolved_title="Why does the garden hum?")
+    block = _diary_block(system, answer)
+    assert block["redacted"] == "diary"
+    assert block["resolves"] == "entry-q1"
+    assert block["resolves_status"] == "resolved_open_question"
+    assert block["resolved_record_id"] == question
+    assert block["resolved_title"] == "Why does the garden hum?"
+    assert "The hum was the bees" not in str(block)  # the entry's own words stay sealed
+
+
+def test_private_resolving_entry_exports_keys_but_no_title(system) -> None:
+    question = _diary(system, "q2", "Who moved the bench?", diary_type="question")
+    answer = _diary(system, "a2", "Diary entry (private) — 2026-11-11", diary_type="note", private=True,
+                    resolves=question, resolves_status="resolved_open_question",
+                    resolved_record_id=question, resolved_title="Who moved the bench?")
+    block = _diary_block(system, answer)
+    assert block["resolves"] == question
+    assert block["resolves_status"] == "resolved_open_question"
+    assert block["resolved_record_id"] == question
+    assert "resolved_title" not in block
+    assert "Who moved the bench?" not in str(block)
+
+
+def test_question_entry_itself_exports_no_resolution_keys(system) -> None:
+    question = _diary(system, "q3", "What is the river's name?", diary_type="question")
+    block = _diary_block(system, question)
+    assert block["diary_type"] == "question"
+    assert block["entry_id"] == "entry-q3"
+    for key in RESOLUTION_KEYS:
+        assert key not in block
+    assert "What is the river's name?" not in str(block)
