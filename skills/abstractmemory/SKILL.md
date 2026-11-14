@@ -1,12 +1,25 @@
 ---
 name: abstractmemory
 description: Use AbstractMemory's Python APIs for scoped, provenance-aware memory, deterministic replay and read-only inspection.
+license: MIT
+compatibility: Python 3.10+. Semantic retrieval needs an explicitly configured embedder; LanceDB and numpy are optional extras.
+metadata:
+  package-version: "0.5.2"
 ---
 
 # Use AbstractMemory
 
 Use Python 3.10+ and `python -m pip install AbstractMemory`. Import `abstractmemory`;
 `[fast]` adds numpy for SQLite vector scoring and `[lancedb]` adds that optional backend.
+Verify the installed distribution and its API before opening a home:
+
+```python
+from importlib.metadata import version
+from abstractmemory import MemorySystem
+print(version("AbstractMemory"))
+assert callable(MemorySystem)
+```
+
 AbstractMemory does not run an LLM or supply an embedding model. Configure an embedder
 before semantic queries; `query_text` without one raises rather than doing keyword search.
 
