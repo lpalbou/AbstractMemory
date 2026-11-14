@@ -2,6 +2,8 @@
 
 AbstractMemory is a Python library for durable, append-only agent memory: temporal, provenance-aware triple assertions with deterministic queries and optional vector retrieval (layer 1), plus a `MemorySystem` facade that composes them with an append-only journal into a usage-weighted memory graph — reconstruction, attention, identity, valence, diary, consolidation, and replay (layer 2).
 
+- For AI agents: [`skills/abstractmemory/SKILL.md`](../skills/abstractmemory/SKILL.md) — scoped reads, provenance and safe replay.
+
 ## Start here
 
 - Getting started: [`getting-started.md`](getting-started.md) — install, first triples, first `MemorySystem` session.

@@ -14,6 +14,8 @@ Key facts for agents:
 - All three stores are vector-capable when constructed with an embedder; `query_text` without one raises (no keyword fallback).
 - Terms are canonicalized (trim + lowercase); timestamps compare as RFC-3339/UTC strings.
 
+- [Agent skill](skills/abstractmemory/SKILL.md): operating procedure for scoped memory, provenance and replay.
+
 ## Core Docs
 
 - [README.md](README.md): project overview, install, quick examples for both layers
